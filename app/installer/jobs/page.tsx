@@ -1,0 +1,1655 @@
+"use client";
+
+export const dynamic = "force-dynamic";
+
+import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@/utils/supabase/client";
+
+const ADMIN_PHONE = "647-795-4392";
+const ADMIN_EMAIL = "ultrapropm@gmail.com";
+
+type Booking = {
+  id: string;
+  job_id?: string | null;
+  created_at?: string | null;
+
+  customer_name?: string | null;
+  customer_email?: string | null;
+  company_name?: string | null;
+  pickup_address?: string | null;
+  dropoff_address?: string | null;
+  scheduled_date?: string | null;
+  scheduled_time?: string | null;
+  pickup_time_slot?: string | null;
+  pickup_time_from?: string | null;
+  pickup_time_to?: string | null;
+
+  installer_name?: string | null;
+  reassigned_installer_name?: string | null;
+  installer_pay?: number | null;
+  installer_pay_status?: string | null;
+
+  service_type?: string | null;
+  service_type_label?: string | null;
+  status?: string | null;
+  job_group_id?: string | number | null;
+  job_number?: number | null;
+
+  sqft?: number | null;
+  job_size?: number | null;
+  customer_sqft_rate?: number | null;
+  service_price?: number | null;
+
+  one_way_km?: number | null;
+  round_trip_km?: number | null;
+  chargeable_km?: number | null;
+  customer_mileage_charge?: number | null;
+  mileage_fee?: number | null;
+
+  add_on_services?: string[] | string | null;
+  just_services?: string[] | string | null;
+  side_note?: string | null;
+
+  waterfall_quantity?: number | null;
+  outlet_plug_cutout_quantity?: number | null;
+  disposal_responsibility?: string | null;
+
+  installer_base_pay?: number | null;
+  installer_mileage_pay?: number | null;
+  installer_addon_pay?: number | null;
+  installer_other_pay?: number | null;
+  installer_subtotal_pay?: number | null;
+  installer_hst_pay?: number | null;
+  installer_payout_lines?:
+    | {
+        label?: string;
+        amount?: number;
+      }[]
+    | null;
+
+  final_total?: number | null;
+  is_archived?: boolean | null;
+  accepted_at?: string | null;
+
+  ai_distance_tier?: string | null;
+  ai_recommended_installer_type?: string | null;
+  ai_dispatch_score?: number | null;
+  ai_priority_score?: number | null;
+  ai_grouping_label?: string | null;
+  ai_route_hint?: string | null;
+  ai_urgency_label?: string | null;
+};
+
+type InstallerProfile = {
+  id?: string;
+  user_id?: string | null;
+  email?: string | null;
+  installer_name?: string | null;
+  full_name?: string | null;
+  name?: string | null;
+  business_name?: string | null;
+  company_name?: string | null;
+  status?: string | null;
+  approval_status?: string | null;
+  is_active?: boolean | null;
+  [key: string]: unknown;
+};
+
+type GroupedJobs = {
+  groupKey: string;
+  jobs: Booking[];
+};
+
+type AiJobInsight = {
+  recommendedInstallerType: string;
+  urgencyLabel: string;
+  groupingLabel: string;
+  groupingColor: string;
+  routeHint: string;
+  dispatchScore: number;
+  priorityScore: number;
+  distanceTier: string;
+  bestMatchScore: number;
+  recommendedAction: string;
+};
+
+type FilterValue =
+  | "all"
+  | "single"
+  | "grouped"
+  | "urgency"
+  | "sameDay"
+  | "nextDay"
+  | "longDistance"
+  | "highPay"
+  | "bestAi";
+
+type ViewMode = "available" | "allSystem";
+
+function money(value?: number | null) {
+  return "$" + Number(value || 0).toFixed(2);
+}
+
+function toArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter(Boolean).map(String);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(" | ")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function safeText(value?: string | null) {
+  return String(value || "").trim();
+}
+
+function getNormalizedStatus(status?: string | null) {
+  return safeText(status).toLowerCase();
+}
+
+function normalizeBookingStatus(status?: string | null) {
+  const value = getNormalizedStatus(status);
+
+  if (!value) return "new";
+  if (value === "confirmed") return "pending";
+  if (value === "assigned") return "accepted";
+  if (value === "in progress") return "in_progress";
+  if (value === "completed_pending_admin_review") return "completed";
+  if (value === "canceled") return "cancelled";
+
+  return value;
+}
+
+function hasAssignedInstaller(job: Booking) {
+  return (
+    safeText(job.installer_name).length > 0 ||
+    safeText(job.reassigned_installer_name).length > 0
+  );
+}
+
+function isJobAvailable(job: Booking) {
+  const status = normalizeBookingStatus(job.status);
+  const notArchived = job.is_archived !== true;
+  const noInstaller = !hasAssignedInstaller(job);
+
+  return (
+    notArchived &&
+    noInstaller &&
+    (status === "new" || status === "pending" || status === "available")
+  );
+}
+
+function getPickupWindow(job: Booking) {
+  if (job.pickup_time_slot) return job.pickup_time_slot;
+
+  const from = job.pickup_time_from || "";
+  const to = job.pickup_time_to || "";
+
+  if (from || to) {
+    return [from, to].filter(Boolean).join(" - ");
+  }
+
+  return job.scheduled_time || "-";
+}
+
+function getServiceTypeLabel(job: Booking) {
+  if (job.service_type_label) return job.service_type_label;
+
+  const value = job.service_type;
+  if (!value) return "-";
+  if (value === "full_height_backsplash") return "Full Height Backsplash";
+  if (value === "installation_3cm") return "3cm Installation";
+  if (value === "installation_2cm_standard") return "2cm Standard Installation";
+  if (value === "backsplash_tiling") return "Backsplash Tiling";
+  if (value === "justServices") return "Just Services";
+  return value;
+}
+
+function getDisposalResponsibilityLabel(value?: string | null) {
+  if (!value) return "-";
+  if (value === "customer") return "Customer / Shop Responsible";
+  if (value === "installer") return "Installer Responsible";
+  return value;
+}
+
+function getRouteClusterKey(address?: string | null) {
+  if (!address) return "";
+  return address
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .slice(0, 4)
+    .join(" ");
+}
+
+function getGroupingColor(label: string) {
+  if (label === "Strong Grouping") {
+    return "border-green-500/30 bg-green-500/10 text-green-400";
+  }
+  if (label === "Possible Group") {
+    return "border-yellow-500/30 bg-yellow-500/10 text-yellow-400";
+  }
+  return "border-zinc-700 bg-zinc-800/40 text-zinc-300";
+}
+
+function isSameDayJob(job: Booking) {
+  const text = [
+    job.pickup_time_slot || "",
+    job.scheduled_time || "",
+    job.service_type_label || "",
+    job.service_type || "",
+    job.ai_urgency_label || "",
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    text.includes("same day") ||
+    text.includes("same-day") ||
+    (job.ai_urgency_label || "") === "Same-Day Priority"
+  );
+}
+
+function isNextDayJob(job: Booking) {
+  const text = [
+    job.pickup_time_slot || "",
+    job.scheduled_time || "",
+    job.service_type_label || "",
+    job.service_type || "",
+    job.ai_urgency_label || "",
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    text.includes("next day") ||
+    text.includes("next-day") ||
+    (job.ai_urgency_label || "") === "Next-Day Priority"
+  );
+}
+
+function getAiInsight(job: Booking, allJobs: Booking[]): AiJobInsight {
+  const oneWayKm = Number(job.one_way_km || 0);
+  const sqft = Number(job.sqft || job.job_size || 0);
+  const addOnCount = toArray(job.add_on_services).length;
+  const serviceType = (job.service_type || "").toLowerCase();
+  const serviceText = [
+    job.pickup_time_slot || "",
+    job.scheduled_time || "",
+    job.service_type_label || "",
+    job.service_type || "",
+    job.ai_urgency_label || "",
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  const distanceTier = job.ai_distance_tier || "Standard Zone";
+
+  let recommendedInstallerType =
+    job.ai_recommended_installer_type || "Standard Installer";
+
+  if (!job.ai_recommended_installer_type) {
+    if (oneWayKm > 120) {
+      recommendedInstallerType = "Long Distance Specialist";
+    } else if (sqft >= 80) {
+      recommendedInstallerType = "Large Project Specialist";
+    } else if (serviceType === "installation_3cm") {
+      recommendedInstallerType = "3cm Stone Specialist";
+    } else if (serviceType === "full_height_backsplash") {
+      recommendedInstallerType = "Backsplash Specialist";
+    } else if (serviceType === "backsplash_tiling") {
+      recommendedInstallerType = "Tiling Specialist";
+    } else if (addOnCount >= 4) {
+      recommendedInstallerType = "Complex Add-On Installer";
+    }
+  }
+
+  let urgencyLabel = job.ai_urgency_label || "Open Scheduling";
+  if (!job.ai_urgency_label) {
+    if (serviceText.includes("same")) urgencyLabel = "Same-Day Priority";
+    else if (serviceText.includes("next")) urgencyLabel = "Next-Day Priority";
+  }
+
+  const clusterKey = getRouteClusterKey(job.dropoff_address || job.pickup_address);
+
+  const nearbyCount = allJobs.filter((item) => {
+    if (item.id === job.id) return false;
+    const sameDate = safeText(item.scheduled_date) === safeText(job.scheduled_date);
+    if (!sameDate) return false;
+
+    const itemClusterKey = getRouteClusterKey(
+      item.dropoff_address || item.pickup_address
+    );
+
+    return clusterKey && itemClusterKey && clusterKey === itemClusterKey;
+  }).length;
+
+  let groupingLabel = job.ai_grouping_label || "Solo Route";
+  if (!job.ai_grouping_label) {
+    if (nearbyCount >= 2) groupingLabel = "Strong Grouping";
+    else if (nearbyCount === 1) groupingLabel = "Possible Group";
+  }
+
+  let routeHint = job.ai_route_hint || "No grouping suggestion yet.";
+  if (!job.ai_route_hint) {
+    if (nearbyCount >= 2) {
+      routeHint = "Bundle this with nearby same-date jobs.";
+    } else if (nearbyCount === 1) {
+      routeHint = "Possible nearby grouped run.";
+    } else if (oneWayKm > 120) {
+      routeHint = "Best for a dedicated long-distance installer.";
+    }
+  }
+
+  let dispatchScore = Number(job.ai_dispatch_score || 0);
+  if (!dispatchScore) {
+    dispatchScore = 50;
+    if (urgencyLabel === "Same-Day Priority") dispatchScore += 20;
+    if (urgencyLabel === "Next-Day Priority") dispatchScore += 10;
+    if (sqft >= 80) dispatchScore += 10;
+    if (nearbyCount >= 1) dispatchScore += 10;
+    if (oneWayKm > 120) dispatchScore += 5;
+    if (Number(job.installer_pay || 0) >= 500) dispatchScore += 10;
+    dispatchScore = Math.max(0, Math.min(100, dispatchScore));
+  }
+
+  let priorityScore = Number(job.ai_priority_score || 0);
+  if (!priorityScore) {
+    priorityScore = 40;
+    if (urgencyLabel === "Same-Day Priority") priorityScore += 30;
+    if (urgencyLabel === "Next-Day Priority") priorityScore += 15;
+    if (sqft >= 80) priorityScore += 10;
+    if (Number(job.installer_pay || 0) >= 500) priorityScore += 10;
+    priorityScore = Math.max(0, Math.min(100, priorityScore));
+  }
+
+  let bestMatchScore = 55;
+  if (recommendedInstallerType === "Long Distance Specialist") bestMatchScore += 15;
+  if (recommendedInstallerType === "Large Project Specialist") bestMatchScore += 10;
+  if (groupingLabel === "Strong Grouping") bestMatchScore += 15;
+  if (groupingLabel === "Possible Group") bestMatchScore += 8;
+  if (Number(job.installer_pay || 0) >= 500) bestMatchScore += 10;
+  if (urgencyLabel === "Same-Day Priority") bestMatchScore += 12;
+  if (urgencyLabel === "Next-Day Priority") bestMatchScore += 6;
+  bestMatchScore = Math.max(0, Math.min(100, bestMatchScore));
+
+  let recommendedAction = "Review and accept if route works.";
+  if (urgencyLabel === "Same-Day Priority" && Number(job.installer_pay || 0) >= 500) {
+    recommendedAction = "Top priority job. Accept quickly.";
+  } else if (urgencyLabel === "Same-Day Priority") {
+    recommendedAction = "Urgent same-day job. Review first.";
+  } else if (urgencyLabel === "Next-Day Priority") {
+    recommendedAction = "Next-day priority. Good early review.";
+  } else if (groupingLabel === "Strong Grouping") {
+    recommendedAction = "Strong grouped run. High route efficiency.";
+  } else if (oneWayKm > 120) {
+    recommendedAction = "Best if you want a dedicated long-distance run.";
+  } else if (Number(job.installer_pay || 0) < 250) {
+    recommendedAction = "Lower pay job. Best if nearby or combined.";
+  }
+
+  return {
+    recommendedInstallerType,
+    urgencyLabel,
+    groupingLabel,
+    groupingColor: getGroupingColor(groupingLabel),
+    routeHint,
+    dispatchScore,
+    priorityScore,
+    distanceTier,
+    bestMatchScore,
+    recommendedAction,
+  };
+}
+
+async function sendCustomerAssignmentEmail(job: Booking, installerName: string) {
+  if (!job.customer_email) return;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
+      <h2>Your Installer Has Been Assigned</h2>
+      <p>Hello ${job.customer_name || "Customer"},</p>
+      <p>An installer has been assigned to your booking with 1-800TOPS.</p>
+
+      <div style="margin: 16px 0; padding: 14px; border: 1px solid #ddd; border-radius: 10px;">
+        <p><strong>Job ID:</strong> ${job.job_id || job.id}</p>
+        <p><strong>Installer:</strong> ${installerName || "-"}</p>
+        <p><strong>Company / Customer:</strong> ${
+          job.company_name || job.customer_name || "-"
+        }</p>
+        <p><strong>Service:</strong> ${getServiceTypeLabel(job)}</p>
+        <p><strong>Date:</strong> ${job.scheduled_date || "-"}</p>
+        <p><strong>Pickup Window:</strong> ${getPickupWindow(job)}</p>
+        <p><strong>Pick Up:</strong> ${job.pickup_address || "-"}</p>
+        <p><strong>Drop Off:</strong> ${job.dropoff_address || "-"}</p>
+      </div>
+
+      <h3>Important Notes</h3>
+      <ul>
+        <li>Please ensure all countertop pieces are counted and organized for pickup.</li>
+        <li>Installer waiting time may be subject to an additional charge.</li>
+        <li>If any paperwork requires the homeowner’s signature, please provide it to the installer at pickup.</li>
+      </ul>
+
+      <p>If you have any questions, please contact admin directly at <strong>${ADMIN_PHONE}</strong>.</p>
+      <p>Thank you for choosing 1-800TOPS.</p>
+    </div>
+  `;
+
+  await fetch("/api/send-email", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      to: job.customer_email,
+      subject: "Your Installer Has Been Assigned",
+      type: "assignment",
+      html,
+    }),
+  });
+}
+
+async function sendAdminAcceptedEmail(job: Booking, installerName: string) {
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
+      <p><strong>Job ID:</strong> ${job.job_id || job.id}</p>
+      <p><strong>Installer:</strong> ${installerName || "-"}</p>
+      <p><strong>Customer / Company:</strong> ${
+        job.company_name || job.customer_name || "-"
+      }</p>
+      <p><strong>Service:</strong> ${getServiceTypeLabel(job)}</p>
+      <p><strong>Date:</strong> ${job.scheduled_date || "-"}</p>
+      <p><strong>Pickup Window:</strong> ${getPickupWindow(job)}</p>
+      <p><strong>Pick Up:</strong> ${job.pickup_address || "-"}</p>
+      <p><strong>Drop Off:</strong> ${job.dropoff_address || "-"}</p>
+      <p><strong>Status:</strong> accepted</p>
+      <p><strong>Installer Pay:</strong> ${money(job.installer_pay)}</p>
+    </div>
+  `;
+
+  await fetch("/api/send-email", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ADMIN_EMAIL,
+      subject: `Installer Accepted Job - ${job.job_id || job.id}`,
+      type: "installer_accepted",
+      html,
+    }),
+  });
+}
+
+function AiBadge({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: string | number;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
+        className || "border-zinc-700 bg-zinc-800/40 text-zinc-300"
+      }`}
+    >
+      <span className="text-zinc-400">{label}: </span>
+      <span>{value}</span>
+    </div>
+  );
+}
+
+function CompactStat({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
+      <p className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-white">{value}</p>
+    </div>
+  );
+}
+
+function StatusPill({ job }: { job: Booking }) {
+  const normalized = normalizeBookingStatus(job.status) || "no status";
+  const archived = job.is_archived === true;
+
+  let className = "border-zinc-700 bg-zinc-800/40 text-zinc-300";
+
+  if (archived) {
+    className = "border-zinc-600 bg-zinc-700/30 text-zinc-300";
+  } else if (normalized === "accepted") {
+    className = "border-blue-500/30 bg-blue-500/10 text-blue-300";
+  } else if (normalized === "completed") {
+    className = "border-green-500/30 bg-green-500/10 text-green-400";
+  } else if (normalized === "incomplete") {
+    className = "border-red-500/30 bg-red-500/10 text-red-400";
+  } else if (
+    normalized === "pending" ||
+    normalized === "available" ||
+    normalized === "new"
+  ) {
+    className = "border-yellow-500/30 bg-yellow-500/10 text-yellow-400";
+  }
+
+  return (
+    <AiBadge
+      label="Status"
+      value={archived ? `${normalized} / archived` : normalized}
+      className={className}
+    />
+  );
+}
+
+function JobDetailBlock({
+  job,
+  allJobs,
+  expanded,
+  onToggle,
+  canAccept,
+  onAccept,
+  acceptLoading,
+}: {
+  job: Booking;
+  allJobs: Booking[];
+  expanded: boolean;
+  onToggle: () => void;
+  canAccept: boolean;
+  onAccept: () => void;
+  acceptLoading: boolean;
+}) {
+  const addOns = toArray(job.add_on_services);
+  const justServices = toArray(job.just_services);
+  const payoutLines = Array.isArray(job.installer_payout_lines)
+    ? job.installer_payout_lines
+    : [];
+  const ai = getAiInsight(job, allJobs);
+  const sameDay = isSameDayJob(job);
+  const nextDay = isNextDayJob(job);
+
+  return (
+    <div
+      className={`rounded-xl border p-4 ${
+        sameDay
+          ? "border-red-500/30 bg-red-500/5"
+          : nextDay
+            ? "border-yellow-500/30 bg-yellow-500/5"
+            : "border-zinc-800 bg-black"
+      }`}
+    >
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex-1">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <p className="text-lg font-semibold text-yellow-400">
+              {job.job_number ? `Job ${job.job_number}` : "Job"}
+            </p>
+
+            <StatusPill job={job} />
+
+            {sameDay ? (
+              <AiBadge
+                label="Urgent"
+                value="Same Day"
+                className="border-red-500/30 bg-red-500/10 text-red-400"
+              />
+            ) : null}
+
+            {!sameDay && nextDay ? (
+              <AiBadge
+                label="Priority"
+                value="Next Day"
+                className="border-yellow-500/30 bg-yellow-500/10 text-yellow-400"
+              />
+            ) : null}
+
+            <AiBadge
+              label="Grouping"
+              value={ai.groupingLabel}
+              className={ai.groupingColor}
+            />
+            <AiBadge
+              label="AI Match"
+              value={`${ai.bestMatchScore}/100`}
+              className="border-purple-500/30 bg-purple-500/10 text-purple-300"
+            />
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <CompactStat label="Job ID" value={job.job_id || job.id} />
+            <CompactStat label="Service" value={getServiceTypeLabel(job)} />
+            <CompactStat label="Date" value={job.scheduled_date || "-"} />
+            <CompactStat label="Pickup Window" value={getPickupWindow(job)} />
+            <CompactStat
+              label="Sqft"
+              value={
+                Number(job.sqft || job.job_size || 0)
+                  ? `${Number(job.sqft || job.job_size || 0).toFixed(2)} sqft`
+                  : "-"
+              }
+            />
+            <CompactStat
+              label="Distance"
+              value={`${Number(job.one_way_km || 0).toFixed(2)} km`}
+            />
+            <CompactStat label="Distance Tier" value={ai.distanceTier} />
+            <CompactStat label="Total Pay" value={money(job.installer_pay)} />
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <AiBadge
+              label="AI Installer"
+              value={ai.recommendedInstallerType}
+              className="border-blue-500/30 bg-blue-500/10 text-blue-300"
+            />
+            <AiBadge label="Dispatch" value={`${ai.dispatchScore}/100`} />
+            <AiBadge label="Priority" value={`${ai.priorityScore}/100`} />
+            <AiBadge label="Urgency" value={ai.urgencyLabel} />
+          </div>
+
+          <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950 p-3">
+            <p className="text-sm font-semibold text-yellow-400">AI Route Hint</p>
+            <p className="mt-1 text-sm text-gray-300">{ai.routeHint}</p>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950 p-3">
+            <p className="text-sm font-semibold text-yellow-400">AI Recommended Action</p>
+            <p className="mt-1 text-sm text-gray-300">{ai.recommendedAction}</p>
+          </div>
+        </div>
+
+        <div className="w-full space-y-3 lg:w-auto">
+          <button
+            type="button"
+            onClick={onToggle}
+            className="w-full rounded-xl border border-zinc-700 px-4 py-3 text-sm font-semibold text-white transition hover:border-yellow-500 hover:text-yellow-400 lg:w-auto"
+          >
+            {expanded ? "Hide Details" : "View Details"}
+          </button>
+
+          {canAccept ? (
+            <button
+              type="button"
+              onClick={onAccept}
+              disabled={acceptLoading}
+              className="w-full rounded-xl bg-yellow-500 px-4 py-3 text-sm font-bold text-black transition hover:bg-yellow-400 disabled:opacity-60 lg:w-auto"
+            >
+              {acceptLoading ? "Accepting..." : "Accept This Job"}
+            </button>
+          ) : (
+            <div className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-xs text-zinc-400">
+              This job is not currently available to accept.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {expanded ? (
+        <div className="mt-5 border-t border-zinc-800 pt-5">
+          <div className="space-y-1 text-sm text-gray-300">
+            <p>Customer: {job.company_name || job.customer_name || "Job"}</p>
+            <p>Email: {job.customer_email || "-"}</p>
+            <p>Pick Up: {job.pickup_address || "-"}</p>
+            <p>Drop Off: {job.dropoff_address || "-"}</p>
+            <p>Installer Assigned: {job.installer_name || "-"}</p>
+            <p>Created At: {job.created_at || "-"}</p>
+
+            {Number(job.waterfall_quantity || 0) > 0 ? (
+              <p>Waterfall Quantity: {String(job.waterfall_quantity)}</p>
+            ) : null}
+
+            {Number(job.outlet_plug_cutout_quantity || 0) > 0 ? (
+              <p>
+                Outlet Plug Cutout Quantity: {String(job.outlet_plug_cutout_quantity)}
+              </p>
+            ) : null}
+
+            {job.disposal_responsibility ? (
+              <p>
+                Disposal Responsibility:{" "}
+                {getDisposalResponsibilityLabel(job.disposal_responsibility)}
+              </p>
+            ) : null}
+
+            {job.side_note ? <p>Side Note: {job.side_note}</p> : null}
+          </div>
+
+          {addOns.length > 0 ? (
+            <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950 p-3">
+              <p className="mb-2 font-semibold text-yellow-400">Add-On Services</p>
+              <div className="space-y-1 text-sm text-gray-300">
+                {addOns.map((item) => (
+                  <p key={item}>• {item}</p>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {justServices.length > 0 ? (
+            <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950 p-3">
+              <p className="mb-2 font-semibold text-yellow-400">Just Services</p>
+              <div className="space-y-1 text-sm text-gray-300">
+                {justServices.map((item) => (
+                  <p key={item}>• {item}</p>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950 p-3">
+            <p className="mb-2 font-semibold text-yellow-400">Your Pay Breakdown</p>
+            <div className="space-y-1 text-sm text-gray-300">
+              <p>Base Pay: {money(job.installer_base_pay)}</p>
+              <p>Add-On Pay: {money(job.installer_addon_pay)}</p>
+              <p>Other Service Pay: {money(job.installer_other_pay)}</p>
+              <p>Mileage Pay: {money(job.installer_mileage_pay)}</p>
+              <p>Subtotal Pay: {money(job.installer_subtotal_pay)}</p>
+
+              {Number(job.installer_hst_pay || 0) > 0 ? (
+                <p>HST Pay: {money(job.installer_hst_pay)}</p>
+              ) : null}
+
+              {payoutLines.length > 0 ? (
+                <div className="pt-2">
+                  {payoutLines.map((line, index) => (
+                    <p key={`${line.label || "line"}-${index}`}>
+                      • {line.label || "Payout Line"}: {money(line.amount)}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+
+              <p className="pt-2 font-semibold text-yellow-400">
+                Total Pay: {money(job.installer_pay)}
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export default function InstallerJobsPage() {
+  const [allJobs, setAllJobs] = useState<Booking[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [installerName, setInstallerName] = useState("");
+  const [acceptingKey, setAcceptingKey] = useState("");
+  const [expandedKeys, setExpandedKeys] = useState<Record<string, boolean>>({});
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<FilterValue>("all");
+  const [viewMode, setViewMode] = useState<ViewMode>("available");
+  const [authChecked, setAuthChecked] = useState(false);
+
+  useEffect(() => {
+    void bootPage();
+  }, []);
+
+  async function bootPage() {
+    setLoading(true);
+
+    const supabase = createClient();
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      console.error("AUTH ERROR:", authError);
+      alert("Please log in as installer first.");
+      setAllJobs([]);
+      setInstallerName("");
+      setAuthChecked(true);
+      setLoading(false);
+      return;
+    }
+
+    let installerProfile: InstallerProfile | null = null;
+
+    const byUserId = await supabase
+      .from("installer_profiles")
+      .select("*")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (!byUserId.error && byUserId.data) {
+      installerProfile = byUserId.data as InstallerProfile;
+    } else if (byUserId.error) {
+      console.error("INSTALLER PROFILE BY USER_ID ERROR:", byUserId.error);
+    }
+
+    if (!installerProfile) {
+      const byId = await supabase
+        .from("installer_profiles")
+        .select("*")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (!byId.error && byId.data) {
+        installerProfile = byId.data as InstallerProfile;
+      } else if (byId.error) {
+        console.error("INSTALLER PROFILE BY ID ERROR:", byId.error);
+      }
+    }
+
+    if (!installerProfile && user.email) {
+      const byEmail = await supabase
+        .from("installer_profiles")
+        .select("*")
+        .eq("email", user.email)
+        .maybeSingle();
+
+      if (!byEmail.error && byEmail.data) {
+        installerProfile = byEmail.data as InstallerProfile;
+      } else if (byEmail.error) {
+        console.error("INSTALLER PROFILE BY EMAIL ERROR:", byEmail.error);
+      }
+    }
+
+    if (!installerProfile) {
+      alert("No installer profile was found for this signed-in account.");
+      setAllJobs([]);
+      setInstallerName("");
+      setAuthChecked(true);
+      setLoading(false);
+      return;
+    }
+
+    const resolvedInstallerName =
+      safeText((installerProfile.installer_name as string | null) || null) ||
+      safeText((installerProfile.full_name as string | null) || null) ||
+      safeText((installerProfile.name as string | null) || null) ||
+      safeText((installerProfile.business_name as string | null) || null) ||
+      safeText((installerProfile.company_name as string | null) || null) ||
+      safeText(user.email || "");
+
+    if (!resolvedInstallerName) {
+      alert("Installer profile name not found.");
+      setAllJobs([]);
+      setInstallerName("");
+      setAuthChecked(true);
+      setLoading(false);
+      return;
+    }
+
+    const approvalValue = String(
+      installerProfile.approval_status || installerProfile.status || ""
+    )
+      .trim()
+      .toLowerCase();
+
+    const isActiveValue = installerProfile.is_active;
+
+    if (
+      approvalValue &&
+      !["approved", "active"].includes(approvalValue) &&
+      isActiveValue === false
+    ) {
+      alert("Your installer account is not approved yet.");
+      setAllJobs([]);
+      setInstallerName(resolvedInstallerName);
+      setAuthChecked(true);
+      setLoading(false);
+      return;
+    }
+
+    if (!installerProfile.user_id && installerProfile.id === user.id) {
+      const { error: backfillError } = await supabase
+        .from("installer_profiles")
+        .update({ user_id: user.id })
+        .eq("id", user.id);
+
+      if (backfillError) {
+        console.error("INSTALLER PROFILE BACKFILL ERROR:", backfillError);
+      }
+    }
+
+    setInstallerName(resolvedInstallerName);
+
+    if (typeof window !== "undefined") {
+      localStorage.setItem("installerPortalName", resolvedInstallerName);
+    }
+
+    setAuthChecked(true);
+    await loadJobs();
+  }
+
+  async function loadJobs() {
+    setLoading(true);
+
+    const supabase = createClient();
+
+    const { data, error } = await supabase
+      .from("bookings")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("LOAD JOBS ERROR:", error);
+      alert(error.message || "Error loading jobs");
+      setAllJobs([]);
+      setLoading(false);
+      return;
+    }
+
+    const safeJobs = ((data as Booking[]) || []).map((job) => ({
+      ...job,
+      installer_pay: Number(job.installer_pay || 0),
+      one_way_km: Number(job.one_way_km || 0),
+      sqft: Number(job.sqft || 0),
+      job_size: Number(job.job_size || 0),
+    }));
+
+    setAllJobs(safeJobs);
+    setLoading(false);
+  }
+
+  function toggleExpanded(key: string) {
+    setExpandedKeys((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  }
+
+  async function recheckSingleJobAvailability(jobId: string) {
+    const supabase = createClient();
+
+    const { data, error } = await supabase
+      .from("bookings")
+      .select("*")
+      .eq("id", jobId)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(error.message || "Failed to re-check job.");
+    }
+
+    const job = (data as Booking | null) || null;
+
+    if (!job) {
+      throw new Error("Job not found.");
+    }
+
+    if (!isJobAvailable(job)) {
+      throw new Error("Job is no longer available.");
+    }
+
+    return job;
+  }
+
+  async function recheckGroupedJobsAvailability(jobIds: string[]) {
+    const supabase = createClient();
+
+    const { data, error } = await supabase
+      .from("bookings")
+      .select("*")
+      .in("id", jobIds);
+
+    if (error) {
+      throw new Error(error.message || "Failed to re-check grouped jobs.");
+    }
+
+    const jobsFound = (data as Booking[]) || [];
+
+    if (jobsFound.length !== jobIds.length) {
+      throw new Error("One or more jobs are missing.");
+    }
+
+    const invalidJob = jobsFound.find((job) => !isJobAvailable(job));
+
+    if (invalidJob) {
+      throw new Error("One or more jobs are no longer available.");
+    }
+
+    return jobsFound;
+  }
+
+  async function acceptSingleJob(job: Booking) {
+    if (!authChecked) {
+      alert("Checking installer access...");
+      return;
+    }
+
+    if (!installerName.trim()) {
+      alert("Installer name not found from profile.");
+      return;
+    }
+
+    if (!isJobAvailable(job)) {
+      alert("This job is not available to accept.");
+      return;
+    }
+
+    setAcceptingKey(job.id);
+
+    try {
+      const freshJob = await recheckSingleJobAvailability(job.id);
+      const supabase = createClient();
+      const acceptedAt = new Date().toISOString();
+
+      const { error } = await supabase
+        .from("bookings")
+        .update({
+          installer_name: installerName.trim(),
+          reassigned_installer_name: null,
+          status: "accepted",
+          accepted_at: acceptedAt,
+        })
+        .eq("id", job.id);
+
+      if (error) {
+        throw new Error(error.message || "Failed to accept job");
+      }
+
+      try {
+        await sendCustomerAssignmentEmail(freshJob, installerName.trim());
+      } catch (emailError) {
+        console.error("Customer assignment email error:", emailError);
+      }
+
+      try {
+        await sendAdminAcceptedEmail(freshJob, installerName.trim());
+      } catch (emailError) {
+        console.error("Admin accepted email error:", emailError);
+      }
+
+      alert("Job accepted ✅");
+      await loadJobs();
+    } catch (error) {
+      console.error("ACCEPT SINGLE JOB ERROR:", error);
+      alert(error instanceof Error ? error.message : "Failed to accept job");
+    } finally {
+      setAcceptingKey("");
+    }
+  }
+
+  async function acceptBothJobs(group: GroupedJobs) {
+    if (!authChecked) {
+      alert("Checking installer access...");
+      return;
+    }
+
+    if (!installerName.trim()) {
+      alert("Installer name not found from profile.");
+      return;
+    }
+
+    if (group.jobs.length < 2) {
+      alert("This group no longer has both jobs available.");
+      return;
+    }
+
+    if (!group.jobs.every(isJobAvailable)) {
+      alert("One or more jobs in this group are not available to accept.");
+      return;
+    }
+
+    setAcceptingKey(group.groupKey);
+
+    try {
+      const jobIds = group.jobs.map((job) => job.id);
+      const freshJobs = await recheckGroupedJobsAvailability(jobIds);
+      const supabase = createClient();
+      const acceptedAt = new Date().toISOString();
+
+      const { error } = await supabase
+        .from("bookings")
+        .update({
+          installer_name: installerName.trim(),
+          reassigned_installer_name: null,
+          status: "accepted",
+          accepted_at: acceptedAt,
+        })
+        .in("id", jobIds);
+
+      if (error) {
+        throw new Error(error.message || "Failed to accept both jobs");
+      }
+
+      for (const freshJob of freshJobs) {
+        try {
+          await sendCustomerAssignmentEmail(freshJob, installerName.trim());
+        } catch (emailError) {
+          console.error("Customer assignment email error:", emailError);
+        }
+
+        try {
+          await sendAdminAcceptedEmail(freshJob, installerName.trim());
+        } catch (emailError) {
+          console.error("Admin accepted email error:", emailError);
+        }
+      }
+
+      alert("Both jobs accepted ✅");
+      await loadJobs();
+    } catch (error) {
+      console.error("ACCEPT BOTH JOBS ERROR:", error);
+      alert(error instanceof Error ? error.message : "Failed to accept both jobs");
+    } finally {
+      setAcceptingKey("");
+    }
+  }
+
+  const visibleJobs = useMemo(() => {
+    if (viewMode === "available") {
+      return allJobs.filter(isJobAvailable);
+    }
+    return allJobs;
+  }, [allJobs, viewMode]);
+
+  const groupedJobs = useMemo(() => {
+    const groups = new Map<string, Booking[]>();
+
+    visibleJobs.forEach((job) => {
+      const key = String(job.job_group_id || job.id);
+
+      if (!groups.has(key)) {
+        groups.set(key, []);
+      }
+
+      groups.get(key)!.push(job);
+    });
+
+    const result: GroupedJobs[] = Array.from(groups.entries()).map(
+      ([groupKey, groupItems]) => ({
+        groupKey,
+        jobs: [...groupItems].sort(
+          (a, b) => Number(a.job_number || 0) - Number(b.job_number || 0)
+        ),
+      })
+    );
+
+    return result.sort((a, b) => {
+      const aHasSameDay = a.jobs.some((job) => isSameDayJob(job));
+      const bHasSameDay = b.jobs.some((job) => isSameDayJob(job));
+
+      if (aHasSameDay && !bHasSameDay) return -1;
+      if (!aHasSameDay && bHasSameDay) return 1;
+
+      const aHasNextDay = a.jobs.some((job) => isNextDayJob(job));
+      const bHasNextDay = b.jobs.some((job) => isNextDayJob(job));
+
+      if (aHasNextDay && !bHasNextDay) return -1;
+      if (!aHasNextDay && bHasNextDay) return 1;
+
+      const aTopAi = Math.max(
+        ...a.jobs.map((job) => getAiInsight(job, visibleJobs).bestMatchScore)
+      );
+      const bTopAi = Math.max(
+        ...b.jobs.map((job) => getAiInsight(job, visibleJobs).bestMatchScore)
+      );
+
+      if (bTopAi !== aTopAi) return bTopAi - aTopAi;
+
+      const aTopPay = Math.max(...a.jobs.map((job) => Number(job.installer_pay || 0)));
+      const bTopPay = Math.max(...b.jobs.map((job) => Number(job.installer_pay || 0)));
+
+      return bTopPay - aTopPay;
+    });
+  }, [visibleJobs]);
+
+  const filteredGroups = useMemo(() => {
+    const term = search.trim().toLowerCase();
+
+    return groupedJobs.filter((group) => {
+      const isGrouped = group.jobs.length > 1;
+
+      if (filter === "single" && isGrouped) return false;
+      if (filter === "grouped" && !isGrouped) return false;
+
+      if (
+        filter === "urgency" &&
+        !group.jobs.some((job) => {
+          const ai = getAiInsight(job, visibleJobs);
+          return (
+            ai.urgencyLabel === "Same-Day Priority" ||
+            ai.urgencyLabel === "Next-Day Priority"
+          );
+        })
+      ) {
+        return false;
+      }
+
+      if (
+        filter === "sameDay" &&
+        !group.jobs.some(
+          (job) => getAiInsight(job, visibleJobs).urgencyLabel === "Same-Day Priority"
+        )
+      ) {
+        return false;
+      }
+
+      if (
+        filter === "nextDay" &&
+        !group.jobs.some(
+          (job) => getAiInsight(job, visibleJobs).urgencyLabel === "Next-Day Priority"
+        )
+      ) {
+        return false;
+      }
+
+      if (
+        filter === "longDistance" &&
+        !group.jobs.some((job) => Number(job.one_way_km || 0) > 120)
+      ) {
+        return false;
+      }
+
+      if (
+        filter === "highPay" &&
+        !group.jobs.some((job) => Number(job.installer_pay || 0) >= 500)
+      ) {
+        return false;
+      }
+
+      if (
+        filter === "bestAi" &&
+        !group.jobs.some((job) => getAiInsight(job, visibleJobs).bestMatchScore >= 85)
+      ) {
+        return false;
+      }
+
+      if (!term) return true;
+
+      return group.jobs.some((job) => {
+        const ai = getAiInsight(job, visibleJobs);
+
+        return (
+          safeText(job.job_id).toLowerCase().includes(term) ||
+          safeText(job.company_name).toLowerCase().includes(term) ||
+          safeText(job.customer_name).toLowerCase().includes(term) ||
+          safeText(job.pickup_address).toLowerCase().includes(term) ||
+          safeText(job.dropoff_address).toLowerCase().includes(term) ||
+          safeText(job.scheduled_date).toLowerCase().includes(term) ||
+          getServiceTypeLabel(job).toLowerCase().includes(term) ||
+          getNormalizedStatus(job.status).includes(term) ||
+          safeText(job.installer_name).toLowerCase().includes(term) ||
+          ai.recommendedInstallerType.toLowerCase().includes(term) ||
+          ai.groupingLabel.toLowerCase().includes(term) ||
+          ai.urgencyLabel.toLowerCase().includes(term) ||
+          ai.recommendedAction.toLowerCase().includes(term)
+        );
+      });
+    });
+  }, [groupedJobs, search, filter, visibleJobs]);
+
+  const urgentGroups = useMemo(() => {
+    return filteredGroups.filter((group) =>
+      group.jobs.some((job) => isSameDayJob(job))
+    );
+  }, [filteredGroups]);
+
+  const nextDayGroups = useMemo(() => {
+    return filteredGroups.filter(
+      (group) =>
+        !group.jobs.some((job) => isSameDayJob(job)) &&
+        group.jobs.some((job) => isNextDayJob(job))
+    );
+  }, [filteredGroups]);
+
+  const regularGroups = useMemo(() => {
+    return filteredGroups.filter(
+      (group) =>
+        !group.jobs.some((job) => isSameDayJob(job)) &&
+        !group.jobs.some((job) => isNextDayJob(job))
+    );
+  }, [filteredGroups]);
+
+  const summary = useMemo(() => {
+    const totalGroups = filteredGroups.length;
+    const totalJobs = filteredGroups.reduce((sum, group) => sum + group.jobs.length, 0);
+    const groupedCount = filteredGroups.filter((group) => group.jobs.length > 1).length;
+    const urgencyCount = filteredGroups.filter((group) =>
+      group.jobs.some((job) => {
+        const ai = getAiInsight(job, visibleJobs);
+        return (
+          ai.urgencyLabel === "Same-Day Priority" ||
+          ai.urgencyLabel === "Next-Day Priority"
+        );
+      })
+    ).length;
+    const sameDayCount = filteredGroups.filter((group) =>
+      group.jobs.some(
+        (job) => getAiInsight(job, visibleJobs).urgencyLabel === "Same-Day Priority"
+      )
+    ).length;
+    const nextDayCount = filteredGroups.filter((group) =>
+      group.jobs.some(
+        (job) => getAiInsight(job, visibleJobs).urgencyLabel === "Next-Day Priority"
+      )
+    ).length;
+    const longDistanceCount = filteredGroups.filter((group) =>
+      group.jobs.some((job) => Number(job.one_way_km || 0) > 120)
+    ).length;
+    const topAiCount = filteredGroups.filter((group) =>
+      group.jobs.some((job) => getAiInsight(job, visibleJobs).bestMatchScore >= 85)
+    ).length;
+
+    return {
+      totalGroups,
+      totalJobs,
+      groupedCount,
+      urgencyCount,
+      sameDayCount,
+      nextDayCount,
+      longDistanceCount,
+      topAiCount,
+    };
+  }, [filteredGroups, visibleJobs]);
+
+  function renderGroup(group: GroupedJobs) {
+    const isGrouped = group.jobs.length > 1;
+    const availableJobsInGroup = group.jobs.filter(isJobAvailable);
+    const totalGroupPay = group.jobs.reduce(
+      (sum, job) => sum + Number(job.installer_pay || 0),
+      0
+    );
+    const topAi = Math.max(
+      ...group.jobs.map((job) => getAiInsight(job, visibleJobs).bestMatchScore)
+    );
+    const topPriority = Math.max(
+      ...group.jobs.map((job) => getAiInsight(job, visibleJobs).priorityScore)
+    );
+    const bestGrouping = group.jobs.some(
+      (job) => getAiInsight(job, visibleJobs).groupingLabel === "Strong Grouping"
+    )
+      ? "Strong Grouping"
+      : group.jobs.some(
+            (job) => getAiInsight(job, visibleJobs).groupingLabel === "Possible Group"
+          )
+        ? "Possible Group"
+        : "Solo Route";
+
+    const hasSameDay = group.jobs.some((job) => isSameDayJob(job));
+    const hasNextDay = group.jobs.some((job) => isNextDayJob(job));
+    const canAcceptBoth = isGrouped && availableJobsInGroup.length === group.jobs.length;
+
+    return (
+      <div
+        key={group.groupKey}
+        className={`rounded-xl border p-5 ${
+          hasSameDay
+            ? "border-red-500/30 bg-red-500/5"
+            : hasNextDay
+              ? "border-yellow-500/30 bg-yellow-500/5"
+              : "border-zinc-800 bg-zinc-900"
+        }`}
+      >
+        <div className="mb-4 flex flex-col gap-3 border-b border-zinc-800 pb-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-2xl font-semibold text-yellow-400">
+              {group.jobs[0].company_name ||
+                group.jobs[0].customer_name ||
+                (isGrouped ? "Group Job" : "Job")}
+            </p>
+            <p className="mt-1 text-sm text-gray-300">
+              {isGrouped
+                ? `Grouped Run • ${group.jobs.length} jobs shown`
+                : "Single Job"}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {hasSameDay ? (
+              <AiBadge
+                label="Urgent"
+                value="Same Day"
+                className="border-red-500/30 bg-red-500/10 text-red-400"
+              />
+            ) : null}
+
+            {!hasSameDay && hasNextDay ? (
+              <AiBadge
+                label="Priority"
+                value="Next Day"
+                className="border-yellow-500/30 bg-yellow-500/10 text-yellow-400"
+              />
+            ) : null}
+
+            <AiBadge label="Group Pay" value={money(totalGroupPay)} />
+            <AiBadge
+              label="Best AI"
+              value={`${topAi}/100`}
+              className="border-purple-500/30 bg-purple-500/10 text-purple-300"
+            />
+            <AiBadge label="Best Priority" value={`${topPriority}/100`} />
+            <AiBadge
+              label="Grouping"
+              value={bestGrouping}
+              className={getGroupingColor(bestGrouping)}
+            />
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          {group.jobs.map((job) => {
+            const detailKey = `${group.groupKey}-${job.id}`;
+            const expanded = Boolean(expandedKeys[detailKey]);
+            const canAcceptSingle = isJobAvailable(job);
+
+            return (
+              <div key={job.id}>
+                <JobDetailBlock
+                  job={job}
+                  allJobs={visibleJobs}
+                  expanded={expanded}
+                  onToggle={() => toggleExpanded(detailKey)}
+                  canAccept={canAcceptSingle}
+                  onAccept={() => void acceptSingleJob(job)}
+                  acceptLoading={acceptingKey === job.id}
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        {isGrouped ? (
+          canAcceptBoth ? (
+            <button
+              type="button"
+              onClick={() => void acceptBothJobs(group)}
+              disabled={acceptingKey === group.groupKey}
+              className="mt-5 rounded-xl bg-yellow-500 px-5 py-3 font-bold text-black transition hover:bg-yellow-400 disabled:opacity-60"
+            >
+              {acceptingKey === group.groupKey
+                ? "Accepting Both..."
+                : "Accept Both Jobs"}
+            </button>
+          ) : (
+            <div className="mt-5 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm text-zinc-400">
+              Not all jobs in this group are currently available to accept together.
+            </div>
+          )
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <main className="space-y-6">
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+        <h1 className="text-4xl font-bold text-yellow-500">
+          {viewMode === "available" ? "Available Jobs" : "All System Jobs"}
+        </h1>
+        <p className="mt-2 text-gray-400">
+          {viewMode === "available"
+            ? "Open jobs installers can still accept."
+            : "Full system view of all jobs, including accepted, completed, incomplete, archived, and older jobs."}
+        </p>
+
+        {installerName ? (
+          <p className="mt-3 text-sm text-zinc-300">
+            Logged in as:{" "}
+            <span className="font-semibold text-yellow-400">{installerName}</span>
+          </p>
+        ) : null}
+      </div>
+
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={() => setViewMode("available")}
+            className={`rounded-xl px-5 py-3 text-sm font-semibold ${
+              viewMode === "available"
+                ? "bg-yellow-500 text-black"
+                : "border border-zinc-700 bg-black text-white hover:border-yellow-500 hover:text-yellow-400"
+            }`}
+          >
+            Available Jobs
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setViewMode("allSystem")}
+            className={`rounded-xl px-5 py-3 text-sm font-semibold ${
+              viewMode === "allSystem"
+                ? "bg-yellow-500 text-black"
+                : "border border-zinc-700 bg-black text-white hover:border-yellow-500 hover:text-yellow-400"
+            }`}
+          >
+            All System Jobs
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void loadJobs()}
+            className="rounded-xl border border-zinc-700 bg-black px-5 py-3 text-sm font-semibold text-white transition hover:border-yellow-500 hover:text-yellow-400"
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+        <p className="text-sm text-gray-300">
+          AI helps suggest the best jobs and grouped routes, but{" "}
+          <span className="font-semibold text-yellow-400">
+            you still choose which job to accept.
+          </span>
+        </p>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-8">
+        <CompactStat label="Job Groups" value={String(summary.totalGroups)} />
+        <CompactStat label="Total Jobs" value={String(summary.totalJobs)} />
+        <CompactStat label="Grouped Runs" value={String(summary.groupedCount)} />
+        <CompactStat label="Urgency" value={String(summary.urgencyCount)} />
+        <CompactStat label="Same-Day" value={String(summary.sameDayCount)} />
+        <CompactStat label="Next-Day" value={String(summary.nextDayCount)} />
+        <CompactStat label="Long Distance" value={String(summary.longDistanceCount)} />
+        <CompactStat label="Top AI Match" value={String(summary.topAiCount)} />
+      </div>
+
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+        <div className="grid gap-4 lg:grid-cols-[1fr_auto]">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search job ID, company, address, service, status, installer..."
+            className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
+          />
+
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                ["all", "All"],
+                ["single", "Single"],
+                ["grouped", "Grouped"],
+                ["urgency", "Urgency"],
+                ["sameDay", "Same Day"],
+                ["nextDay", "Next Day"],
+                ["longDistance", "Long Distance"],
+                ["highPay", "High Pay"],
+                ["bestAi", "Best AI"],
+              ] as [FilterValue, string][]
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setFilter(value)}
+                className={`rounded-xl px-4 py-3 text-sm font-semibold ${
+                  filter === value
+                    ? "bg-yellow-500 text-black"
+                    : "border border-zinc-700 bg-black text-white hover:border-yellow-500 hover:text-yellow-400"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {loading ? (
+        <p className="text-gray-300">Loading...</p>
+      ) : filteredGroups.length === 0 ? (
+        <div className="rounded-xl border border-zinc-800 bg-black p-4 text-gray-400">
+          No jobs found for this view/filter.
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {urgentGroups.length > 0 ? (
+            <section className="space-y-4">
+              <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-5">
+                <h2 className="text-2xl font-bold text-red-400">Urgent Same-Day Jobs</h2>
+                <p className="mt-1 text-sm text-red-200">
+                  These jobs are pushed to the top so installers can see them first.
+                </p>
+              </div>
+
+              {urgentGroups.map((group) => renderGroup(group))}
+            </section>
+          ) : null}
+
+          {nextDayGroups.length > 0 ? (
+            <section className="space-y-4">
+              <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/10 p-5">
+                <h2 className="text-2xl font-bold text-yellow-400">
+                  Next-Day Priority Jobs
+                </h2>
+                <p className="mt-1 text-sm text-yellow-200">
+                  High-visibility jobs that should be reviewed early.
+                </p>
+              </div>
+
+              {nextDayGroups.map((group) => renderGroup(group))}
+            </section>
+          ) : null}
+
+          {regularGroups.length > 0 ? (
+            <section className="space-y-4">
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+                <h2 className="text-2xl font-bold text-yellow-500">
+                  {viewMode === "available" ? "Other Available Jobs" : "Other System Jobs"}
+                </h2>
+                <p className="mt-1 text-sm text-gray-400">
+                  Remaining jobs ranked by AI score, grouping, and payout.
+                </p>
+              </div>
+
+              {regularGroups.map((group) => renderGroup(group))}
+            </section>
+          ) : null}
+        </div>
+      )}
+    </main>
+  );
+}
