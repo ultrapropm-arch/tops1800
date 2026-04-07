@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+export const dynamic = "force-dynamic";
+
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import SupportChatWidget from "../../components/support/SupportChatWidget";
 
@@ -384,7 +386,7 @@ function StatusCard({
   );
 }
 
-export default function ConfirmationPage() {
+function ConfirmationPageContent() {
   const searchParams = useSearchParams();
 
   const bookingIdParam = searchParams.get("booking_id");
@@ -914,5 +916,18 @@ export default function ConfirmationPage() {
         senderType="customer"
       />
     </main>
+  );
+}
+export default function ConfirmationPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-black p-6 text-white">
+          Loading confirmation page...
+        </main>
+      }
+    >
+      <ConfirmationPageContent />
+    </Suspense>
   );
 }

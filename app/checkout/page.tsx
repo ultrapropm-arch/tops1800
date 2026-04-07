@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+export const dynamic = "force-dynamic";
+
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 const CUSTOMER_JUST_SERVICE_MINIMUM = 220;
@@ -498,7 +500,7 @@ function SectionTitle({
   );
 }
 
-export default function BookPage() {
+function CheckoutPageContent() {
   const searchParams = useSearchParams();
 
   const [customerName, setCustomerName] = useState("");
@@ -2089,5 +2091,18 @@ export default function BookPage() {
         </div>
       </div>
     </main>
+  );
+}
+export default function CheckoutPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-black p-6 text-white">
+          Loading checkout page...
+        </main>
+      }
+    >
+      <CheckoutPageContent />
+    </Suspense>
   );
 }
