@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 
@@ -23,10 +23,20 @@ type Booking = {
   created_at?: string | null;
 };
 
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-zinc-700 bg-black p-3">
+      <p className="text-sm text-zinc-400">{label}</p>
+      <p className="mt-1 text-sm font-medium text-white">{value || "-"}</p>
+    </div>
+  );
+}
+
 export default function CustomerProfilePage() {
-  const supabase = createClient();
-  const params = useParams<{ id: string }>();
-  const customerId = Array.isArray(params?.id) ? params.id[0] : params?.id ?? "";
+  const params = useParams();
+  const rawId = params?.id;
+  const customerId =
+    typeof rawId === "string" ? rawId : Array.isArray(rawId) ? rawId[0] ?? "" : "";
 
   const [loading, setLoading] = useState(true);
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -36,6 +46,8 @@ export default function CustomerProfilePage() {
   const [phoneNumber, setPhoneNumber] = useState("");
 
   useEffect(() => {
+    const supabase = createClient();
+
     async function loadCustomerBookings() {
       if (!customerId) {
         setBookings([]);
@@ -45,19 +57,19 @@ export default function CustomerProfilePage() {
 
       setLoading(true);
 
-      const { data, error } = await supabase
+      const { data: firstData, error: firstError } = await supabase
         .from("bookings")
         .select("*")
         .eq("id", customerId)
         .limit(1);
 
-      if (error || !data || data.length === 0) {
+      if (firstError || !firstData || firstData.length === 0) {
         setBookings([]);
         setLoading(false);
         return;
       }
 
-      const firstBooking = data[0];
+      const firstBooking = firstData[0];
       const email = firstBooking.customer_email || "";
       const phone = firstBooking.phone_number || "";
 
@@ -74,9 +86,9 @@ export default function CustomerProfilePage() {
         query = query.eq("id", customerId);
       }
 
-      const { data: allBookings, error: bookingsError } = await query;
+      const { data: allBookings, error: allError } = await query;
 
-      if (bookingsError) {
+      if (allError) {
         setBookings([]);
         setLoading(false);
         return;
@@ -91,18 +103,16 @@ export default function CustomerProfilePage() {
     }
 
     loadCustomerBookings();
-  }, [customerId, supabase]);
+  }, [customerId]);
 
-  const totalRevenue = bookings.reduce((sum, booking) => {
-    return sum + Number(booking.customer_total || 0);
-  }, 0);
+  const totalRevenue = useMemo(() => {
+    return bookings.reduce((sum, booking) => sum + Number(booking.customer_total || 0), 0);
+  }, [bookings]);
 
   return (
     <main className="min-h-screen bg-black p-6 text-white">
       <div className="mx-auto max-w-6xl">
-        <h1 className="mb-6 text-4xl font-bold text-yellow-500">
-          Customer Profile
-        </h1>
+        <h1 className="mb-6 text-4xl font-bold text-yellow-500">Customer Profile</h1>
 
         <div className="mb-8 rounded-2xl border border-yellow-500 bg-zinc-900 p-6">
           <div className="grid gap-4 md:grid-cols-2">
@@ -111,17 +121,12 @@ export default function CustomerProfilePage() {
             <InfoRow label="Company" value={companyName} />
             <InfoRow label="Phone" value={phoneNumber} />
             <InfoRow label="Total Jobs" value={String(bookings.length)} />
-            <InfoRow
-              label="Total Revenue"
-              value={`$${totalRevenue.toFixed(2)}`}
-            />
+            <InfoRow label="Total Revenue" value={`$${totalRevenue.toFixed(2)}`} />
           </div>
         </div>
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
-          <h2 className="mb-4 text-2xl font-semibold text-yellow-500">
-            Job History
-          </h2>
+          <h2 className="mb-4 text-2xl font-semibold text-yellow-500">Job History</h2>
 
           {loading ? (
             <p className="text-zinc-300">Loading customer jobs...</p>
@@ -137,27 +142,12 @@ export default function CustomerProfilePage() {
                   <div className="grid gap-3 md:grid-cols-2">
                     <InfoRow label="Booking ID" value={booking.id} />
                     <InfoRow label="Status" value={booking.status || "-"} />
-                    <InfoRow
-                      label="Pickup Address"
-                      value={booking.pickup_address || "-"}
-                    />
-                    <InfoRow
-                      label="Dropoff Address"
-                      value={booking.dropoff_address || "-"}
-                    />
+                    <InfoRow label="Pickup Address" value={booking.pickup_address || "-"} />
+                    <InfoRow label="Dropoff Address" value={booking.dropoff_address || "-"} />
                     <InfoRow label="Timeline" value={booking.timeline || "-"} />
-                    <InfoRow
-                      label="Scheduled Date"
-                      value={booking.scheduled_date || "-"}
-                    />
-                    <InfoRow
-                      label="Pickup Window"
-                      value={booking.pickup_time_slot || "-"}
-                    />
-                    <InfoRow
-                      label="Service Type"
-                      value={booking.service_type || "-"}
-                    />
+                    <InfoRow label="Scheduled Date" value={booking.scheduled_date || "-"} />
+                    <InfoRow label="Pickup Window" value={booking.pickup_time_slot || "-"} />
+                    <InfoRow label="Service Type" value={booking.service_type || "-"} />
                     <InfoRow
                       label="Square Footage"
                       value={
@@ -166,15 +156,10 @@ export default function CustomerProfilePage() {
                           : "-"
                       }
                     />
-                    <InfoRow
-                      label="Payment Method"
-                      value={booking.payment_method || "-"}
-                    />
+                    <InfoRow label="Payment Method" value={booking.payment_method || "-"} />
                     <InfoRow
                       label="Customer Total"
-                      value={`$${Number(booking.customer_total || 0).toFixed(
-                        2
-                      )}`}
+                      value={`$${Number(booking.customer_total || 0).toFixed(2)}`}
                     />
                     <InfoRow label="Created" value={booking.created_at || "-"} />
                   </div>
@@ -185,20 +170,5 @@ export default function CustomerProfilePage() {
         </div>
       </div>
     </main>
-  );
-}
-
-function InfoRow({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-lg border border-zinc-700 bg-black p-3">
-      <p className="text-sm text-zinc-400">{label}</p>
-      <p className="mt-1 text-sm font-medium text-white">{value || "-"}</p>
-    </div>
   );
 }
