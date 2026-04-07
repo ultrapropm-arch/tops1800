@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 
 type Booking = {
@@ -22,12 +23,10 @@ type Booking = {
   created_at?: string | null;
 };
 
-export default function CustomerProfilePage({
-  params,
-}: {
-  params: { id: string };
-}) {
+export default function CustomerProfilePage() {
   const supabase = createClient();
+  const params = useParams<{ id: string }>();
+  const customerId = Array.isArray(params?.id) ? params.id[0] : params?.id ?? "";
 
   const [loading, setLoading] = useState(true);
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -38,12 +37,18 @@ export default function CustomerProfilePage({
 
   useEffect(() => {
     async function loadCustomerBookings() {
+      if (!customerId) {
+        setBookings([]);
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
 
       const { data, error } = await supabase
         .from("bookings")
         .select("*")
-        .eq("id", params.id)
+        .eq("id", customerId)
         .limit(1);
 
       if (error || !data || data.length === 0) {
@@ -56,16 +61,17 @@ export default function CustomerProfilePage({
       const email = firstBooking.customer_email || "";
       const phone = firstBooking.phone_number || "";
 
-      let query = supabase.from("bookings").select("*").order("created_at", {
-        ascending: false,
-      });
+      let query = supabase
+        .from("bookings")
+        .select("*")
+        .order("created_at", { ascending: false });
 
       if (email) {
         query = query.eq("customer_email", email);
       } else if (phone) {
         query = query.eq("phone_number", phone);
       } else {
-        query = query.eq("id", params.id);
+        query = query.eq("id", customerId);
       }
 
       const { data: allBookings, error: bookingsError } = await query;
@@ -85,7 +91,7 @@ export default function CustomerProfilePage({
     }
 
     loadCustomerBookings();
-  }, [params.id, supabase]);
+  }, [customerId, supabase]);
 
   const totalRevenue = bookings.reduce((sum, booking) => {
     return sum + Number(booking.customer_total || 0);
@@ -155,7 +161,7 @@ export default function CustomerProfilePage({
                     <InfoRow
                       label="Square Footage"
                       value={
-                        booking.sqft
+                        booking.sqft != null
                           ? `${Number(booking.sqft).toFixed(2)} sqft`
                           : "-"
                       }
@@ -170,10 +176,7 @@ export default function CustomerProfilePage({
                         2
                       )}`}
                     />
-                    <InfoRow
-                      label="Created"
-                      value={booking.created_at || "-"}
-                    />
+                    <InfoRow label="Created" value={booking.created_at || "-"} />
                   </div>
                 </div>
               ))}
