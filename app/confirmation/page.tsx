@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import SupportChatWidget from "../../components/support/SupportChatWidget";
 
@@ -387,7 +387,7 @@ function StatusCard({
   );
 }
 
-export default function ConfirmationPage() {
+function ConfirmationPageContent() {
   const searchParams = useSearchParams();
 
   const bookingIdParam = searchParams.get("booking_id");
@@ -468,26 +468,23 @@ export default function ConfirmationPage() {
         paymentMethod:
           paymentLabelParam ||
           getPaymentMethodLabel(paymentParam || storedBooking.paymentMethod),
-        customerName:
-          customerNameParam || storedBooking.customerName || "",
-        customerEmail:
-          customerEmailParam || storedBooking.customerEmail || "",
-        companyName:
-          companyNameParam || storedBooking.companyName || "",
-        phoneNumber:
-          phoneNumberParam || storedBooking.phoneNumber || "",
-        finalTotal:
-          totalParam || storedBooking.finalTotal || "",
+        customerName: customerNameParam || storedBooking.customerName || "",
+        customerEmail: customerEmailParam || storedBooking.customerEmail || "",
+        companyName: companyNameParam || storedBooking.companyName || "",
+        phoneNumber: phoneNumberParam || storedBooking.phoneNumber || "",
+        finalTotal: totalParam || storedBooking.finalTotal || "",
         aiBookingInsight:
           storedBooking.aiBookingInsight ||
-          (aiSignals.length > 0 ? aiSignals.join(" • ") : "Standard booking profile"),
+          (aiSignals.length > 0
+            ? aiSignals.join(" • ")
+            : "Standard booking profile"),
       };
 
       setBooking(mergedBooking);
     }
 
     setIsLoaded(true);
-  }, [activeBookingKey]);
+  }, [activeBookingKey, companyNameParam, customerEmailParam, customerNameParam, groupParam, jobGroupIdParam, paymentLabelParam, paymentParam, phoneNumberParam, bookingIdParam, totalParam]);
 
   useEffect(() => {
     if (!booking) return;
@@ -499,10 +496,7 @@ export default function ConfirmationPage() {
       localStorage.setItem("confirmedBooking", JSON.stringify(booking));
 
       if (identity) {
-        localStorage.setItem(
-          `confirmedBooking_${identity}`,
-          JSON.stringify(booking)
-        );
+        localStorage.setItem(`confirmedBooking_${identity}`, JSON.stringify(booking));
       }
     } catch (error) {
       console.error("Error saving booking to localStorage:", error);
@@ -528,20 +522,11 @@ export default function ConfirmationPage() {
 
   const mainAddOns = useMemo(() => toArray(booking?.addOnServices), [booking]);
   const mainJustServices = useMemo(() => toArray(booking?.justServices), [booking]);
-  const mainAdditionalServices = useMemo(
-    () => toArray(booking?.additionalServices),
-    [booking]
-  );
+  const mainAdditionalServices = useMemo(() => toArray(booking?.additionalServices), [booking]);
 
   const secondAddOns = useMemo(() => toArray(booking?.secondJobAddOns), [booking]);
-  const secondJustServices = useMemo(
-    () => toArray(booking?.secondJobJustServices),
-    [booking]
-  );
-  const secondAdditionalServices = useMemo(
-    () => toArray(booking?.secondJobAdditionalServices),
-    [booking]
-  );
+  const secondJustServices = useMemo(() => toArray(booking?.secondJobJustServices), [booking]);
+  const secondAdditionalServices = useMemo(() => toArray(booking?.secondJobAdditionalServices), [booking]);
 
   const job1Total = useMemo(() => toNumber(booking?.customerTotal), [booking]);
   const job2Total = useMemo(
@@ -657,18 +642,7 @@ export default function ConfirmationPage() {
     }
 
     sendEmailOnce();
-  }, [
-    booking,
-    hasSecondJob,
-    job1Id,
-    job2Id,
-    jobGroupId,
-    job1Total,
-    job2Total,
-    subtotal,
-    hst,
-    total,
-  ]);
+  }, [booking, hasSecondJob, job1Id, job2Id, jobGroupId, job1Total, job2Total, subtotal, hst, total]);
 
   const bookingReference =
     groupParam ||
@@ -980,3 +954,22 @@ export default function ConfirmationPage() {
     </main>
   );
 }
+
+export default function ConfirmationPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-black px-6 py-10 text-white">
+          <div className="mx-auto max-w-4xl text-center">
+            <h1 className="mb-3 text-5xl font-bold text-yellow-500">
+              Booking Confirmed
+            </h1>
+            <p className="text-gray-300">Loading your booking details...</p>
+          </div>
+        </main>
+      }
+    >
+      <ConfirmationPageContent />
+    </Suspense>
+  );
+}  
