@@ -484,7 +484,19 @@ function ConfirmationPageContent() {
     }
 
     setIsLoaded(true);
-  }, [activeBookingKey, companyNameParam, customerEmailParam, customerNameParam, groupParam, jobGroupIdParam, paymentLabelParam, paymentParam, phoneNumberParam, bookingIdParam, totalParam]);
+  }, [
+    activeBookingKey,
+    bookingIdParam,
+    companyNameParam,
+    customerEmailParam,
+    customerNameParam,
+    groupParam,
+    jobGroupIdParam,
+    paymentLabelParam,
+    paymentParam,
+    phoneNumberParam,
+    totalParam,
+  ]);
 
   useEffect(() => {
     if (!booking) return;
@@ -496,7 +508,10 @@ function ConfirmationPageContent() {
       localStorage.setItem("confirmedBooking", JSON.stringify(booking));
 
       if (identity) {
-        localStorage.setItem(`confirmedBooking_${identity}`, JSON.stringify(booking));
+        localStorage.setItem(
+          `confirmedBooking_${identity}`,
+          JSON.stringify(booking)
+        );
       }
     } catch (error) {
       console.error("Error saving booking to localStorage:", error);
@@ -522,11 +537,20 @@ function ConfirmationPageContent() {
 
   const mainAddOns = useMemo(() => toArray(booking?.addOnServices), [booking]);
   const mainJustServices = useMemo(() => toArray(booking?.justServices), [booking]);
-  const mainAdditionalServices = useMemo(() => toArray(booking?.additionalServices), [booking]);
+  const mainAdditionalServices = useMemo(
+    () => toArray(booking?.additionalServices),
+    [booking]
+  );
 
   const secondAddOns = useMemo(() => toArray(booking?.secondJobAddOns), [booking]);
-  const secondJustServices = useMemo(() => toArray(booking?.secondJobJustServices), [booking]);
-  const secondAdditionalServices = useMemo(() => toArray(booking?.secondJobAdditionalServices), [booking]);
+  const secondJustServices = useMemo(
+    () => toArray(booking?.secondJobJustServices),
+    [booking]
+  );
+  const secondAdditionalServices = useMemo(
+    () => toArray(booking?.secondJobAdditionalServices),
+    [booking]
+  );
 
   const job1Total = useMemo(() => toNumber(booking?.customerTotal), [booking]);
   const job2Total = useMemo(
@@ -612,7 +636,8 @@ function ConfirmationPageContent() {
             dropoffAddress: currentBooking.dropoffAddress || "",
             secondJobAddress: currentBooking.secondJobAddress || "",
             secondJobDate: currentBooking.secondJobDate || "",
-            secondJobPickupTimeSlot: currentBooking.secondJobPickupTimeSlot || "",
+            secondJobPickupTimeSlot:
+              currentBooking.secondJobPickupTimeSlot || "",
             secondJobServiceType:
               currentBooking.secondJobServiceTypeLabel ||
               getServiceTypeLabel(currentBooking.secondJobServiceType),
@@ -642,7 +667,18 @@ function ConfirmationPageContent() {
     }
 
     sendEmailOnce();
-  }, [booking, hasSecondJob, job1Id, job2Id, jobGroupId, job1Total, job2Total, subtotal, hst, total]);
+  }, [
+    booking,
+    hasSecondJob,
+    hst,
+    job1Id,
+    job1Total,
+    job2Id,
+    job2Total,
+    jobGroupId,
+    subtotal,
+    total,
+  ]);
 
   const bookingReference =
     groupParam ||
@@ -693,7 +729,8 @@ function ConfirmationPageContent() {
             Booking Confirmed
           </h1>
           <p className="text-gray-300">
-            Thank you for your business. Your booking has been received successfully.
+            Thank you for your business. Your booking has been received
+            successfully.
           </p>
 
           {emailStatus === "sending" ? (
@@ -738,10 +775,7 @@ function ConfirmationPageContent() {
                   label="Recommended Installer"
                   value={booking.aiRecommendedInstaller || "Standard Installer"}
                 />
-                <Row
-                  label="Distance Tier"
-                  value={booking.aiDistanceTier || "-"}
-                />
+                <Row label="Distance Tier" value={booking.aiDistanceTier || "-"} />
                 <Row
                   label="AI Booking Insight"
                   value={booking.aiBookingInsight || "Standard booking profile"}
@@ -766,21 +800,42 @@ function ConfirmationPageContent() {
                 />
                 <Row label="Material Type" value={booking.materialType} />
                 <Row label="Material Size" value={booking.materialSize} />
-                <Row label="Job Size" value={sqftLabel(booking.sqft || booking.jobSize)} />
-                <Row label="Customer Rate" value={`${money(booking.customerSqftRate)}/sqft`} />
+                <Row
+                  label="Job Size"
+                  value={sqftLabel(booking.sqft || booking.jobSize)}
+                />
+                <Row
+                  label="Customer Rate"
+                  value={`${money(booking.customerSqftRate)}/sqft`}
+                />
                 <Row label="Service Price" value={money(booking.servicePrice)} />
                 <Row label="One-Way Distance" value={km(booking.oneWayKm)} />
                 <Row label="Round-Trip Distance" value={km(booking.roundTripKm)} />
-                <Row label="Chargeable Distance" value={km(booking.chargeableKm)} />
-                <Row label="Base Mileage" value={money(booking.baseMileageCharge)} />
-                <Row label="Mileage Discount" value={money(booking.mileageDiscount)} />
-                <Row label="Mileage Charge" value={money(booking.mileageCharge)} />
+                <Row
+                  label="Chargeable Distance"
+                  value={km(booking.chargeableKm)}
+                />
+                <Row
+                  label="Base Mileage"
+                  value={money(booking.baseMileageCharge)}
+                />
+                <Row
+                  label="Mileage Discount"
+                  value={money(booking.mileageDiscount)}
+                />
+                <Row
+                  label="Mileage Charge"
+                  value={money(booking.mileageCharge)}
+                />
                 <Row
                   label="Return Fee Charged"
                   value={money(booking.returnFeeCharged)}
                 />
                 {toNumber(booking.waterfallQuantity) > 0 ? (
-                  <Row label="Waterfall Quantity" value={String(booking.waterfallQuantity)} />
+                  <Row
+                    label="Waterfall Quantity"
+                    value={String(booking.waterfallQuantity)}
+                  />
                 ) : null}
                 {toNumber(booking.outletPlugCutoutQuantity) > 0 ? (
                   <Row
@@ -797,13 +852,18 @@ function ConfirmationPageContent() {
                   />
                 ) : null}
                 <Row label="Job 1 Total" value={money(job1Total)} />
-                {booking.sideNote ? <Row label="Side Note" value={booking.sideNote} /> : null}
+                {booking.sideNote ? (
+                  <Row label="Side Note" value={booking.sideNote} />
+                ) : null}
               </div>
 
               <div className="mt-6 grid gap-4">
                 <ServicesBox title="Add-On Services" items={mainAddOns} />
                 <ServicesBox title="Just Services" items={mainJustServices} />
-                <ServicesBox title="Additional Services" items={mainAdditionalServices} />
+                <ServicesBox
+                  title="Additional Services"
+                  items={mainAdditionalServices}
+                />
               </div>
             </StatusCard>
 
@@ -814,7 +874,10 @@ function ConfirmationPageContent() {
                   <Row label="Pick Up Address" value={booking.pickupAddress} />
                   <Row label="Drop Off Address" value={booking.secondJobAddress} />
                   <Row label="Scheduled Date" value={booking.secondJobDate} />
-                  <Row label="Pickup Window" value={booking.secondJobPickupTimeSlot} />
+                  <Row
+                    label="Pickup Window"
+                    value={booking.secondJobPickupTimeSlot}
+                  />
                   <Row
                     label="Service Type"
                     value={
@@ -822,13 +885,22 @@ function ConfirmationPageContent() {
                       getServiceTypeLabel(booking.secondJobServiceType)
                     }
                   />
-                  <Row label="Job Size" value={sqftLabel(booking.secondJobSqft)} />
+                  <Row
+                    label="Job Size"
+                    value={sqftLabel(booking.secondJobSqft)}
+                  />
                   <Row
                     label="Customer Rate"
                     value={`${money(booking.secondJobCustomerSqftRate)}/sqft`}
                   />
-                  <Row label="Service Price" value={money(booking.secondJobServicePrice)} />
-                  <Row label="One-Way Distance" value={km(booking.secondJobOneWayKm)} />
+                  <Row
+                    label="Service Price"
+                    value={money(booking.secondJobServicePrice)}
+                  />
+                  <Row
+                    label="One-Way Distance"
+                    value={km(booking.secondJobOneWayKm)}
+                  />
                   <Row
                     label="Round-Trip Distance"
                     value={km(booking.secondJobRoundTripKm)}
@@ -972,4 +1044,4 @@ export default function ConfirmationPage() {
       <ConfirmationPageContent />
     </Suspense>
   );
-}  
+}
