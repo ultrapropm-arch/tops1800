@@ -195,31 +195,45 @@ function matchesBookingKey(data: BookingData | null, key: string): boolean {
   return values.includes(String(key).trim());
 }
 
+function safeJsonParse(value: string | null): BookingData | null {
+  if (!value) return null;
+
+  try {
+    return JSON.parse(value) as BookingData;
+  } catch (error) {
+    console.error("Error parsing stored booking:", error);
+    return null;
+  }
+}
+
 function getStoredBooking(possibleKey: string | null): BookingData | null {
   try {
     if (possibleKey) {
       const exactKey = `confirmedBooking_${possibleKey}`;
-      const exactSaved = localStorage.getItem(exactKey);
+      const exactSaved = safeJsonParse(localStorage.getItem(exactKey));
 
-      if (exactSaved) {
-        const parsed = JSON.parse(exactSaved) as BookingData;
-        if (matchesBookingKey(parsed, possibleKey)) {
-          return parsed;
-        }
+      if (exactSaved && matchesBookingKey(exactSaved, possibleKey)) {
+        return exactSaved;
       }
     }
 
-    const latestSaved = localStorage.getItem("confirmedBooking_latest");
-    if (latestSaved) {
-      const parsed = JSON.parse(latestSaved) as BookingData;
-      if (!possibleKey || matchesBookingKey(parsed, possibleKey)) {
-        return parsed;
-      }
+    const latestSaved = safeJsonParse(localStorage.getItem("confirmedBooking_latest"));
+    if (latestSaved && (!possibleKey || matchesBookingKey(latestSaved, possibleKey))) {
+      return latestSaved;
     }
 
-    const legacySaved = localStorage.getItem("confirmedBooking");
-    if (legacySaved) {
-      const parsed = JSON.parse(legacySaved) as BookingData;
+    const legacySaved = safeJsonParse(localStorage.getItem("confirmedBooking"));
+    if (legacySaved && (!possibleKey || matchesBookingKey(legacySaved, possibleKey))) {
+      return legacySaved;
+    }
+
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith("confirmedBooking_")) continue;
+
+      const parsed = safeJsonParse(localStorage.getItem(key));
+      if (!parsed) continue;
+
       if (!possibleKey || matchesBookingKey(parsed, possibleKey)) {
         return parsed;
       }
@@ -229,6 +243,154 @@ function getStoredBooking(possibleKey: string | null): BookingData | null {
   }
 
   return null;
+}
+
+function buildBookingFromSearchParams(searchParams: URLSearchParams): BookingData | null {
+  const group = searchParams.get("group")?.trim() || "";
+  const bookingId = searchParams.get("booking_id")?.trim() || "";
+  const jobGroupId = searchParams.get("job_group_id")?.trim() || "";
+  const jobId = searchParams.get("job_id")?.trim() || "";
+
+  const customerName = searchParams.get("customerName") || "";
+  const customerEmail = searchParams.get("customerEmail") || "";
+  const companyName = searchParams.get("companyName") || "";
+  const phoneNumber = searchParams.get("phoneNumber") || "";
+  const payment = searchParams.get("payment") || "";
+  const paymentLabel = searchParams.get("paymentLabel") || "";
+  const total = searchParams.get("total") || "";
+
+  const pickupAddress = searchParams.get("pickupAddress") || "";
+  const dropoffAddress = searchParams.get("dropoffAddress") || "";
+  const timeline = searchParams.get("timeline") || "";
+  const scheduledDate = searchParams.get("scheduledDate") || "";
+  const pickupTimeSlot = searchParams.get("pickupTimeSlot") || "";
+  const serviceType = searchParams.get("serviceType") || "";
+  const serviceTypeLabel = searchParams.get("serviceTypeLabel") || "";
+
+  const secondJobAddress = searchParams.get("secondJobAddress") || "";
+  const secondJobDate = searchParams.get("secondJobDate") || "";
+  const secondJobPickupTimeSlot = searchParams.get("secondJobPickupTimeSlot") || "";
+  const secondJobServiceType = searchParams.get("secondJobServiceType") || "";
+  const secondJobServiceTypeLabel =
+    searchParams.get("secondJobServiceTypeLabel") || "";
+
+  const hasAnyUsefulParam = Boolean(
+    group ||
+      bookingId ||
+      jobGroupId ||
+      jobId ||
+      customerName ||
+      customerEmail ||
+      companyName ||
+      phoneNumber ||
+      total ||
+      pickupAddress ||
+      dropoffAddress
+  );
+
+  if (!hasAnyUsefulParam) return null;
+
+  return {
+    id: bookingId || jobId || group || jobGroupId || "",
+    jobId: jobId || bookingId || "",
+    jobGroupId: group || jobGroupId || bookingId || "",
+    customerName,
+    customerEmail,
+    companyName,
+    phoneNumber,
+    paymentMethod: paymentLabel || getPaymentMethodLabel(payment),
+    finalTotal: total,
+    pickupAddress,
+    dropoffAddress,
+    timeline,
+    scheduledDate,
+    pickupTimeSlot,
+    serviceType,
+    serviceTypeLabel,
+    secondJobAddress,
+    secondJobDate,
+    secondJobPickupTimeSlot,
+    secondJobServiceType,
+    secondJobServiceTypeLabel,
+    showSecondJob: Boolean(
+      secondJobAddress ||
+        secondJobDate ||
+        secondJobPickupTimeSlot ||
+        secondJobServiceType ||
+        secondJobServiceTypeLabel
+    ),
+  };
+}
+
+function mergeBookingData(
+  baseBooking: BookingData | null,
+  searchParams: URLSearchParams
+): BookingData | null {
+  const fromParams = buildBookingFromSearchParams(searchParams);
+  if (!baseBooking && !fromParams) return null;
+
+  const paymentParam = searchParams.get("payment");
+  const paymentLabelParam = searchParams.get("paymentLabel");
+  const totalParam = searchParams.get("total");
+  const customerNameParam = searchParams.get("customerName");
+  const customerEmailParam = searchParams.get("customerEmail");
+  const companyNameParam = searchParams.get("companyName");
+  const phoneNumberParam = searchParams.get("phoneNumber");
+  const groupParam = searchParams.get("group");
+  const jobGroupIdParam = searchParams.get("job_group_id");
+  const bookingIdParam = searchParams.get("booking_id");
+
+  const source = baseBooking || fromParams || {};
+
+  const aiSignals: string[] = [];
+
+  if (
+    toNumber(source.chargeableKm) > 70 ||
+    toNumber(source.secondJobChargeableKm) > 70
+  ) {
+    aiSignals.push("Long-distance route");
+  }
+
+  if (toNumber(source.sqft) >= 60 || toNumber(source.secondJobSqft) >= 60) {
+    aiSignals.push("Larger install size");
+  }
+
+  if (source.timeline === "sameDay" || source.timeline === "nextDay") {
+    aiSignals.push("Priority scheduling");
+  }
+
+  if (
+    toArray(source.addOnServices).length > 0 ||
+    toArray(source.secondJobAddOns).length > 0
+  ) {
+    aiSignals.push("Add-on services included");
+  }
+
+  if (toBoolean(source.showSecondJob)) {
+    aiSignals.push("Multi-job booking");
+  }
+
+  return {
+    ...source,
+    ...fromParams,
+    jobGroupId:
+      groupParam ||
+      jobGroupIdParam ||
+      source.jobGroupId ||
+      bookingIdParam ||
+      "",
+    paymentMethod:
+      paymentLabelParam ||
+      getPaymentMethodLabel(paymentParam || source.paymentMethod),
+    customerName: customerNameParam || source.customerName || "",
+    customerEmail: customerEmailParam || source.customerEmail || "",
+    companyName: companyNameParam || source.companyName || "",
+    phoneNumber: phoneNumberParam || source.phoneNumber || "",
+    finalTotal: totalParam || source.finalTotal || "",
+    aiBookingInsight:
+      source.aiBookingInsight ||
+      (aiSignals.length > 0 ? aiSignals.join(" • ") : "Standard booking profile"),
+  };
 }
 
 async function sendCustomerEmail(params: {
@@ -399,13 +561,8 @@ function ConfirmationPageContent() {
   const jobGroupIdParam = searchParams.get("job_group_id");
   const jobIdParam = searchParams.get("job_id");
   const groupParam = searchParams.get("group");
-  const paymentParam = searchParams.get("payment");
   const paymentLabelParam = searchParams.get("paymentLabel");
   const totalParam = searchParams.get("total");
-  const customerNameParam = searchParams.get("customerName");
-  const customerEmailParam = searchParams.get("customerEmail");
-  const companyNameParam = searchParams.get("companyName");
-  const phoneNumberParam = searchParams.get("phoneNumber");
 
   const activeBookingKey =
     groupParam?.trim() ||
@@ -426,82 +583,14 @@ function ConfirmationPageContent() {
     setEmailMessage("");
 
     const storedBooking = getStoredBooking(activeBookingKey);
+    const mergedBooking = mergeBookingData(storedBooking, searchParams);
 
-    if (storedBooking) {
-      const aiSignals: string[] = [];
-
-      if (
-        toNumber(storedBooking.chargeableKm) > 70 ||
-        toNumber(storedBooking.secondJobChargeableKm) > 70
-      ) {
-        aiSignals.push("Long-distance route");
-      }
-
-      if (
-        toNumber(storedBooking.sqft) >= 60 ||
-        toNumber(storedBooking.secondJobSqft) >= 60
-      ) {
-        aiSignals.push("Larger install size");
-      }
-
-      if (
-        storedBooking.timeline === "sameDay" ||
-        storedBooking.timeline === "nextDay"
-      ) {
-        aiSignals.push("Priority scheduling");
-      }
-
-      if (
-        toArray(storedBooking.addOnServices).length > 0 ||
-        toArray(storedBooking.secondJobAddOns).length > 0
-      ) {
-        aiSignals.push("Add-on services included");
-      }
-
-      if (toBoolean(storedBooking.showSecondJob)) {
-        aiSignals.push("Multi-job booking");
-      }
-
-      const mergedBooking: BookingData = {
-        ...storedBooking,
-        jobGroupId:
-          groupParam ||
-          jobGroupIdParam ||
-          storedBooking.jobGroupId ||
-          bookingIdParam ||
-          "",
-        paymentMethod:
-          paymentLabelParam ||
-          getPaymentMethodLabel(paymentParam || storedBooking.paymentMethod),
-        customerName: customerNameParam || storedBooking.customerName || "",
-        customerEmail: customerEmailParam || storedBooking.customerEmail || "",
-        companyName: companyNameParam || storedBooking.companyName || "",
-        phoneNumber: phoneNumberParam || storedBooking.phoneNumber || "",
-        finalTotal: totalParam || storedBooking.finalTotal || "",
-        aiBookingInsight:
-          storedBooking.aiBookingInsight ||
-          (aiSignals.length > 0
-            ? aiSignals.join(" • ")
-            : "Standard booking profile"),
-      };
-
+    if (mergedBooking) {
       setBooking(mergedBooking);
     }
 
     setIsLoaded(true);
-  }, [
-    activeBookingKey,
-    bookingIdParam,
-    companyNameParam,
-    customerEmailParam,
-    customerNameParam,
-    groupParam,
-    jobGroupIdParam,
-    paymentLabelParam,
-    paymentParam,
-    phoneNumberParam,
-    totalParam,
-  ]);
+  }, [activeBookingKey, searchParams]);
 
   useEffect(() => {
     if (!booking) return;
@@ -557,23 +646,64 @@ function ConfirmationPageContent() {
     [booking]
   );
 
-  const job1Total = useMemo(() => toNumber(booking?.customerTotal), [booking]);
-  const job2Total = useMemo(
-    () => (hasSecondJob ? toNumber(booking?.secondJobCustomerTotal) : 0),
-    [booking, hasSecondJob]
-  );
+  const job1Total = useMemo(() => {
+    const customerTotal = toNumber(booking?.customerTotal);
+    if (customerTotal > 0) return customerTotal;
+
+    const servicePrice = toNumber(booking?.servicePrice);
+    const mileageCharge = toNumber(booking?.mileageCharge);
+    const returnFee = toNumber(booking?.returnFeeCharged);
+
+    if (servicePrice > 0 || mileageCharge > 0 || returnFee > 0) {
+      return servicePrice + mileageCharge + returnFee;
+    }
+
+    return 0;
+  }, [booking]);
+
+  const job2Total = useMemo(() => {
+    if (!hasSecondJob) return 0;
+
+    const customerTotal = toNumber(booking?.secondJobCustomerTotal);
+    if (customerTotal > 0) return customerTotal;
+
+    const servicePrice = toNumber(booking?.secondJobServicePrice);
+    const mileageCharge = toNumber(booking?.secondJobMileageCharge);
+    const returnFee = toNumber(booking?.secondJobReturnFeeCharged);
+
+    if (servicePrice > 0 || mileageCharge > 0 || returnFee > 0) {
+      return servicePrice + mileageCharge + returnFee;
+    }
+
+    return 0;
+  }, [booking, hasSecondJob]);
 
   const subtotal = useMemo(() => {
     const storedSubtotal = toNumber(booking?.subtotal);
     if (storedSubtotal > 0) return storedSubtotal;
-    return job1Total + job2Total;
-  }, [booking, job1Total, job2Total]);
+
+    const derived = job1Total + job2Total;
+    if (derived > 0) return derived;
+
+    const fallbackTotal = toNumber(booking?.finalTotal || totalParam);
+    if (fallbackTotal > 0) {
+      return fallbackTotal / 1.13;
+    }
+
+    return 0;
+  }, [booking, job1Total, job2Total, totalParam]);
 
   const hst = useMemo(() => {
     const storedHst = toNumber(booking?.hst);
     if (storedHst > 0) return storedHst;
+
+    const fallbackTotal = toNumber(booking?.finalTotal || totalParam);
+    if (fallbackTotal > 0 && subtotal > 0 && fallbackTotal >= subtotal) {
+      return fallbackTotal - subtotal;
+    }
+
     return subtotal * 0.13;
-  }, [booking, subtotal]);
+  }, [booking, subtotal, totalParam]);
 
   const total = useMemo(() => {
     if (toNumber(totalParam) > 0) return toNumber(totalParam);
