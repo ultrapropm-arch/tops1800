@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { createClient } from "@/utils/supabase/client";
 
 const SupportChatWidget = dynamic(
   () => import("../../components/support/SupportChatWidget"),
@@ -393,6 +394,147 @@ function mergeBookingData(
   };
 }
 
+function normalizeBookingRow(row: any): BookingData {
+  return {
+    id: row?.id ? String(row.id) : "",
+    jobId: row?.job_id ? String(row.job_id) : "",
+    secondJobId: row?.second_job_id ? String(row.second_job_id) : "",
+    jobGroupId: row?.job_group_id ? String(row.job_group_id) : "",
+
+    customerName: row?.customer_name ?? "",
+    customerEmail: row?.customer_email ?? "",
+    companyName: row?.company_name ?? "",
+    phoneNumber: row?.phone_number ?? "",
+    paymentMethod: row?.payment_method
+      ? getPaymentMethodLabel(row.payment_method)
+      : "",
+
+    pickupAddress: row?.pickup_address ?? "",
+    dropoffAddress: row?.dropoff_address ?? "",
+
+    timeline: row?.timeline ?? "",
+    scheduledDate: row?.scheduled_date ?? "",
+    pickupTimeSlot: row?.pickup_time_slot ?? "",
+    serviceType: row?.service_type ?? "",
+    serviceTypeLabel: row?.service_type_label ?? "",
+
+    materialType: row?.material_type ?? "",
+    materialSize: row?.material_size ?? "",
+
+    jobSize: row?.job_size ?? "",
+    sqft: row?.sqft ?? "",
+    sideNote: row?.side_note ?? "",
+
+    oneWayKm: row?.one_way_km ?? "",
+    roundTripKm: row?.round_trip_km ?? "",
+    chargeableKm: row?.chargeable_km ?? "",
+    baseMileageCharge: row?.base_mileage_charge ?? "",
+    mileageDiscount: row?.mileage_discount ?? "",
+    mileageCharge: row?.mileage_charge ?? "",
+    rebookMode: row?.rebook_mode ?? false,
+    returnFeeCharged: row?.return_fee_charged ?? "",
+
+    addOnServices: row?.add_on_services ?? [],
+    justServices: row?.just_services ?? [],
+    additionalServices: row?.additional_services ?? [],
+
+    customerSqftRate: row?.customer_sqft_rate ?? "",
+    servicePrice: row?.service_price ?? "",
+    customerTotal: row?.customer_total ?? "",
+
+    subtotal: row?.subtotal ?? "",
+    hst: row?.hst ?? "",
+    finalTotal: row?.final_total ?? "",
+
+    waterfallQuantity: row?.waterfall_quantity ?? "",
+    outletPlugCutoutQuantity: row?.outlet_plug_cutout_quantity ?? "",
+    disposalResponsibility: row?.disposal_responsibility ?? "",
+
+    aiRecommendedInstaller: row?.ai_recommended_installer ?? "",
+    aiDistanceTier: row?.ai_distance_tier ?? "",
+    aiBookingInsight: row?.ai_booking_insight ?? "",
+
+    showSecondJob: row?.show_second_job ?? false,
+    secondJobAddress: row?.second_job_address ?? "",
+    secondJobDate: row?.second_job_date ?? "",
+    secondJobPickupTimeSlot: row?.second_job_pickup_time_slot ?? "",
+    secondJobServiceType: row?.second_job_service_type ?? "",
+    secondJobServiceTypeLabel: row?.second_job_service_type_label ?? "",
+    secondJobSqft: row?.second_job_sqft ?? "",
+    secondJobSideNote: row?.second_job_side_note ?? "",
+
+    secondJobOneWayKm: row?.second_job_one_way_km ?? "",
+    secondJobRoundTripKm: row?.second_job_round_trip_km ?? "",
+    secondJobChargeableKm: row?.second_job_chargeable_km ?? "",
+    secondJobBaseMileageCharge: row?.second_job_base_mileage_charge ?? "",
+    secondJobMileageDiscount: row?.second_job_mileage_discount ?? "",
+    secondJobMileageCharge: row?.second_job_mileage_charge ?? "",
+    secondJobRebookMode: row?.second_job_rebook_mode ?? false,
+    secondJobReturnFeeCharged: row?.second_job_return_fee_charged ?? "",
+
+    secondJobAddOns: row?.second_job_add_ons ?? [],
+    secondJobJustServices: row?.second_job_just_services ?? [],
+    secondJobAdditionalServices: row?.second_job_additional_services ?? [],
+
+    secondJobCustomerSqftRate: row?.second_job_customer_sqft_rate ?? "",
+    secondJobServicePrice: row?.second_job_service_price ?? "",
+    secondJobCustomerTotal: row?.second_job_customer_total ?? "",
+
+    secondJobWaterfallQuantity: row?.second_job_waterfall_quantity ?? "",
+    secondJobOutletPlugCutoutQuantity:
+      row?.second_job_outlet_plug_cutout_quantity ?? "",
+    secondJobDisposalResponsibility:
+      row?.second_job_disposal_responsibility ?? "",
+  };
+}
+
+async function fetchBookingFromSupabase(params: {
+  bookingId?: string | null;
+  jobId?: string | null;
+  jobGroupId?: string | null;
+  group?: string | null;
+}) {
+  const supabase = createClient();
+
+  const bookingId = params.bookingId?.trim();
+  const jobId = params.jobId?.trim();
+  const jobGroupId = params.jobGroupId?.trim() || params.group?.trim();
+
+  if (bookingId) {
+    const { data } = await supabase
+      .from("bookings")
+      .select("*")
+      .eq("id", bookingId)
+      .maybeSingle();
+
+    if (data) return normalizeBookingRow(data);
+  }
+
+  if (jobId) {
+    const { data } = await supabase
+      .from("bookings")
+      .select("*")
+      .eq("job_id", jobId)
+      .maybeSingle();
+
+    if (data) return normalizeBookingRow(data);
+  }
+
+  if (jobGroupId) {
+    const { data } = await supabase
+      .from("bookings")
+      .select("*")
+      .eq("job_group_id", jobGroupId)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (data) return normalizeBookingRow(data);
+  }
+
+  return null;
+}
+
 async function sendCustomerEmail(params: {
   to: string;
   subject: string;
@@ -577,20 +719,45 @@ function ConfirmationPageContent() {
   const [emailMessage, setEmailMessage] = useState("");
 
   useEffect(() => {
-    setBooking(null);
-    setIsLoaded(false);
-    setEmailStatus("idle");
-    setEmailMessage("");
+    let cancelled = false;
 
-    const storedBooking = getStoredBooking(activeBookingKey);
-    const mergedBooking = mergeBookingData(storedBooking, searchParams);
+    async function loadBooking() {
+      setBooking(null);
+      setIsLoaded(false);
+      setEmailStatus("idle");
+      setEmailMessage("");
 
-    if (mergedBooking) {
-      setBooking(mergedBooking);
+      const dbBooking = await fetchBookingFromSupabase({
+        bookingId: bookingIdParam,
+        jobId: jobIdParam,
+        jobGroupId: jobGroupIdParam,
+        group: groupParam,
+      });
+
+      const storedBooking = getStoredBooking(activeBookingKey);
+      const mergedBooking = mergeBookingData(dbBooking || storedBooking, searchParams);
+
+      if (!cancelled) {
+        if (mergedBooking) {
+          setBooking(mergedBooking);
+        }
+        setIsLoaded(true);
+      }
     }
 
-    setIsLoaded(true);
-  }, [activeBookingKey, searchParams]);
+    loadBooking();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeBookingKey,
+    bookingIdParam,
+    jobGroupIdParam,
+    jobIdParam,
+    groupParam,
+    searchParams,
+  ]);
 
   useEffect(() => {
     if (!booking) return;
