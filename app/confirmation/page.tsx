@@ -1,8 +1,13 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import SupportChatWidget from "../../components/support/SupportChatWidget";
+
+const SupportChatWidget = dynamic(
+  () => import("../../components/support/SupportChatWidget"),
+  { ssr: false }
+);
 
 type BookingData = {
   id?: string;
