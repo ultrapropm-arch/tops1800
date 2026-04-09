@@ -1,8 +1,6 @@
 "use client";
 
-export const dynamic = "force-dynamic";
-
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import SupportChatWidget from "../../components/support/SupportChatWidget";
 
@@ -51,11 +49,6 @@ type BookingData = {
   servicePrice?: number | string;
   customerTotal?: number | string;
 
-  installerSubtotalPay?: number | string;
-  installerHstPay?: number | string;
-  installerTotalPay?: number | string;
-  companyProfit?: number | string;
-
   subtotal?: number | string;
   hst?: number | string;
   finalTotal?: number | string;
@@ -66,6 +59,7 @@ type BookingData = {
 
   aiRecommendedInstaller?: string;
   aiDistanceTier?: string;
+  aiBookingInsight?: string;
 
   showSecondJob?: boolean | string;
   secondJobAddress?: string;
@@ -92,11 +86,6 @@ type BookingData = {
   secondJobCustomerSqftRate?: number | string;
   secondJobServicePrice?: number | string;
   secondJobCustomerTotal?: number | string;
-
-  secondJobInstallerSubtotalPay?: number | string;
-  secondJobInstallerHstPay?: number | string;
-  secondJobInstallerTotalPay?: number | string;
-  secondJobCompanyProfit?: number | string;
 
   secondJobWaterfallQuantity?: number | string;
   secondJobOutletPlugCutoutQuantity?: number | string;
@@ -159,6 +148,16 @@ function getDisposalResponsibilityLabel(value?: string): string {
   if (!value) return "-";
   if (value === "customer") return "Customer / Shop Responsible";
   if (value === "installer") return "Installer Responsible";
+  return value;
+}
+
+function getPaymentMethodLabel(value?: string): string {
+  if (!value) return "-";
+  if (value === "creditDebit") return "Credit / Debit Card";
+  if (value === "etransfer") return "E-Transfer";
+  if (value === "cashPickup") return "Cash Pickup";
+  if (value === "chequePickup") return "Cheque Pickup";
+  if (value === "weeklyInvoice") return "Weekly Invoice";
   return value;
 }
 
@@ -275,6 +274,7 @@ function buildCustomerEmailHtml(params: {
   jobGroupId: string;
   aiRecommendedInstaller: string;
   aiDistanceTier: string;
+  aiBookingInsight: string;
   job1Total: number;
   job2Total: number;
   subtotal: number;
@@ -303,6 +303,7 @@ function buildCustomerEmailHtml(params: {
       <p><strong>Main Service Type:</strong> ${params.serviceType || "-"}</p>
       <p><strong>AI Recommended Installer:</strong> ${params.aiRecommendedInstaller || "-"}</p>
       <p><strong>Distance Tier:</strong> ${params.aiDistanceTier || "-"}</p>
+      <p><strong>AI Booking Insight:</strong> ${params.aiBookingInsight || "-"}</p>
 
       <hr style="margin: 16px 0;" />
 
@@ -386,16 +387,25 @@ function StatusCard({
   );
 }
 
-function ConfirmationPageContent() {
+export default function ConfirmationPage() {
   const searchParams = useSearchParams();
 
   const bookingIdParam = searchParams.get("booking_id");
   const jobGroupIdParam = searchParams.get("job_group_id");
   const jobIdParam = searchParams.get("job_id");
+  const groupParam = searchParams.get("group");
+  const paymentParam = searchParams.get("payment");
+  const paymentLabelParam = searchParams.get("paymentLabel");
+  const totalParam = searchParams.get("total");
+  const customerNameParam = searchParams.get("customerName");
+  const customerEmailParam = searchParams.get("customerEmail");
+  const companyNameParam = searchParams.get("companyName");
+  const phoneNumberParam = searchParams.get("phoneNumber");
 
   const activeBookingKey =
-    bookingIdParam?.trim() ||
+    groupParam?.trim() ||
     jobGroupIdParam?.trim() ||
+    bookingIdParam?.trim() ||
     jobIdParam?.trim() ||
     "";
 
@@ -413,7 +423,67 @@ function ConfirmationPageContent() {
     const storedBooking = getStoredBooking(activeBookingKey);
 
     if (storedBooking) {
-      setBooking(storedBooking);
+      const aiSignals: string[] = [];
+
+      if (
+        toNumber(storedBooking.chargeableKm) > 70 ||
+        toNumber(storedBooking.secondJobChargeableKm) > 70
+      ) {
+        aiSignals.push("Long-distance route");
+      }
+
+      if (
+        toNumber(storedBooking.sqft) >= 60 ||
+        toNumber(storedBooking.secondJobSqft) >= 60
+      ) {
+        aiSignals.push("Larger install size");
+      }
+
+      if (
+        storedBooking.timeline === "sameDay" ||
+        storedBooking.timeline === "nextDay"
+      ) {
+        aiSignals.push("Priority scheduling");
+      }
+
+      if (
+        toArray(storedBooking.addOnServices).length > 0 ||
+        toArray(storedBooking.secondJobAddOns).length > 0
+      ) {
+        aiSignals.push("Add-on services included");
+      }
+
+      if (toBoolean(storedBooking.showSecondJob)) {
+        aiSignals.push("Multi-job booking");
+      }
+
+      const mergedBooking: BookingData = {
+        ...storedBooking,
+        jobGroupId:
+          groupParam ||
+          jobGroupIdParam ||
+          storedBooking.jobGroupId ||
+          bookingIdParam ||
+          "",
+        paymentMethod:
+          paymentLabelParam ||
+          getPaymentMethodLabel(paymentParam || storedBooking.paymentMethod),
+        customerName:
+          customerNameParam || storedBooking.customerName || "",
+        customerEmail:
+          customerEmailParam || storedBooking.customerEmail || "",
+        companyName:
+          companyNameParam || storedBooking.companyName || "",
+        phoneNumber:
+          phoneNumberParam || storedBooking.phoneNumber || "",
+        finalTotal:
+          totalParam || storedBooking.finalTotal || "",
+        aiBookingInsight:
+          storedBooking.aiBookingInsight ||
+          (aiSignals.length > 0 ? aiSignals.join(" • ") : "Standard booking profile"),
+      };
+
+      setBooking(mergedBooking);
     }
 
     setIsLoaded(true);
@@ -492,12 +562,21 @@ function ConfirmationPageContent() {
   }, [booking, subtotal]);
 
   const total = useMemo(() => {
+    if (toNumber(totalParam) > 0) return toNumber(totalParam);
+
     const storedTotal = toNumber(booking?.finalTotal);
     if (storedTotal > 0) return storedTotal;
-    return subtotal + hst;
-  }, [booking, subtotal, hst]);
 
-  const jobGroupId = booking?.jobGroupId || booking?.id || "-";
+    return subtotal + hst;
+  }, [booking, subtotal, hst, totalParam]);
+
+  const jobGroupId =
+    groupParam ||
+    jobGroupIdParam ||
+    booking?.jobGroupId ||
+    booking?.id ||
+    "-";
+
   const job1Id = booking?.jobId || booking?.id || "-";
   const job2Id = booking?.secondJobId || "-";
 
@@ -558,6 +637,7 @@ function ConfirmationPageContent() {
             jobGroupId: String(jobGroupId),
             aiRecommendedInstaller: currentBooking.aiRecommendedInstaller || "",
             aiDistanceTier: currentBooking.aiDistanceTier || "",
+            aiBookingInsight: currentBooking.aiBookingInsight || "",
             job1Total,
             job2Total,
             subtotal,
@@ -591,6 +671,7 @@ function ConfirmationPageContent() {
   ]);
 
   const bookingReference =
+    groupParam ||
     booking?.jobGroupId ||
     booking?.jobId ||
     booking?.id ||
@@ -670,7 +751,10 @@ function ConfirmationPageContent() {
                 <Row label="Email" value={booking.customerEmail} />
                 <Row label="Phone" value={booking.phoneNumber} />
                 <Row label="Company" value={booking.companyName} />
-                <Row label="Payment Method" value={booking.paymentMethod} />
+                <Row
+                  label="Payment Method"
+                  value={paymentLabelParam || booking.paymentMethod}
+                />
               </div>
             </StatusCard>
 
@@ -683,6 +767,10 @@ function ConfirmationPageContent() {
                 <Row
                   label="Distance Tier"
                   value={booking.aiDistanceTier || "-"}
+                />
+                <Row
+                  label="AI Booking Insight"
+                  value={booking.aiBookingInsight || "Standard booking profile"}
                 />
               </div>
             </StatusCard>
@@ -881,32 +969,6 @@ function ConfirmationPageContent() {
                 Print / Save PDF
               </button>
             </StatusCard>
-
-            <StatusCard title="Internal Pricing Snapshot">
-              <div className="space-y-3 text-gray-300">
-                <div className="flex justify-between">
-                  <span>Job 1 Installer Pay</span>
-                  <span>{money(booking.installerTotalPay)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Job 1 Company Profit</span>
-                  <span>{money(booking.companyProfit)}</span>
-                </div>
-
-                {hasSecondJob ? (
-                  <>
-                    <div className="flex justify-between border-t border-zinc-700 pt-4">
-                      <span>Job 2 Installer Pay</span>
-                      <span>{money(booking.secondJobInstallerTotalPay)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Job 2 Company Profit</span>
-                      <span>{money(booking.secondJobCompanyProfit)}</span>
-                    </div>
-                  </>
-                ) : null}
-              </div>
-            </StatusCard>
           </div>
         </div>
       </div>
@@ -916,18 +978,5 @@ function ConfirmationPageContent() {
         senderType="customer"
       />
     </main>
-  );
-}
-export default function ConfirmationPage() {
-  return (
-    <Suspense
-      fallback={
-        <main className="min-h-screen bg-black p-6 text-white">
-          Loading confirmation page...
-        </main>
-      }
-    >
-      <ConfirmationPageContent />
-    </Suspense>
   );
 }

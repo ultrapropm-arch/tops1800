@@ -3,7 +3,7 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 
@@ -18,6 +18,7 @@ type InstallerProfile = {
   approval_status?: string | null;
   status?: string | null;
   created_at?: string | null;
+  email?: string | null;
 };
 
 type Profile = {
@@ -28,6 +29,14 @@ type Profile = {
   created_at?: string | null;
 };
 
+type CustomerRow = {
+  id: string;
+  full_name?: string | null;
+  email?: string | null;
+  company_name?: string | null;
+  created_at?: string | null;
+};
+
 type Booking = {
   id: string;
   job_id?: string | null;
@@ -35,6 +44,7 @@ type Booking = {
   customer_name?: string | null;
   scheduled_date?: string | null;
   installer_name?: string | null;
+  installer_email?: string | null;
   status?: string | null;
   is_archived?: boolean | null;
   one_way_km?: number | null;
@@ -85,12 +95,37 @@ type RecentMessageItem = {
   status?: string | null;
 };
 
+type InstallerLiveStatus = {
+  id: string;
+  installer_user_id?: string | null;
+  installer_email?: string | null;
+  installer_name?: string | null;
+  is_online?: boolean | null;
+  last_seen?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+const ADMIN_EMAILS = ["ultrapropm@gmail.com", "info@1800tops.com"];
+
 function safeText(value?: string | null) {
   return String(value || "").trim();
 }
 
 function normalizeText(value?: string | null) {
   return safeText(value).toLowerCase();
+}
+
+function hasRealError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const e = error as Record<string, unknown>;
+  return Boolean(
+    e.message ||
+      e.details ||
+      e.hint ||
+      e.code ||
+      (Array.isArray(e.errors) && e.errors.length > 0)
+  );
 }
 
 function timeAgo(value?: string | null) {
@@ -137,11 +172,43 @@ function isArchivedBooking(item: Booking) {
   return item.is_archived === true;
 }
 
+function getAiUrgencyLabel(job: Booking) {
+  const existing = safeText(job.ai_urgency_label);
+  if (existing) return existing;
+
+  const status = normalizeText(job.status);
+  if (status === "same-day" || status === "same_day") return "Same-Day Priority";
+  if (status === "next-day" || status === "next_day") return "Next-Day Priority";
+  return "";
+}
+
+function getAiGroupingLabel(job: Booking) {
+  const existing = safeText(job.ai_grouping_label);
+  if (existing) return existing;
+  if (Number(job.one_way_km || 0) <= 40) return "Possible Group";
+  return "";
+}
+
+function getAiRecommendedInstallerType(job: Booking) {
+  const existing = safeText(job.ai_recommended_installer_type);
+  if (existing) return existing;
+
+  if (Number(job.one_way_km || 0) > 120) return "Long Distance Specialist";
+  if (Number(job.installer_pay || 0) >= 500) return "Large Project Specialist";
+  return "Standard Installer";
+}
+
 function isAvailableBooking(item: Booking) {
   const status = normalizeText(item.status);
-  const hasInstaller = safeText(item.installer_name).length > 0;
+  const hasInstaller =
+    safeText(item.installer_name).length > 0 ||
+    safeText(item.installer_email).length > 0;
 
-  return (status === "available" || status === "pending") && !hasInstaller && !isArchivedBooking(item);
+  return (
+    (status === "available" || status === "pending" || status === "open") &&
+    !hasInstaller &&
+    !isArchivedBooking(item)
+  );
 }
 
 function isActiveBooking(item: Booking) {
@@ -156,7 +223,8 @@ function isActiveBooking(item: Booking) {
       status === "in_progress" ||
       status === "in progress" ||
       status === "available" ||
-      status === "pending"
+      status === "pending" ||
+      status === "open"
     )
   );
 }
@@ -179,32 +247,28 @@ function getAiBestMatchScore(job: Booking) {
   if (!score) {
     score = 55;
 
-    if ((job.ai_recommended_installer_type || "") === "Long Distance Specialist") {
-      score += 15;
-    }
+    if (getAiRecommendedInstallerType(job) === "Long Distance Specialist") score += 15;
+    if (getAiRecommendedInstallerType(job) === "Large Project Specialist") score += 10;
 
-    if ((job.ai_recommended_installer_type || "") === "Large Project Specialist") {
-      score += 10;
-    }
+    if (getAiGroupingLabel(job) === "Strong Grouping") score += 15;
+    else if (getAiGroupingLabel(job) === "Possible Group") score += 8;
 
-    if ((job.ai_grouping_label || "") === "Strong Grouping") {
-      score += 15;
-    } else if ((job.ai_grouping_label || "") === "Possible Group") {
-      score += 8;
-    }
-
-    if (Number(job.installer_pay || 0) >= 500) {
-      score += 10;
-    }
-
-    if ((job.ai_urgency_label || "") === "Same-Day Priority") {
-      score += 12;
-    } else if ((job.ai_urgency_label || "") === "Next-Day Priority") {
-      score += 6;
-    }
+    if (Number(job.installer_pay || 0) >= 500) score += 10;
+    if (getAiUrgencyLabel(job) === "Same-Day Priority") score += 12;
+    else if (getAiUrgencyLabel(job) === "Next-Day Priority") score += 6;
   }
 
   return Math.max(0, Math.min(100, score));
+}
+
+function isInstallerActuallyOnline(item: InstallerLiveStatus) {
+  if (!item.is_online || !item.last_seen) return false;
+
+  const lastSeenMs = new Date(item.last_seen).getTime();
+  const nowMs = Date.now();
+  const diffMinutes = (nowMs - lastSeenMs) / 1000 / 60;
+
+  return diffMinutes <= 2;
 }
 
 function StatCard({
@@ -212,11 +276,13 @@ function StatCard({
   value,
   subtitle,
   href,
+  onClick,
 }: {
   title: string;
   value: string;
   subtitle?: string;
   href?: string;
+  onClick?: () => void;
 }) {
   const content = (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5 transition hover:border-yellow-500">
@@ -226,9 +292,17 @@ function StatCard({
     </div>
   );
 
-  if (!href) return content;
+  if (href) return <Link href={href}>{content}</Link>;
 
-  return <Link href={href}>{content}</Link>;
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className="w-full text-left">
+        {content}
+      </button>
+    );
+  }
+
+  return content;
 }
 
 function QuickLinkCard({
@@ -262,10 +336,12 @@ function QuickLinkCard({
 
 export default function AdminDashboardPage() {
   const router = useRouter();
+  const supabaseRef = useRef(createClient());
 
   const [loading, setLoading] = useState(true);
   const [checkingAccess, setCheckingAccess] = useState(true);
   const [isAuthorized, setIsAuthorized] = useState(false);
+  const [showLiveInstallers, setShowLiveInstallers] = useState(false);
 
   const [installers, setInstallers] = useState<InstallerProfile[]>([]);
   const [customers, setCustomers] = useState<Profile[]>([]);
@@ -273,13 +349,52 @@ export default function AdminDashboardPage() {
   const [customerMessages, setCustomerMessages] = useState<CustomerSupportMessage[]>([]);
   const [aiMessages, setAiMessages] = useState<AiSystemMessage[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const [liveInstallerStatus, setLiveInstallerStatus] = useState<InstallerLiveStatus[]>([]);
 
   useEffect(() => {
     void initializeAdminPage();
   }, []);
 
+  useEffect(() => {
+    if (!isAuthorized) return;
+
+    const supabase = supabaseRef.current;
+
+    const channel = supabase
+      .channel("admin-dashboard-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "bookings" }, async () => {
+        await loadDashboard(false);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, async () => {
+        await loadDashboard(false);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "customers" }, async () => {
+        await loadDashboard(false);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "installer_profiles" }, async () => {
+        await loadDashboard(false);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "installer_support_messages" }, async () => {
+        await loadDashboard(false);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "customer_support_messages" }, async () => {
+        await loadDashboard(false);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "admin_ai_messages" }, async () => {
+        await loadDashboard(false);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "installer_live_status" }, async () => {
+        await loadDashboard(false);
+      })
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [isAuthorized]);
+
   async function initializeAdminPage() {
-    const supabase = createClient();
+    const supabase = supabaseRef.current;
 
     try {
       const {
@@ -292,54 +407,76 @@ export default function AdminDashboardPage() {
         return;
       }
 
+      const userEmail = safeText(user.email).toLowerCase();
+
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("role")
+        .select("id, role, email")
         .eq("id", user.id)
-        .maybeSingle();
+        .maybeSingle<Profile>();
 
-      if (profileError) {
-        console.error("ADMIN PROFILE CHECK ERROR:", profileError);
+      if (hasRealError(profileError)) {
+        console.warn("ADMIN PROFILE CHECK WARNING:", profileError);
+      }
+
+      const isAdmin =
+        normalizeText(profile?.role) === "admin" || ADMIN_EMAILS.includes(userEmail);
+
+      if (!isAdmin) {
         router.replace("/login");
         return;
       }
 
-      if ((profile?.role || "") !== "admin") {
-        router.replace("/login");
-        return;
+      if (normalizeText(profile?.role) !== "admin") {
+        const { error: upsertError } = await supabase.from("profiles").upsert(
+          {
+            id: user.id,
+            email: userEmail,
+            role: "admin",
+          },
+          { onConflict: "id" }
+        );
+
+        if (hasRealError(upsertError)) {
+          console.warn("ADMIN PROFILE UPSERT WARNING:", upsertError);
+        }
       }
 
       setIsAuthorized(true);
       setCheckingAccess(false);
-      await loadDashboard();
+      await loadDashboard(true);
     } catch (error) {
-      console.error("ADMIN ACCESS CHECK FAILED:", error);
+      console.warn("ADMIN ACCESS CHECK FAILED:", error);
       router.replace("/login");
     }
   }
 
-  async function loadDashboard() {
-    setLoading(true);
+  async function loadDashboard(showLoader = true) {
+    if (showLoader) setLoading(true);
 
-    const supabase = createClient();
+    const supabase = supabaseRef.current;
 
     const [
       installersResult,
-      customersResult,
+      profilesCustomersResult,
+      tableCustomersResult,
       installerMessagesResult,
       customerMessagesResult,
       aiMessagesResult,
       bookingsResult,
+      liveInstallerStatusResult,
     ] = await Promise.all([
-      supabase
-        .from("installer_profiles")
-        .select("*")
-        .order("created_at", { ascending: false }),
+      supabase.from("installer_profiles").select("*").order("created_at", { ascending: false }),
 
       supabase
         .from("profiles")
         .select("id, full_name, email, role, created_at")
         .eq("role", "customer")
+        .order("created_at", { ascending: false }),
+
+      supabase
+        .from("customers")
+        .select("id, full_name, email, company_name, created_at")
         .order("created_at", { ascending: false }),
 
       supabase
@@ -357,34 +494,41 @@ export default function AdminDashboardPage() {
         .select("id, title, message, source, created_at, status")
         .order("created_at", { ascending: false }),
 
-      supabase
-        .from("bookings")
-        .select("*")
-        .order("created_at", { ascending: false }),
+      supabase.from("bookings").select("*").order("created_at", { ascending: false }),
+
+      supabase.from("installer_live_status").select("*").order("updated_at", { ascending: false }),
     ]);
 
-    if (installersResult.error) {
-      console.error("INSTALLERS LOAD ERROR:", installersResult.error);
+    if (hasRealError(installersResult.error)) {
+      console.warn("INSTALLERS LOAD WARNING:", installersResult.error);
     }
 
-    if (customersResult.error) {
-      console.error("CUSTOMERS LOAD ERROR:", customersResult.error);
+    if (hasRealError(profilesCustomersResult.error)) {
+      console.warn("CUSTOMER PROFILES LOAD WARNING:", profilesCustomersResult.error);
     }
 
-    if (installerMessagesResult.error) {
-      console.error("INSTALLER MESSAGES LOAD ERROR:", installerMessagesResult.error);
+    if (hasRealError(tableCustomersResult.error)) {
+      console.warn("CUSTOMERS TABLE LOAD WARNING:", tableCustomersResult.error);
     }
 
-    if (customerMessagesResult.error) {
-      console.error("CUSTOMER MESSAGES LOAD ERROR:", customerMessagesResult.error);
+    if (hasRealError(installerMessagesResult.error)) {
+      console.warn("INSTALLER MESSAGES LOAD WARNING:", installerMessagesResult.error);
     }
 
-    if (aiMessagesResult.error) {
-      console.error("AI MESSAGES LOAD ERROR:", aiMessagesResult.error);
+    if (hasRealError(customerMessagesResult.error)) {
+      console.warn("CUSTOMER MESSAGES LOAD WARNING:", customerMessagesResult.error);
     }
 
-    if (bookingsResult.error) {
-      console.error("BOOKINGS LOAD ERROR:", bookingsResult.error);
+    if (hasRealError(aiMessagesResult.error)) {
+      console.warn("AI MESSAGES LOAD WARNING:", aiMessagesResult.error);
+    }
+
+    if (hasRealError(bookingsResult.error)) {
+      console.warn("BOOKINGS LOAD WARNING:", bookingsResult.error);
+    }
+
+    if (hasRealError(liveInstallerStatusResult.error)) {
+      console.warn("LIVE INSTALLER STATUS LOAD WARNING:", liveInstallerStatusResult.error);
     }
 
     const safeBookings = ((bookingsResult.data as Booking[]) || []).map((item) => ({
@@ -393,20 +537,47 @@ export default function AdminDashboardPage() {
       installer_pay: Number(item.installer_pay || 0),
     }));
 
+    const customersFromProfiles = ((profilesCustomersResult.data as Profile[]) || []).map((item) => ({
+      id: item.id,
+      full_name: item.full_name,
+      email: item.email,
+      role: "customer",
+      created_at: item.created_at,
+    }));
+
+    const customersFromTable = ((tableCustomersResult.data as CustomerRow[]) || []).map((item) => ({
+      id: item.id,
+      full_name: item.full_name || item.company_name || item.email || "Customer",
+      email: item.email,
+      role: "customer",
+      created_at: item.created_at,
+    }));
+
+    const mergedCustomerMap = new Map<string, Profile>();
+
+    [...customersFromTable, ...customersFromProfiles].forEach((item) => {
+      if (!item?.id) return;
+      mergedCustomerMap.set(item.id, item);
+    });
+
     setInstallers((installersResult.data as InstallerProfile[]) || []);
-    setCustomers((customersResult.data as Profile[]) || []);
+    setCustomers(Array.from(mergedCustomerMap.values()));
     setInstallerMessages((installerMessagesResult.data as InstallerSupportMessage[]) || []);
     setCustomerMessages((customerMessagesResult.data as CustomerSupportMessage[]) || []);
     setAiMessages((aiMessagesResult.data as AiSystemMessage[]) || []);
     setBookings(safeBookings);
+    setLiveInstallerStatus((liveInstallerStatusResult.data as InstallerLiveStatus[]) || []);
 
-    setLoading(false);
+    if (showLoader) setLoading(false);
   }
+
+  const liveInstallers = useMemo(() => {
+    return liveInstallerStatus.filter(isInstallerActuallyOnline);
+  }, [liveInstallerStatus]);
 
   const summary = useMemo(() => {
     const totalInstallers = installers.length;
     const approvedInstallers = installers.filter(isApprovedInstaller).length;
-
     const totalCustomers = customers.length;
 
     const installerMessageCount = installerMessages.filter(
@@ -428,15 +599,15 @@ export default function AdminDashboardPage() {
     const availableSuggestions = bookings.filter(isAvailableBooking);
 
     const sameDaySuggestions = availableSuggestions.filter(
-      (item) => normalizeText(item.ai_urgency_label) === "same-day priority"
+      (item) => normalizeText(getAiUrgencyLabel(item)) === "same-day priority"
     ).length;
 
     const nextDaySuggestions = availableSuggestions.filter(
-      (item) => normalizeText(item.ai_urgency_label) === "next-day priority"
+      (item) => normalizeText(getAiUrgencyLabel(item)) === "next-day priority"
     ).length;
 
     const urgencySuggestions = availableSuggestions.filter((item) => {
-      const urgency = normalizeText(item.ai_urgency_label);
+      const urgency = normalizeText(getAiUrgencyLabel(item));
       return urgency === "same-day priority" || urgency === "next-day priority";
     }).length;
 
@@ -445,7 +616,7 @@ export default function AdminDashboardPage() {
     ).length;
 
     const strongGrouping = availableSuggestions.filter(
-      (item) => normalizeText(item.ai_grouping_label) === "strong grouping"
+      (item) => normalizeText(getAiGroupingLabel(item)) === "strong grouping"
     ).length;
 
     const topAiMatches = availableSuggestions.filter(
@@ -469,16 +640,12 @@ export default function AdminDashboardPage() {
       longDistanceSuggestions,
       strongGrouping,
       topAiMatches,
+      onlineInstallers: liveInstallers.length,
     };
-  }, [installers, customers, installerMessages, customerMessages, aiMessages, bookings]);
+  }, [installers, customers, installerMessages, customerMessages, aiMessages, bookings, liveInstallers]);
 
-  const approvedInstallerList = useMemo(() => {
-    return installers.filter(isApprovedInstaller).slice(0, 8);
-  }, [installers]);
-
-  const customerList = useMemo(() => {
-    return customers.slice(0, 8);
-  }, [customers]);
+  const approvedInstallerList = useMemo(() => installers.filter(isApprovedInstaller).slice(0, 8), [installers]);
+  const customerList = useMemo(() => customers.slice(0, 8), [customers]);
 
   const recentMessages = useMemo<RecentMessageItem[]>(() => {
     const installerItems: RecentMessageItem[] = installerMessages.map((item) => ({
@@ -527,9 +694,7 @@ export default function AdminDashboardPage() {
     );
   }
 
-  if (!isAuthorized) {
-    return null;
-  }
+  if (!isAuthorized) return null;
 
   return (
     <main className="min-h-screen bg-black p-8 text-white">
@@ -537,7 +702,7 @@ export default function AdminDashboardPage() {
         <div>
           <h1 className="text-4xl font-bold text-yellow-500">Admin Dashboard</h1>
           <p className="mt-2 text-gray-400">
-            Live business view for bookings, customers, installers, payouts, messages, and AI suggestions.
+            Live business view for bookings, customers, installers, payouts, messages, AI suggestions, and online installers.
           </p>
         </div>
 
@@ -547,12 +712,18 @@ export default function AdminDashboardPage() {
           </div>
         ) : (
           <>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
               <StatCard
                 title="Approved Installers"
                 value={String(summary.approvedInstallers)}
                 subtitle={`Total installers: ${summary.totalInstallers}`}
                 href="/admin/installers"
+              />
+              <StatCard
+                title="Installers Online"
+                value={String(summary.onlineInstallers)}
+                subtitle="Click to see live names"
+                onClick={() => setShowLiveInstallers(true)}
               />
               <StatCard
                 title="Customer Accounts"
@@ -828,6 +999,49 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
             </div>
+
+            {showLiveInstallers ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
+                <div className="w-full max-w-2xl rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+                  <div className="mb-5 flex items-center justify-between">
+                    <h2 className="text-2xl font-bold text-yellow-500">
+                      Live Installers
+                    </h2>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowLiveInstallers(false)}
+                      className="text-gray-400 transition hover:text-white"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  {liveInstallers.length === 0 ? (
+                    <div className="rounded-xl border border-zinc-800 bg-black p-4 text-gray-400">
+                      No installers online right now.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {liveInstallers.map((item) => (
+                        <div
+                          key={item.id}
+                          className="rounded-xl border border-zinc-800 bg-black p-4"
+                        >
+                          <p className="font-semibold text-white">
+                            {item.installer_name || item.installer_email || "Installer"}
+                          </p>
+                          <p className="mt-1 text-sm text-green-400">Online</p>
+                          <p className="mt-1 text-xs text-gray-500">
+                            Last seen: {timeAgo(item.last_seen)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
           </>
         )}
       </div>

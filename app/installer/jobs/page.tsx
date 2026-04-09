@@ -12,10 +12,14 @@ type Booking = {
   id: string;
   job_id?: string | null;
   created_at?: string | null;
+  accepted_at?: string | null;
+  completed_at?: string | null;
+  incomplete_at?: string | null;
 
   customer_name?: string | null;
   customer_email?: string | null;
   company_name?: string | null;
+
   pickup_address?: string | null;
   dropoff_address?: string | null;
   scheduled_date?: string | null;
@@ -69,7 +73,6 @@ type Booking = {
 
   final_total?: number | null;
   is_archived?: boolean | null;
-  accepted_at?: string | null;
 
   ai_distance_tier?: string | null;
   ai_recommended_installer_type?: string | null;
@@ -124,10 +127,14 @@ type FilterValue =
   | "highPay"
   | "bestAi";
 
-type ViewMode = "available" | "allSystem";
+type ViewMode = "available" | "myJobs";
 
 function money(value?: number | null) {
   return "$" + Number(value || 0).toFixed(2);
+}
+
+function safeText(value?: string | null) {
+  return String(value || "").trim();
 }
 
 function toArray(value: unknown): string[] {
@@ -143,10 +150,6 @@ function toArray(value: unknown): string[] {
   }
 
   return [];
-}
-
-function safeText(value?: string | null) {
-  return String(value || "").trim();
 }
 
 function getNormalizedStatus(status?: string | null) {
@@ -175,8 +178,8 @@ function hasAssignedInstaller(job: Booking) {
 
 function isJobAvailable(job: Booking) {
   const status = normalizeBookingStatus(job.status);
-  const notArchived = job.is_archived !== true;
   const noInstaller = !hasAssignedInstaller(job);
+  const notArchived = job.is_archived !== true;
 
   return (
     notArchived &&
@@ -188,8 +191,8 @@ function isJobAvailable(job: Booking) {
 function getPickupWindow(job: Booking) {
   if (job.pickup_time_slot) return job.pickup_time_slot;
 
-  const from = job.pickup_time_from || "";
-  const to = job.pickup_time_to || "";
+  const from = safeText(job.pickup_time_from);
+  const to = safeText(job.pickup_time_to);
 
   if (from || to) {
     return [from, to].filter(Boolean).join(" - ");
@@ -203,11 +206,13 @@ function getServiceTypeLabel(job: Booking) {
 
   const value = job.service_type;
   if (!value) return "-";
+
   if (value === "full_height_backsplash") return "Full Height Backsplash";
   if (value === "installation_3cm") return "3cm Installation";
   if (value === "installation_2cm_standard") return "2cm Standard Installation";
   if (value === "backsplash_tiling") return "Backsplash Tiling";
   if (value === "justServices") return "Just Services";
+
   return value;
 }
 
@@ -254,7 +259,7 @@ function isSameDayJob(job: Booking) {
   return (
     text.includes("same day") ||
     text.includes("same-day") ||
-    (job.ai_urgency_label || "") === "Same-Day Priority"
+    job.ai_urgency_label === "Same-Day Priority"
   );
 }
 
@@ -272,7 +277,7 @@ function isNextDayJob(job: Booking) {
   return (
     text.includes("next day") ||
     text.includes("next-day") ||
-    (job.ai_urgency_label || "") === "Next-Day Priority"
+    job.ai_urgency_label === "Next-Day Priority"
   );
 }
 
@@ -340,13 +345,9 @@ function getAiInsight(job: Booking, allJobs: Booking[]): AiJobInsight {
 
   let routeHint = job.ai_route_hint || "No grouping suggestion yet.";
   if (!job.ai_route_hint) {
-    if (nearbyCount >= 2) {
-      routeHint = "Bundle this with nearby same-date jobs.";
-    } else if (nearbyCount === 1) {
-      routeHint = "Possible nearby grouped run.";
-    } else if (oneWayKm > 120) {
-      routeHint = "Best for a dedicated long-distance installer.";
-    }
+    if (nearbyCount >= 2) routeHint = "Bundle this with nearby same-date jobs.";
+    else if (nearbyCount === 1) routeHint = "Possible nearby grouped run.";
+    else if (oneWayKm > 120) routeHint = "Best for a dedicated long-distance installer.";
   }
 
   let dispatchScore = Number(job.ai_dispatch_score || 0);
@@ -422,9 +423,7 @@ async function sendCustomerAssignmentEmail(job: Booking, installerName: string) 
       <div style="margin: 16px 0; padding: 14px; border: 1px solid #ddd; border-radius: 10px;">
         <p><strong>Job ID:</strong> ${job.job_id || job.id}</p>
         <p><strong>Installer:</strong> ${installerName || "-"}</p>
-        <p><strong>Company / Customer:</strong> ${
-          job.company_name || job.customer_name || "-"
-        }</p>
+        <p><strong>Company / Customer:</strong> ${job.company_name || job.customer_name || "-"}</p>
         <p><strong>Service:</strong> ${getServiceTypeLabel(job)}</p>
         <p><strong>Date:</strong> ${job.scheduled_date || "-"}</p>
         <p><strong>Pickup Window:</strong> ${getPickupWindow(job)}</p>
@@ -446,9 +445,7 @@ async function sendCustomerAssignmentEmail(job: Booking, installerName: string) 
 
   await fetch("/api/send-email", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       to: job.customer_email,
       subject: "Your Installer Has Been Assigned",
@@ -463,9 +460,7 @@ async function sendAdminAcceptedEmail(job: Booking, installerName: string) {
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
       <p><strong>Job ID:</strong> ${job.job_id || job.id}</p>
       <p><strong>Installer:</strong> ${installerName || "-"}</p>
-      <p><strong>Customer / Company:</strong> ${
-        job.company_name || job.customer_name || "-"
-      }</p>
+      <p><strong>Customer / Company:</strong> ${job.company_name || job.customer_name || "-"}</p>
       <p><strong>Service:</strong> ${getServiceTypeLabel(job)}</p>
       <p><strong>Date:</strong> ${job.scheduled_date || "-"}</p>
       <p><strong>Pickup Window:</strong> ${getPickupWindow(job)}</p>
@@ -478,9 +473,7 @@ async function sendAdminAcceptedEmail(job: Booking, installerName: string) {
 
   await fetch("/api/send-email", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       to: ADMIN_EMAIL,
       subject: `Installer Accepted Job - ${job.job_id || job.id}`,
@@ -511,13 +504,7 @@ function AiBadge({
   );
 }
 
-function CompactStat({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
+function CompactStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
       <p className="text-[11px] uppercase tracking-wide text-zinc-500">{label}</p>
@@ -565,6 +552,7 @@ function JobDetailBlock({
   canAccept,
   onAccept,
   acceptLoading,
+  showAcceptButton = true,
 }: {
   job: Booking;
   allJobs: Booking[];
@@ -573,6 +561,7 @@ function JobDetailBlock({
   canAccept: boolean;
   onAccept: () => void;
   acceptLoading: boolean;
+  showAcceptButton?: boolean;
 }) {
   const addOns = toArray(job.add_on_services);
   const justServices = toArray(job.just_services);
@@ -682,20 +671,22 @@ function JobDetailBlock({
             {expanded ? "Hide Details" : "View Details"}
           </button>
 
-          {canAccept ? (
-            <button
-              type="button"
-              onClick={onAccept}
-              disabled={acceptLoading}
-              className="w-full rounded-xl bg-yellow-500 px-4 py-3 text-sm font-bold text-black transition hover:bg-yellow-400 disabled:opacity-60 lg:w-auto"
-            >
-              {acceptLoading ? "Accepting..." : "Accept This Job"}
-            </button>
-          ) : (
-            <div className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-xs text-zinc-400">
-              This job is not currently available to accept.
-            </div>
-          )}
+          {showAcceptButton ? (
+            canAccept ? (
+              <button
+                type="button"
+                onClick={onAccept}
+                disabled={acceptLoading}
+                className="w-full rounded-xl bg-yellow-500 px-4 py-3 text-sm font-bold text-black transition hover:bg-yellow-400 disabled:opacity-60 lg:w-auto"
+              >
+                {acceptLoading ? "Accepting..." : "Accept This Job"}
+              </button>
+            ) : (
+              <div className="rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-xs text-zinc-400">
+                This job is not currently available to accept.
+              </div>
+            )
+          ) : null}
         </div>
       </div>
 
@@ -714,9 +705,7 @@ function JobDetailBlock({
             ) : null}
 
             {Number(job.outlet_plug_cutout_quantity || 0) > 0 ? (
-              <p>
-                Outlet Plug Cutout Quantity: {String(job.outlet_plug_cutout_quantity)}
-              </p>
+              <p>Outlet Plug Cutout Quantity: {String(job.outlet_plug_cutout_quantity)}</p>
             ) : null}
 
             {job.disposal_responsibility ? (
@@ -800,164 +789,182 @@ export default function InstallerJobsPage() {
     void bootPage();
   }, []);
 
-  async function bootPage() {
-    setLoading(true);
-
+  async function findInstallerProfile(userId: string, email?: string | null) {
     const supabase = createClient();
-
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      console.error("AUTH ERROR:", authError);
-      alert("Please log in as installer first.");
-      setAllJobs([]);
-      setInstallerName("");
-      setAuthChecked(true);
-      setLoading(false);
-      return;
-    }
-
-    let installerProfile: InstallerProfile | null = null;
 
     const byUserId = await supabase
       .from("installer_profiles")
       .select("*")
-      .eq("user_id", user.id)
+      .eq("user_id", userId)
       .maybeSingle();
 
     if (!byUserId.error && byUserId.data) {
-      installerProfile = byUserId.data as InstallerProfile;
-    } else if (byUserId.error) {
-      console.error("INSTALLER PROFILE BY USER_ID ERROR:", byUserId.error);
+      return byUserId.data as InstallerProfile;
     }
 
-    if (!installerProfile) {
-      const byId = await supabase
-        .from("installer_profiles")
-        .select("*")
-        .eq("id", user.id)
-        .maybeSingle();
+    const byId = await supabase
+      .from("installer_profiles")
+      .select("*")
+      .eq("id", userId)
+      .maybeSingle();
 
-      if (!byId.error && byId.data) {
-        installerProfile = byId.data as InstallerProfile;
-      } else if (byId.error) {
-        console.error("INSTALLER PROFILE BY ID ERROR:", byId.error);
-      }
+    if (!byId.error && byId.data) {
+      return byId.data as InstallerProfile;
     }
 
-    if (!installerProfile && user.email) {
+    if (email) {
       const byEmail = await supabase
         .from("installer_profiles")
         .select("*")
-        .eq("email", user.email)
+        .eq("email", email)
         .maybeSingle();
 
       if (!byEmail.error && byEmail.data) {
-        installerProfile = byEmail.data as InstallerProfile;
-      } else if (byEmail.error) {
-        console.error("INSTALLER PROFILE BY EMAIL ERROR:", byEmail.error);
+        return byEmail.data as InstallerProfile;
       }
     }
 
-    if (!installerProfile) {
-      alert("No installer profile was found for this signed-in account.");
-      setAllJobs([]);
-      setInstallerName("");
-      setAuthChecked(true);
-      setLoading(false);
-      return;
-    }
+    return null;
+  }
 
-    const resolvedInstallerName =
-      safeText((installerProfile.installer_name as string | null) || null) ||
-      safeText((installerProfile.full_name as string | null) || null) ||
-      safeText((installerProfile.name as string | null) || null) ||
-      safeText((installerProfile.business_name as string | null) || null) ||
-      safeText((installerProfile.company_name as string | null) || null) ||
-      safeText(user.email || "");
+  function isMyJob(job: Booking, currentInstallerName: string) {
+    const assigned = safeText(job.installer_name || job.reassigned_installer_name || "");
+    return (
+      assigned.length > 0 &&
+      assigned.toLowerCase() === currentInstallerName.trim().toLowerCase()
+    );
+  }
 
-    if (!resolvedInstallerName) {
-      alert("Installer profile name not found.");
-      setAllJobs([]);
-      setInstallerName("");
-      setAuthChecked(true);
-      setLoading(false);
-      return;
-    }
+  async function bootPage() {
+    setLoading(true);
 
-    const approvalValue = String(
-      installerProfile.approval_status || installerProfile.status || ""
-    )
-      .trim()
-      .toLowerCase();
+    try {
+      const supabase = createClient();
 
-    const isActiveValue = installerProfile.is_active;
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
 
-    if (
-      approvalValue &&
-      !["approved", "active"].includes(approvalValue) &&
-      isActiveValue === false
-    ) {
-      alert("Your installer account is not approved yet.");
-      setAllJobs([]);
+      if (authError || !user) {
+        console.error("AUTH ERROR:", authError);
+        alert("Please log in as installer first.");
+        setAllJobs([]);
+        setInstallerName("");
+        setAuthChecked(true);
+        setLoading(false);
+        return;
+      }
+
+      const installerProfile = await findInstallerProfile(user.id, user.email);
+
+      if (!installerProfile) {
+        alert("No installer profile was found for this signed-in account.");
+        setAllJobs([]);
+        setInstallerName("");
+        setAuthChecked(true);
+        setLoading(false);
+        return;
+      }
+
+      const resolvedInstallerName =
+        safeText((installerProfile.installer_name as string | null) || null) ||
+        safeText((installerProfile.full_name as string | null) || null) ||
+        safeText((installerProfile.name as string | null) || null) ||
+        safeText((installerProfile.business_name as string | null) || null) ||
+        safeText((installerProfile.company_name as string | null) || null) ||
+        safeText(user.email || "");
+
+      if (!resolvedInstallerName) {
+        alert("Installer profile name not found.");
+        setAllJobs([]);
+        setInstallerName("");
+        setAuthChecked(true);
+        setLoading(false);
+        return;
+      }
+
+      const approvalValue = String(
+        installerProfile.approval_status || installerProfile.status || ""
+      )
+        .trim()
+        .toLowerCase();
+
+      const isActiveValue = installerProfile.is_active;
+
+      const approvalBlocked =
+        (approvalValue && !["approved", "active"].includes(approvalValue)) ||
+        isActiveValue === false;
+
+      if (approvalBlocked) {
+        alert("Your installer account is not approved yet.");
+        setAllJobs([]);
+        setInstallerName(resolvedInstallerName);
+        setAuthChecked(true);
+        setLoading(false);
+        return;
+      }
+
+      if (!installerProfile.user_id && installerProfile.id === user.id) {
+        const { error: backfillError } = await supabase
+          .from("installer_profiles")
+          .update({ user_id: user.id })
+          .eq("id", user.id);
+
+        if (backfillError) {
+          console.error("INSTALLER PROFILE BACKFILL ERROR:", backfillError);
+        }
+      }
+
       setInstallerName(resolvedInstallerName);
+
+      if (typeof window !== "undefined") {
+        localStorage.setItem("installerPortalName", resolvedInstallerName);
+      }
+
+      setAuthChecked(true);
+      await loadJobs();
+    } catch (error) {
+      console.error("BOOT PAGE ERROR:", error);
+      alert("Failed to load installer page.");
+      setAllJobs([]);
+      setInstallerName("");
       setAuthChecked(true);
       setLoading(false);
-      return;
     }
-
-    if (!installerProfile.user_id && installerProfile.id === user.id) {
-      const { error: backfillError } = await supabase
-        .from("installer_profiles")
-        .update({ user_id: user.id })
-        .eq("id", user.id);
-
-      if (backfillError) {
-        console.error("INSTALLER PROFILE BACKFILL ERROR:", backfillError);
-      }
-    }
-
-    setInstallerName(resolvedInstallerName);
-
-    if (typeof window !== "undefined") {
-      localStorage.setItem("installerPortalName", resolvedInstallerName);
-    }
-
-    setAuthChecked(true);
-    await loadJobs();
   }
 
   async function loadJobs() {
     setLoading(true);
 
-    const supabase = createClient();
+    try {
+      const supabase = createClient();
 
-    const { data, error } = await supabase
-      .from("bookings")
-      .select("*")
-      .order("created_at", { ascending: false });
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("*")
+        .order("created_at", { ascending: false });
 
-    if (error) {
+      if (error) {
+        throw error;
+      }
+
+      const safeJobs = ((data as Booking[]) || []).map((job) => ({
+        ...job,
+        installer_pay: Number(job.installer_pay || 0),
+        one_way_km: Number(job.one_way_km || 0),
+        sqft: Number(job.sqft || 0),
+        job_size: Number(job.job_size || 0),
+      }));
+
+      setAllJobs(safeJobs);
+    } catch (error) {
       console.error("LOAD JOBS ERROR:", error);
-      alert(error.message || "Error loading jobs");
+      alert(error instanceof Error ? error.message : "Error loading jobs");
       setAllJobs([]);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const safeJobs = ((data as Booking[]) || []).map((job) => ({
-      ...job,
-      installer_pay: Number(job.installer_pay || 0),
-      one_way_km: Number(job.one_way_km || 0),
-      sqft: Number(job.sqft || 0),
-      job_size: Number(job.job_size || 0),
-    }));
-
-    setAllJobs(safeJobs);
-    setLoading(false);
   }
 
   function toggleExpanded(key: string) {
@@ -1012,7 +1019,6 @@ export default function InstallerJobsPage() {
     }
 
     const invalidJob = jobsFound.find((job) => !isJobAvailable(job));
-
     if (invalidJob) {
       throw new Error("One or more jobs are no longer available.");
     }
@@ -1070,6 +1076,7 @@ export default function InstallerJobsPage() {
       }
 
       alert("Job accepted ✅");
+      setViewMode("myJobs");
       await loadJobs();
     } catch (error) {
       console.error("ACCEPT SINGLE JOB ERROR:", error);
@@ -1137,6 +1144,7 @@ export default function InstallerJobsPage() {
       }
 
       alert("Both jobs accepted ✅");
+      setViewMode("myJobs");
       await loadJobs();
     } catch (error) {
       console.error("ACCEPT BOTH JOBS ERROR:", error);
@@ -1146,23 +1154,24 @@ export default function InstallerJobsPage() {
     }
   }
 
+  const availableJobs = useMemo(() => {
+    return allJobs.filter(isJobAvailable);
+  }, [allJobs]);
+
+  const myJobs = useMemo(() => {
+    return allJobs.filter((job) => isMyJob(job, installerName));
+  }, [allJobs, installerName]);
+
   const visibleJobs = useMemo(() => {
-    if (viewMode === "available") {
-      return allJobs.filter(isJobAvailable);
-    }
-    return allJobs;
-  }, [allJobs, viewMode]);
+    return viewMode === "available" ? availableJobs : myJobs;
+  }, [viewMode, availableJobs, myJobs]);
 
   const groupedJobs = useMemo(() => {
     const groups = new Map<string, Booking[]>();
 
     visibleJobs.forEach((job) => {
       const key = String(job.job_group_id || job.id);
-
-      if (!groups.has(key)) {
-        groups.set(key, []);
-      }
-
+      if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(job);
     });
 
@@ -1176,15 +1185,13 @@ export default function InstallerJobsPage() {
     );
 
     return result.sort((a, b) => {
-      const aHasSameDay = a.jobs.some((job) => isSameDayJob(job));
-      const bHasSameDay = b.jobs.some((job) => isSameDayJob(job));
-
+      const aHasSameDay = a.jobs.some(isSameDayJob);
+      const bHasSameDay = b.jobs.some(isSameDayJob);
       if (aHasSameDay && !bHasSameDay) return -1;
       if (!aHasSameDay && bHasSameDay) return 1;
 
-      const aHasNextDay = a.jobs.some((job) => isNextDayJob(job));
-      const bHasNextDay = b.jobs.some((job) => isNextDayJob(job));
-
+      const aHasNextDay = a.jobs.some(isNextDayJob);
+      const bHasNextDay = b.jobs.some(isNextDayJob);
       if (aHasNextDay && !bHasNextDay) return -1;
       if (!aHasNextDay && bHasNextDay) return 1;
 
@@ -1194,7 +1201,6 @@ export default function InstallerJobsPage() {
       const bTopAi = Math.max(
         ...b.jobs.map((job) => getAiInsight(job, visibleJobs).bestMatchScore)
       );
-
       if (bTopAi !== aTopAi) return bTopAi - aTopAi;
 
       const aTopPay = Math.max(...a.jobs.map((job) => Number(job.installer_pay || 0)));
@@ -1290,24 +1296,20 @@ export default function InstallerJobsPage() {
   }, [groupedJobs, search, filter, visibleJobs]);
 
   const urgentGroups = useMemo(() => {
-    return filteredGroups.filter((group) =>
-      group.jobs.some((job) => isSameDayJob(job))
-    );
+    return filteredGroups.filter((group) => group.jobs.some(isSameDayJob));
   }, [filteredGroups]);
 
   const nextDayGroups = useMemo(() => {
     return filteredGroups.filter(
       (group) =>
-        !group.jobs.some((job) => isSameDayJob(job)) &&
-        group.jobs.some((job) => isNextDayJob(job))
+        !group.jobs.some(isSameDayJob) && group.jobs.some(isNextDayJob)
     );
   }, [filteredGroups]);
 
   const regularGroups = useMemo(() => {
     return filteredGroups.filter(
       (group) =>
-        !group.jobs.some((job) => isSameDayJob(job)) &&
-        !group.jobs.some((job) => isNextDayJob(job))
+        !group.jobs.some(isSameDayJob) && !group.jobs.some(isNextDayJob)
     );
   }, [filteredGroups]);
 
@@ -1324,19 +1326,23 @@ export default function InstallerJobsPage() {
         );
       })
     ).length;
+
     const sameDayCount = filteredGroups.filter((group) =>
       group.jobs.some(
         (job) => getAiInsight(job, visibleJobs).urgencyLabel === "Same-Day Priority"
       )
     ).length;
+
     const nextDayCount = filteredGroups.filter((group) =>
       group.jobs.some(
         (job) => getAiInsight(job, visibleJobs).urgencyLabel === "Next-Day Priority"
       )
     ).length;
+
     const longDistanceCount = filteredGroups.filter((group) =>
       group.jobs.some((job) => Number(job.one_way_km || 0) > 120)
     ).length;
+
     const topAiCount = filteredGroups.filter((group) =>
       group.jobs.some((job) => getAiInsight(job, visibleJobs).bestMatchScore >= 85)
     ).length;
@@ -1353,6 +1359,36 @@ export default function InstallerJobsPage() {
     };
   }, [filteredGroups, visibleJobs]);
 
+  const availableSummary = useMemo(() => {
+    return {
+      jobs: availableJobs.length,
+      groups: new Set(availableJobs.map((job) => String(job.job_group_id || job.id))).size,
+    };
+  }, [availableJobs]);
+
+  const myJobsSummary = useMemo(() => {
+    const accepted = myJobs.filter(
+      (job) => normalizeBookingStatus(job.status) === "accepted"
+    ).length;
+    const completed = myJobs.filter(
+      (job) => normalizeBookingStatus(job.status) === "completed"
+    ).length;
+    const incomplete = myJobs.filter(
+      (job) => normalizeBookingStatus(job.status) === "incomplete"
+    ).length;
+    const inProgress = myJobs.filter(
+      (job) => normalizeBookingStatus(job.status) === "in_progress"
+    ).length;
+
+    return {
+      total: myJobs.length,
+      accepted,
+      completed,
+      incomplete,
+      inProgress,
+    };
+  }, [myJobs]);
+
   function renderGroup(group: GroupedJobs) {
     const isGrouped = group.jobs.length > 1;
     const availableJobsInGroup = group.jobs.filter(isJobAvailable);
@@ -1360,12 +1396,15 @@ export default function InstallerJobsPage() {
       (sum, job) => sum + Number(job.installer_pay || 0),
       0
     );
+
     const topAi = Math.max(
       ...group.jobs.map((job) => getAiInsight(job, visibleJobs).bestMatchScore)
     );
+
     const topPriority = Math.max(
       ...group.jobs.map((job) => getAiInsight(job, visibleJobs).priorityScore)
     );
+
     const bestGrouping = group.jobs.some(
       (job) => getAiInsight(job, visibleJobs).groupingLabel === "Strong Grouping"
     )
@@ -1376,9 +1415,12 @@ export default function InstallerJobsPage() {
         ? "Possible Group"
         : "Solo Route";
 
-    const hasSameDay = group.jobs.some((job) => isSameDayJob(job));
-    const hasNextDay = group.jobs.some((job) => isNextDayJob(job));
-    const canAcceptBoth = isGrouped && availableJobsInGroup.length === group.jobs.length;
+    const hasSameDay = group.jobs.some(isSameDayJob);
+    const hasNextDay = group.jobs.some(isNextDayJob);
+    const canAcceptBoth =
+      viewMode === "available" &&
+      isGrouped &&
+      availableJobsInGroup.length === group.jobs.length;
 
     return (
       <div
@@ -1399,9 +1441,7 @@ export default function InstallerJobsPage() {
                 (isGrouped ? "Group Job" : "Job")}
             </p>
             <p className="mt-1 text-sm text-gray-300">
-              {isGrouped
-                ? `Grouped Run • ${group.jobs.length} jobs shown`
-                : "Single Job"}
+              {isGrouped ? `Grouped Run • ${group.jobs.length} jobs shown` : "Single Job"}
             </p>
           </div>
 
@@ -1441,7 +1481,6 @@ export default function InstallerJobsPage() {
           {group.jobs.map((job) => {
             const detailKey = `${group.groupKey}-${job.id}`;
             const expanded = Boolean(expandedKeys[detailKey]);
-            const canAcceptSingle = isJobAvailable(job);
 
             return (
               <div key={job.id}>
@@ -1450,16 +1489,17 @@ export default function InstallerJobsPage() {
                   allJobs={visibleJobs}
                   expanded={expanded}
                   onToggle={() => toggleExpanded(detailKey)}
-                  canAccept={canAcceptSingle}
+                  canAccept={viewMode === "available" ? isJobAvailable(job) : false}
                   onAccept={() => void acceptSingleJob(job)}
                   acceptLoading={acceptingKey === job.id}
+                  showAcceptButton={viewMode === "available"}
                 />
               </div>
             );
           })}
         </div>
 
-        {isGrouped ? (
+        {viewMode === "available" && isGrouped ? (
           canAcceptBoth ? (
             <button
               type="button"
@@ -1467,9 +1507,7 @@ export default function InstallerJobsPage() {
               disabled={acceptingKey === group.groupKey}
               className="mt-5 rounded-xl bg-yellow-500 px-5 py-3 font-bold text-black transition hover:bg-yellow-400 disabled:opacity-60"
             >
-              {acceptingKey === group.groupKey
-                ? "Accepting Both..."
-                : "Accept Both Jobs"}
+              {acceptingKey === group.groupKey ? "Accepting Both..." : "Accept Both Jobs"}
             </button>
           ) : (
             <div className="mt-5 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm text-zinc-400">
@@ -1485,12 +1523,12 @@ export default function InstallerJobsPage() {
     <main className="space-y-6">
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
         <h1 className="text-4xl font-bold text-yellow-500">
-          {viewMode === "available" ? "Available Jobs" : "All System Jobs"}
+          {viewMode === "available" ? "Available Jobs" : "My Jobs"}
         </h1>
         <p className="mt-2 text-gray-400">
           {viewMode === "available"
             ? "Open jobs installers can still accept."
-            : "Full system view of all jobs, including accepted, completed, incomplete, archived, and older jobs."}
+            : "Jobs already accepted or assigned to this installer only."}
         </p>
 
         {installerName ? (
@@ -1517,14 +1555,14 @@ export default function InstallerJobsPage() {
 
           <button
             type="button"
-            onClick={() => setViewMode("allSystem")}
+            onClick={() => setViewMode("myJobs")}
             className={`rounded-xl px-5 py-3 text-sm font-semibold ${
-              viewMode === "allSystem"
+              viewMode === "myJobs"
                 ? "bg-yellow-500 text-black"
                 : "border border-zinc-700 bg-black text-white hover:border-yellow-500 hover:text-yellow-400"
             }`}
           >
-            All System Jobs
+            My Jobs
           </button>
 
           <button
@@ -1536,6 +1574,25 @@ export default function InstallerJobsPage() {
           </button>
         </div>
       </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <CompactStat label="Available Jobs" value={String(availableSummary.jobs)} />
+        <CompactStat label="Available Groups" value={String(availableSummary.groups)} />
+        <CompactStat label="My Jobs" value={String(myJobsSummary.total)} />
+        <CompactStat label="My Accepted" value={String(myJobsSummary.accepted)} />
+      </div>
+
+      {viewMode === "myJobs" ? (
+        <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-4">
+          <CompactStat label="In Progress" value={String(myJobsSummary.inProgress)} />
+          <CompactStat label="Completed" value={String(myJobsSummary.completed)} />
+          <CompactStat label="Incomplete" value={String(myJobsSummary.incomplete)} />
+          <CompactStat
+            label="My Total Jobs"
+            value={String(myJobsSummary.total)}
+          />
+        </div>
+      ) : null}
 
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
         <p className="text-sm text-gray-300">
@@ -1563,7 +1620,7 @@ export default function InstallerJobsPage() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search job ID, company, address, service, status, installer..."
+            placeholder="Search job ID, company, address, service, status..."
             className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
           />
 
@@ -1602,14 +1659,18 @@ export default function InstallerJobsPage() {
         <p className="text-gray-300">Loading...</p>
       ) : filteredGroups.length === 0 ? (
         <div className="rounded-xl border border-zinc-800 bg-black p-4 text-gray-400">
-          No jobs found for this view/filter.
+          {viewMode === "available"
+            ? "No available jobs found."
+            : "No jobs assigned to this installer yet."}
         </div>
       ) : (
         <div className="space-y-8">
           {urgentGroups.length > 0 ? (
             <section className="space-y-4">
               <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-5">
-                <h2 className="text-2xl font-bold text-red-400">Urgent Same-Day Jobs</h2>
+                <h2 className="text-2xl font-bold text-red-400">
+                  Urgent Same-Day Jobs
+                </h2>
                 <p className="mt-1 text-sm text-red-200">
                   These jobs are pushed to the top so installers can see them first.
                 </p>
@@ -1638,7 +1699,7 @@ export default function InstallerJobsPage() {
             <section className="space-y-4">
               <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
                 <h2 className="text-2xl font-bold text-yellow-500">
-                  {viewMode === "available" ? "Other Available Jobs" : "Other System Jobs"}
+                  {viewMode === "available" ? "Other Available Jobs" : "My Other Jobs"}
                 </h2>
                 <p className="mt-1 text-sm text-gray-400">
                   Remaining jobs ranked by AI score, grouping, and payout.

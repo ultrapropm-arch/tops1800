@@ -1,7 +1,5 @@
 "use client";
 
-export const dynamic = "force-dynamic";
-
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -48,6 +46,8 @@ const AI_DEFAULTS = {
   aiPreferredContactMethod: "email",
 };
 
+const ADMIN_EMAILS = ["ultrapropm@gmail.com", "info@1800tops.com"];
+
 function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
 }
@@ -72,17 +72,21 @@ export default function LoginPage() {
 
   async function tryUpsertProfile(
     userId: string,
-    role: "admin" | "installer" | "customer"
+    role: "admin" | "installer" | "customer",
+    userEmail?: string
   ) {
-    const { error } = await supabase.from("profiles").upsert(
-      {
-        id: userId,
-        role,
-      },
-      {
-        onConflict: "id",
-      }
-    );
+    const payload: Record<string, unknown> = {
+      id: userId,
+      role,
+    };
+
+    if (userEmail) {
+      payload.email = normalizeEmail(userEmail);
+    }
+
+    const { error } = await supabase.from("profiles").upsert(payload, {
+      onConflict: "id",
+    });
 
     if (hasRealError(error)) {
       console.warn(`Profiles upsert warning for ${role}:`, error);
@@ -92,9 +96,14 @@ export default function LoginPage() {
   async function resolveUserRole(userId: string, userEmail: string) {
     const normalizedEmail = normalizeEmail(userEmail);
 
+    if (ADMIN_EMAILS.includes(normalizedEmail)) {
+      await tryUpsertProfile(userId, "admin", normalizedEmail);
+      return "admin";
+    }
+
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("id, role")
+      .select("id, role, email")
       .eq("id", userId)
       .maybeSingle<ProfileRow>();
 
@@ -123,7 +132,8 @@ export default function LoginPage() {
     ) {
       await tryUpsertProfile(
         userId,
-        metadataRole as "admin" | "installer" | "customer"
+        metadataRole as "admin" | "installer" | "customer",
+        normalizedEmail
       );
       return metadataRole;
     }
@@ -131,7 +141,7 @@ export default function LoginPage() {
     const { data: installerByUserId, error: installerByUserIdError } =
       await supabase
         .from("installer_profiles")
-        .select("id, user_id")
+        .select("id, user_id, email")
         .eq("user_id", userId)
         .maybeSingle<InstallerProfileRow>();
 
@@ -140,13 +150,13 @@ export default function LoginPage() {
     }
 
     if (installerByUserId) {
-      await tryUpsertProfile(userId, "installer");
+      await tryUpsertProfile(userId, "installer", normalizedEmail);
       return "installer";
     }
 
     const { data: installerById, error: installerByIdError } = await supabase
       .from("installer_profiles")
-      .select("id, user_id")
+      .select("id, user_id, email")
       .eq("id", userId)
       .maybeSingle<InstallerProfileRow>();
 
@@ -155,7 +165,23 @@ export default function LoginPage() {
     }
 
     if (installerById) {
-      await tryUpsertProfile(userId, "installer");
+      await tryUpsertProfile(userId, "installer", normalizedEmail);
+      return "installer";
+    }
+
+    const { data: installerByEmail, error: installerByEmailError } =
+      await supabase
+        .from("installer_profiles")
+        .select("id, user_id, email")
+        .eq("email", normalizedEmail)
+        .maybeSingle<InstallerProfileRow>();
+
+    if (hasRealError(installerByEmailError)) {
+      console.warn("Installer lookup by email warning:", installerByEmailError);
+    }
+
+    if (installerByEmail) {
+      await tryUpsertProfile(userId, "installer", normalizedEmail);
       return "installer";
     }
 
@@ -170,7 +196,7 @@ export default function LoginPage() {
     }
 
     if (customerById) {
-      await tryUpsertProfile(userId, "customer");
+      await tryUpsertProfile(userId, "customer", normalizedEmail);
       return "customer";
     }
 
@@ -185,11 +211,90 @@ export default function LoginPage() {
     }
 
     if (customerByEmail) {
-      await tryUpsertProfile(userId, "customer");
+      await tryUpsertProfile(userId, "customer", normalizedEmail);
       return "customer";
     }
 
     return null;
+  }
+
+  async function saveInstallerLocalProfile(userId: string, userEmail: string) {
+    try {
+      const normalizedEmail = normalizeEmail(userEmail);
+      let installerRow: InstallerProfileRow | null = null;
+
+      const { data: byUserId, error: byUserIdError } = await supabase
+        .from("installer_profiles")
+        .select(
+          "id, user_id, email, full_name, installer_name, name, business_name, company_name"
+        )
+        .eq("user_id", userId)
+        .maybeSingle<InstallerProfileRow>();
+
+      if (hasRealError(byUserIdError)) {
+        console.warn("Installer local profile by user_id warning:", byUserIdError);
+      } else if (byUserId) {
+        installerRow = byUserId;
+      }
+
+      if (!installerRow) {
+        const { data: byId, error: byIdError } = await supabase
+          .from("installer_profiles")
+          .select(
+            "id, user_id, email, full_name, installer_name, name, business_name, company_name"
+          )
+          .eq("id", userId)
+          .maybeSingle<InstallerProfileRow>();
+
+        if (hasRealError(byIdError)) {
+          console.warn("Installer local profile by id warning:", byIdError);
+        } else if (byId) {
+          installerRow = byId;
+        }
+      }
+
+      if (!installerRow) {
+        const { data: byEmail, error: byEmailError } = await supabase
+          .from("installer_profiles")
+          .select(
+            "id, user_id, email, full_name, installer_name, name, business_name, company_name"
+          )
+          .eq("email", normalizedEmail)
+          .maybeSingle<InstallerProfileRow>();
+
+        if (hasRealError(byEmailError)) {
+          console.warn("Installer local profile by email warning:", byEmailError);
+        } else if (byEmail) {
+          installerRow = byEmail;
+        }
+      }
+
+      const installerName =
+        installerRow?.full_name ||
+        installerRow?.installer_name ||
+        installerRow?.name ||
+        "";
+
+      const companyName =
+        installerRow?.business_name ||
+        installerRow?.company_name ||
+        "";
+
+      localStorage.setItem(
+        "installerProfile",
+        JSON.stringify({
+          userId,
+          installerName,
+          email: installerRow?.email || normalizedEmail,
+          companyName,
+        })
+      );
+
+      localStorage.setItem("installerName", installerName || "");
+      localStorage.setItem("installerEmail", installerRow?.email || normalizedEmail);
+    } catch (error) {
+      console.warn("Installer local profile save warning:", error);
+    }
   }
 
   async function loadCustomerLocalProfile(userId: string, userEmail: string) {
@@ -255,6 +360,18 @@ export default function LoginPage() {
     }
   }
 
+  async function clearRoleCaches() {
+    try {
+      localStorage.removeItem("installerProfile");
+      localStorage.removeItem("installerName");
+      localStorage.removeItem("installerEmail");
+      localStorage.removeItem("customerAiProfile");
+      localStorage.removeItem("lastCustomerProfile");
+    } catch (error) {
+      console.warn("Local cache clear warning:", error);
+    }
+  }
+
   async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
@@ -273,6 +390,8 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      await clearRoleCaches();
+
       const { error: loginError } = await supabase.auth.signInWithPassword({
         email: normalizedEmail,
         password,
@@ -291,21 +410,23 @@ export default function LoginPage() {
         throw new Error("Login succeeded, but user could not be loaded.");
       }
 
-      const role = await resolveUserRole(user.id, user.email || normalizedEmail);
+      const resolvedEmail = normalizeEmail(user.email || normalizedEmail);
+      const role = await resolveUserRole(user.id, resolvedEmail);
 
-      if (role === "customer") {
-        await loadCustomerLocalProfile(user.id, user.email || normalizedEmail);
-        router.push("/customer");
+      if (role === "admin") {
+        router.push("/admin");
         return;
       }
 
       if (role === "installer") {
+        await saveInstallerLocalProfile(user.id, resolvedEmail);
         router.push("/installer");
         return;
       }
 
-      if (role === "admin") {
-        router.push("/admin");
+      if (role === "customer") {
+        await loadCustomerLocalProfile(user.id, resolvedEmail);
+        router.push("/customer");
         return;
       }
 
@@ -359,7 +480,9 @@ export default function LoginPage() {
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-8">
           <div className="mb-8 text-center">
             <h1 className="text-4xl font-bold text-yellow-500">Login</h1>
-            <p className="mt-3 text-gray-400">Login as admin, installer, or customer.</p>
+            <p className="mt-3 text-gray-400">
+              Login as admin, installer, or customer.
+            </p>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-4">
@@ -371,6 +494,7 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
                 placeholder="Enter your email"
+                autoComplete="email"
               />
             </div>
 
@@ -382,6 +506,7 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
                 placeholder="Enter your password"
+                autoComplete="current-password"
               />
             </div>
 

@@ -1,7 +1,5 @@
 "use client";
 
-export const dynamic = "force-dynamic";
-
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 
@@ -50,6 +48,7 @@ type Booking = {
 
   subtotal?: number | null;
   hst?: number | null;
+  hst_amount?: number | null;
   final_total?: number | null;
 
   job_group_id?: string | number | null;
@@ -349,7 +348,9 @@ function getAiScore(booking: Booking) {
 }
 
 function getAcceptedStateLabel(booking: Booking) {
-  if (safeText(booking.installer_name)) return "Accepted";
+  if (safeText(booking.installer_name) || safeText(booking.reassigned_installer_name)) {
+    return "Accepted";
+  }
   if (normalizeText(booking.status) === "accepted") return "Accepted";
   return "Not Accepted";
 }
@@ -365,6 +366,82 @@ function getPublicJobPhotoUrl(path?: string | null) {
   const supabase = createClient();
   const { data } = supabase.storage.from("job-photos").getPublicUrl(path);
   return data.publicUrl;
+}
+
+function normalizeBookingStatus(status?: string | null): string {
+  const value = normalizeText(status);
+
+  if (!value) return "new";
+  if (value === "confirmed") return "pending";
+  if (value === "assigned") return "accepted";
+  if (value === "in progress") return "in_progress";
+  if (value === "completed_pending_admin_review") return "completed";
+  if (value === "canceled") return "cancelled";
+
+  return value;
+}
+
+function matchesStatusFilter(booking: Booking, filter: StatusFilter): boolean {
+  if (filter === "all") return true;
+  return normalizeBookingStatus(booking.status) === filter;
+}
+
+function getInstallerDisplayName(installer: Installer) {
+  return (
+    safeText(installer.installer_name) ||
+    safeText(installer.full_name) ||
+    safeText(installer.name) ||
+    safeText(installer.business_name) ||
+    safeText(installer.company_name) ||
+    "Unnamed Installer"
+  );
+}
+
+function Badge({
+  label,
+  className,
+}: {
+  label: string;
+  className: string;
+}) {
+  return (
+    <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${className}`}>
+      {label}
+    </span>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  sublabel,
+}: {
+  label: string;
+  value: string;
+  sublabel?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+      <p className="text-sm text-gray-400">{label}</p>
+      <p className="mt-2 text-3xl font-bold text-yellow-500">{value}</p>
+      {sublabel ? <p className="mt-2 text-sm text-gray-400">{sublabel}</p> : null}
+    </div>
+  );
+}
+
+function SectionHeader({
+  title,
+  subtitle,
+}: {
+  title: string;
+  subtitle: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+      <h2 className="text-2xl font-bold text-yellow-500">{title}</h2>
+      <p className="mt-1 text-sm text-gray-400">{subtitle}</p>
+    </div>
+  );
 }
 
 function ProofLink({
@@ -416,77 +493,693 @@ function ServiceBox({
   );
 }
 
-function StatCard({
-  label,
-  value,
-  sublabel,
+function BookingCard({
+  booking,
+  installers,
+  expanded,
+  onToggle,
+  onUpdate,
+  savingId,
 }: {
-  label: string;
-  value: string;
-  sublabel?: string;
+  booking: Booking;
+  installers: Installer[];
+  expanded: boolean;
+  onToggle: () => void;
+  onUpdate: (
+    id: string,
+    field: keyof Booking,
+    value: string | number | boolean | null
+  ) => void;
+  savingId: string;
 }) {
-  return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-      <p className="text-sm text-gray-400">{label}</p>
-      <p className="mt-2 text-3xl font-bold text-yellow-500">{value}</p>
-      {sublabel ? <p className="mt-2 text-sm text-gray-400">{sublabel}</p> : null}
-    </div>
-  );
-}
-
-function Badge({
-  label,
-  className,
-}: {
-  label: string;
-  className: string;
-}) {
-  return (
-    <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${className}`}>
-      {label}
-    </span>
-  );
-}
-
-function getInstallerDisplayName(installer: Installer) {
-  return (
-    safeText(installer.installer_name) ||
-    safeText(installer.full_name) ||
-    safeText(installer.name) ||
-    safeText(installer.business_name) ||
-    safeText(installer.company_name) ||
-    "Unnamed Installer"
-  );
-}
-
-function normalizeBookingStatus(status?: string | null): string {
-  const value = normalizeText(status);
-
-  if (!value) return "new";
-  if (value === "confirmed") return "accepted";
-  if (value === "assigned") return "in_progress";
-  if (value === "in progress") return "in_progress";
-  if (value === "completed_pending_admin_review") return "completed";
-  if (value === "canceled") return "cancelled";
-
-  return value;
-}
-
-function matchesStatusFilter(booking: Booking, filter: StatusFilter): boolean {
-  if (filter === "all") return true;
-
+  const addOnServices = toArray(booking.add_on_services);
+  const justServices = toArray(booking.just_services);
+  const payoutLines = getPayoutLines(booking);
+  const urgencyLabel = getUrgencyLabel(booking);
+  const aiScore = getAiScore(booking);
+  const acceptedState = getAcceptedStateLabel(booking);
   const normalizedStatus = normalizeBookingStatus(booking.status);
 
-  if (filter === "new") return normalizedStatus === "new";
-  if (filter === "available") return normalizedStatus === "available";
-  if (filter === "pending") return normalizedStatus === "pending";
-  if (filter === "accepted") return normalizedStatus === "accepted";
-  if (filter === "in_progress") return normalizedStatus === "in_progress";
-  if (filter === "incomplete") return normalizedStatus === "incomplete";
-  if (filter === "completed") return normalizedStatus === "completed";
-  if (filter === "cancelled") return normalizedStatus === "cancelled";
+  return (
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+      <div className="mb-5 flex flex-col gap-4 border-b border-zinc-800 pb-5 xl:flex-row xl:items-start xl:justify-between">
+        <div className="flex-1">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <h3 className="text-2xl font-semibold text-yellow-500">
+              {booking.company_name || booking.customer_name || "Booking"}
+            </h3>
 
-  return true;
+            <Badge
+              label={normalizedStatus || "new"}
+              className="border-zinc-700 bg-zinc-800/40 text-zinc-300"
+            />
+
+            <Badge
+              label={urgencyLabel}
+              className={getUrgencyBadgeClass(urgencyLabel)}
+            />
+
+            <Badge
+              label={booking.ai_grouping_label || "Solo Route"}
+              className={getGroupingBadgeClass(booking.ai_grouping_label)}
+            />
+
+            <Badge
+              label={`Dispatch ${aiScore}/100`}
+              className={getDispatchBadgeClass(aiScore)}
+            />
+
+            <Badge
+              label={getProfitLabel(booking.company_profit)}
+              className={getProfitBadgeClass(booking.company_profit)}
+            />
+
+            <Badge
+              label={acceptedState}
+              className={getAcceptedStateClass(booking)}
+            />
+
+            {booking.is_archived === true ? (
+              <Badge
+                label="Archived"
+                className="border-zinc-600 bg-zinc-700/30 text-zinc-300"
+              />
+            ) : null}
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <div className="rounded-xl border border-zinc-800 bg-black p-3">
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">Job</p>
+              <p className="mt-1 text-sm font-semibold text-white">
+                {booking.job_id || booking.id}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black p-3">
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">Date</p>
+              <p className="mt-1 text-sm font-semibold text-white">
+                {booking.scheduled_date || "-"}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black p-3">
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">
+                Pickup Window
+              </p>
+              <p className="mt-1 text-sm font-semibold text-white">
+                {getPickupWindow(booking)}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black p-3">
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">Service</p>
+              <p className="mt-1 text-sm font-semibold text-white">
+                {getServiceTypeLabel(booking)}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black p-3">
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">Installer</p>
+              <p className="mt-1 text-sm font-semibold text-white">
+                {booking.reassigned_installer_name ||
+                  booking.installer_name ||
+                  "Unassigned"}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black p-3">
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">Status</p>
+              <p className="mt-1 text-sm font-semibold text-white">
+                {booking.status || "new"}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black p-3">
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">
+                Accepted Time
+              </p>
+              <p className="mt-1 text-sm font-semibold text-white">
+                {formatDateTime(booking.accepted_at)}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black p-3">
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">
+                Installer Pay
+              </p>
+              <p className="mt-1 text-sm font-semibold text-white">
+                {money(booking.installer_pay)}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black p-3">
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">
+                Company Profit
+              </p>
+              <p
+                className={`mt-1 text-sm font-semibold ${getProfitTextClass(
+                  booking.company_profit
+                )}`}
+              >
+                {money(booking.company_profit)}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black p-3">
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">
+                Payout Status
+              </p>
+              <p className="mt-1 text-sm font-semibold text-white">
+                {booking.installer_pay_status || "-"}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
+              <p className="text-sm font-semibold text-yellow-400">
+                AI Suggested Installer Type
+              </p>
+              <p className="mt-1 text-sm text-gray-300">
+                {booking.ai_recommended_installer_type || "Standard Installer"}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
+              <p className="text-sm font-semibold text-yellow-400">AI Route Hint</p>
+              <p className="mt-1 text-sm text-gray-300">
+                {booking.ai_route_hint || "No route hint yet."}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex w-full flex-col gap-3 xl:w-[260px]">
+          <button
+            type="button"
+            onClick={onToggle}
+            className="rounded-xl border border-zinc-700 px-4 py-3 text-sm font-semibold text-white transition hover:border-yellow-500 hover:text-yellow-400"
+          >
+            {expanded ? "Hide Details" : "View Full Details"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onUpdate(booking.id, "status", "available")}
+            disabled={savingId === booking.id}
+            className="rounded-xl bg-yellow-500 px-4 py-3 text-sm font-bold text-black transition hover:bg-yellow-400 disabled:opacity-60"
+          >
+            {savingId === booking.id ? "Saving..." : "Set Live / Available"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onUpdate(booking.id, "status", "completed")}
+            disabled={savingId === booking.id}
+            className="rounded-xl bg-green-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-green-500 disabled:opacity-60"
+          >
+            {savingId === booking.id ? "Saving..." : "Mark Completed"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onUpdate(booking.id, "status", "incomplete")}
+            disabled={savingId === booking.id}
+            className="rounded-xl bg-red-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-red-500 disabled:opacity-60"
+          >
+            {savingId === booking.id ? "Saving..." : "Mark Incomplete"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onUpdate(booking.id, "installer_pay_status", "ready")}
+            disabled={savingId === booking.id}
+            className="rounded-xl border border-zinc-700 bg-black px-4 py-3 text-sm font-bold text-white transition hover:border-yellow-500 disabled:opacity-60"
+          >
+            {savingId === booking.id ? "Saving..." : "Set Ready Payout"}
+          </button>
+        </div>
+      </div>
+
+      {expanded ? (
+        <div className="flex flex-col gap-8 xl:flex-row xl:items-start xl:justify-between">
+          <div className="flex-1 space-y-6">
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                <p className="mb-3 text-sm font-semibold text-yellow-400">
+                  Customer / Job Info
+                </p>
+                <div className="space-y-2 text-sm text-gray-300">
+                  <p>Job ID: {booking.job_id || booking.id}</p>
+                  <p>Booking Row ID: {booking.id}</p>
+                  {booking.job_group_id ? (
+                    <p>
+                      Group ID: {String(booking.job_group_id)}
+                      {booking.job_number ? ` • Job ${booking.job_number}` : ""}
+                    </p>
+                  ) : null}
+                  <p>Customer: {booking.customer_name || "-"}</p>
+                  <p>Email: {booking.customer_email || "-"}</p>
+                  <p>Phone: {booking.phone_number || "-"}</p>
+                  <p>Company: {booking.company_name || "-"}</p>
+                  <p>Material Type: {booking.material_type || "-"}</p>
+                  <p>Material Size: {booking.material_size || "-"}</p>
+                  <p>Sqft: {Number(booking.sqft || booking.job_size || 0) || "-"}</p>
+                  <p>Payment Method: {booking.payment_method || "-"}</p>
+                  <p>Timeline: {booking.timeline || "-"}</p>
+                  <p>Created: {formatDateTime(booking.created_at)}</p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                <p className="mb-3 text-sm font-semibold text-yellow-400">
+                  Route / Schedule
+                </p>
+                <div className="space-y-2 text-sm text-gray-300">
+                  <p>Scheduled Date: {booking.scheduled_date || "-"}</p>
+                  <p>Scheduled Time: {booking.scheduled_time || "-"}</p>
+                  <p>Pickup Window: {getPickupWindow(booking)}</p>
+                  <p>Pick Up: {booking.pickup_address || "-"}</p>
+                  <p>Drop Off: {booking.dropoff_address || "-"}</p>
+                  <p>Distance Tier: {booking.ai_distance_tier || "-"}</p>
+                  <p>Accepted At: {formatDateTime(booking.accepted_at)}</p>
+                  <p>Completed At: {formatDateTime(booking.completed_at)}</p>
+                  <p>Incomplete At: {formatDateTime(booking.incomplete_at)}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <ServiceBox title="Add-On Services" items={addOnServices} />
+              <ServiceBox title="Just Services" items={justServices} />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                <p className="mb-3 text-sm font-semibold text-yellow-400">
+                  Incomplete / Return / Redo
+                </p>
+                <div className="space-y-2 text-sm text-gray-300">
+                  <p>Incomplete Reason: {booking.incomplete_reason || "-"}</p>
+                  <p>
+                    Incomplete Note:{" "}
+                    {booking.incomplete_notes || booking.incomplete_note || "-"}
+                  </p>
+                  <p>
+                    Customer Return Fee:{" "}
+                    {money(booking.return_fee_charged || booking.return_fee)}
+                  </p>
+                  <p>
+                    Installer Return Pay: {money(booking.return_fee_installer_pay)}
+                  </p>
+                  <p>Mileage Fee: {money(booking.mileage_fee)}</p>
+                  <p>Admin Fee Note: {booking.admin_fee_note || "-"}</p>
+                  <p>Redo Requested: {booking.redo_requested ? "Yes" : "No"}</p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                <p className="mb-3 text-sm font-semibold text-yellow-400">
+                  Extra Details / Proof
+                </p>
+                <div className="space-y-2 text-sm text-gray-300">
+                  <p>Waterfall Quantity: {booking.waterfall_quantity || "-"}</p>
+                  <p>
+                    Outlet Plug Cutout Quantity:{" "}
+                    {booking.outlet_plug_cutout_quantity || "-"}
+                  </p>
+                  <p>
+                    Disposal Responsibility:{" "}
+                    {getDisposalResponsibilityLabel(booking.disposal_responsibility)}
+                  </p>
+                  <p>
+                    Customer Provided Signing Form:{" "}
+                    {booking.has_signing_form === true
+                      ? "Yes"
+                      : booking.has_signing_form === false
+                        ? "No"
+                        : "-"}
+                  </p>
+                  <ProofLink
+                    label="Completed Photo Proof"
+                    path={booking.completed_photo_url}
+                  />
+                  <ProofLink
+                    label="Completion Signature"
+                    path={booking.completion_signature_url}
+                  />
+                  <ProofLink
+                    label="Incomplete Photo Proof"
+                    path={booking.incomplete_photo_url}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black p-4">
+              <p className="mb-3 text-sm font-semibold text-yellow-400">
+                Payout Breakdown
+              </p>
+
+              {payoutLines.length > 0 ? (
+                <div className="space-y-2 text-sm text-gray-300">
+                  {payoutLines.map((line) => (
+                    <div
+                      key={line.label}
+                      className="flex items-center justify-between border-b border-zinc-800 pb-2"
+                    >
+                      <span>{line.label}</span>
+                      <span>{money(line.amount)}</span>
+                    </div>
+                  ))}
+
+                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                    <span>Subtotal Pay</span>
+                    <span>{money(booking.installer_subtotal_pay)}</span>
+                  </div>
+
+                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                    <span>HST Pay</span>
+                    <span>{money(booking.installer_hst_pay)}</span>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-2 font-semibold text-yellow-400">
+                    <span>Total Installer Pay</span>
+                    <span>{money(booking.installer_pay)}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2 text-sm text-gray-300">
+                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                    <span>Subtotal Pay</span>
+                    <span>{money(booking.installer_subtotal_pay)}</span>
+                  </div>
+
+                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                    <span>HST Pay</span>
+                    <span>{money(booking.installer_hst_pay)}</span>
+                  </div>
+
+                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                    <span>Total Installer Pay</span>
+                    <span>{money(booking.installer_pay)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-zinc-800 bg-black p-4">
+              <p className="mb-3 text-sm font-semibold text-yellow-400">
+                Notes / Totals
+              </p>
+              <div className="space-y-2 text-sm text-gray-300">
+                <p>Notes: {booking.notes || "-"}</p>
+                <p>Side Note: {booking.side_note || "-"}</p>
+                <p>Subtotal: {money(booking.subtotal)}</p>
+                <p>HST: {money(booking.hst ?? booking.hst_amount)}</p>
+                <p className="font-semibold text-yellow-400">
+                  Total: {money(booking.final_total)}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="w-full xl:w-[460px]">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-sm text-gray-400">
+                  Booking Status
+                </label>
+                <select
+                  value={booking.status || ""}
+                  onChange={(e) => onUpdate(booking.id, "status", e.target.value)}
+                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
+                >
+                  <option value="">Select Status</option>
+                  <option value="new">New</option>
+                  <option value="available">Available</option>
+                  <option value="pending">Pending</option>
+                  <option value="confirmed">Confirmed</option>
+                  <option value="accepted">Accepted</option>
+                  <option value="assigned">Assigned</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="incomplete">Incomplete</option>
+                  <option value="completed_pending_admin_review">
+                    Completed Pending Admin Review
+                  </option>
+                  <option value="completed">Completed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm text-gray-400">
+                  Customer Payment Status
+                </label>
+                <select
+                  value={booking.payment_status || ""}
+                  onChange={(e) =>
+                    onUpdate(booking.id, "payment_status", e.target.value)
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
+                >
+                  <option value="">Select Payment Status</option>
+                  <option value="unpaid">Unpaid</option>
+                  <option value="pending">Pending</option>
+                  <option value="paid">Paid</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm text-gray-400">
+                  Installer
+                </label>
+                <select
+                  value={booking.installer_name || ""}
+                  onChange={(e) =>
+                    onUpdate(booking.id, "installer_name", e.target.value)
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
+                >
+                  <option value="">Select Installer</option>
+                  {installers
+                    .filter((installer) => normalizeText(installer.status) !== "inactive")
+                    .map((installer) => {
+                      const installerDisplayName = getInstallerDisplayName(installer);
+
+                      return (
+                        <option key={installer.id} value={installerDisplayName}>
+                          {installerDisplayName}
+                        </option>
+                      );
+                    })}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm text-gray-400">
+                  Installer Pay
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  defaultValue={booking.installer_pay ?? 0}
+                  onBlur={(e) =>
+                    onUpdate(booking.id, "installer_pay", Number(e.target.value || 0))
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm text-gray-400">
+                  Installer Payout Status
+                </label>
+                <select
+                  value={booking.installer_pay_status || ""}
+                  onChange={(e) =>
+                    onUpdate(booking.id, "installer_pay_status", e.target.value)
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
+                >
+                  <option value="">Select Payout Status</option>
+                  <option value="unpaid">Unpaid</option>
+                  <option value="pending">Pending</option>
+                  <option value="pending_review">Pending Review</option>
+                  <option value="hold">Hold</option>
+                  <option value="ready">Ready</option>
+                  <option value="paid">Paid</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm text-gray-400">
+                  Company Profit
+                </label>
+                <input
+                  type="text"
+                  value={money(booking.company_profit)}
+                  readOnly
+                  className="w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-white"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm text-gray-400">
+                  Customer Return Fee
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  defaultValue={booking.return_fee_charged || booking.return_fee || 0}
+                  onBlur={(e) =>
+                    onUpdate(
+                      booking.id,
+                      "return_fee_charged",
+                      Number(e.target.value || 0)
+                    )
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm text-gray-400">
+                  Installer Return Pay
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  defaultValue={booking.return_fee_installer_pay || 0}
+                  onBlur={(e) =>
+                    onUpdate(
+                      booking.id,
+                      "return_fee_installer_pay",
+                      Number(e.target.value || 0)
+                    )
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm text-gray-400">
+                  Installer Subtotal Pay
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  defaultValue={booking.installer_subtotal_pay || 0}
+                  onBlur={(e) =>
+                    onUpdate(
+                      booking.id,
+                      "installer_subtotal_pay",
+                      Number(e.target.value || 0)
+                    )
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm text-gray-400">
+                  Installer HST Pay
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  defaultValue={booking.installer_hst_pay || 0}
+                  onBlur={(e) =>
+                    onUpdate(
+                      booking.id,
+                      "installer_hst_pay",
+                      Number(e.target.value || 0)
+                    )
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm text-gray-400">
+                  Mileage Fee
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  defaultValue={booking.mileage_fee || 0}
+                  onBlur={(e) =>
+                    onUpdate(booking.id, "mileage_fee", Number(e.target.value || 0))
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-sm text-gray-400">
+                  Incomplete Note
+                </label>
+                <input
+                  type="text"
+                  defaultValue={booking.incomplete_notes || booking.incomplete_note || ""}
+                  onBlur={(e) =>
+                    onUpdate(booking.id, "incomplete_notes", e.target.value)
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-sm text-gray-400">
+                  Admin Fee Note
+                </label>
+                <input
+                  type="text"
+                  defaultValue={booking.admin_fee_note || ""}
+                  onBlur={(e) =>
+                    onUpdate(booking.id, "admin_fee_note", e.target.value)
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-sm text-gray-400">
+                  Admin Notes
+                </label>
+                <input
+                  type="text"
+                  defaultValue={booking.notes || ""}
+                  onBlur={(e) => onUpdate(booking.id, "notes", e.target.value)}
+                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-zinc-700 p-4 text-sm text-gray-300">
+              <p className="mb-1">
+                Jobs in <span className="text-yellow-400">Available</span> or{" "}
+                <span className="text-yellow-400">Pending</span> are live for installer
+                acceptance.
+              </p>
+              <p className="mb-1">
+                Incomplete jobs can carry customer return fees, installer return pay,
+                mileage fees, payout hold, and redo request tracking.
+              </p>
+              <p className="mb-1">
+                Completed jobs can include photo proof and optional signed completion
+                forms.
+              </p>
+              <p>
+                When a job is marked completed and installer pay is set, payout status can
+                move to <span className="text-yellow-400">Ready</span>.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export default function AdminBookingsPage() {
@@ -527,7 +1220,7 @@ export default function AdminBookingsPage() {
       company_profit: Number(booking.company_profit || 0),
       final_total: Number(booking.final_total || 0),
       subtotal: Number(booking.subtotal || 0),
-      hst: Number(booking.hst || 0),
+      hst: Number((booking as any).hst || booking.hst_amount || 0),
       sqft: Number(booking.sqft || booking.job_size || 0),
       installer_subtotal_pay: Number(booking.installer_subtotal_pay || 0),
       installer_hst_pay: Number(booking.installer_hst_pay || 0),
@@ -625,7 +1318,10 @@ export default function AdminBookingsPage() {
       updateData.accepted_at = new Date().toISOString();
     }
 
-    if (field === "status" && (value === "available" || value === "pending" || value === "new")) {
+    if (
+      field === "status" &&
+      (value === "available" || value === "pending" || value === "new")
+    ) {
       updateData.installer_name = null;
       updateData.reassigned_installer_name = null;
       updateData.accepted_at = null;
@@ -724,6 +1420,18 @@ export default function AdminBookingsPage() {
       (item) => normalizeText(item.installer_pay_status) === "ready"
     ).length;
 
+    const acceptedAssigned = bookings.filter(
+      (item) =>
+        normalizeBookingStatus(item.status) === "accepted" ||
+        safeText(item.installer_name).length > 0 ||
+        safeText(item.reassigned_installer_name).length > 0
+    ).length;
+
+    const totalProfit = bookings.reduce(
+      (sum, item) => sum + Number(item.company_profit || 0),
+      0
+    );
+
     return {
       new: countBy("new"),
       available: countBy("available"),
@@ -734,9 +1442,98 @@ export default function AdminBookingsPage() {
       completed: countBy("completed"),
       cancelled: countBy("cancelled"),
       readyPayout,
+      acceptedAssigned,
       total: bookings.length,
+      totalProfit,
     };
   }, [bookings]);
+
+  const availableJobs = useMemo(
+    () =>
+      filteredBookings.filter((item) => {
+        const s = normalizeBookingStatus(item.status);
+        return s === "available" || s === "pending" || s === "new";
+      }),
+    [filteredBookings]
+  );
+
+  const acceptedJobs = useMemo(
+    () =>
+      filteredBookings.filter((item) => {
+        const s = normalizeBookingStatus(item.status);
+        return s === "accepted";
+      }),
+    [filteredBookings]
+  );
+
+  const inProgressJobs = useMemo(
+    () =>
+      filteredBookings.filter((item) => {
+        const s = normalizeBookingStatus(item.status);
+        return s === "in_progress";
+      }),
+    [filteredBookings]
+  );
+
+  const incompleteJobs = useMemo(
+    () =>
+      filteredBookings.filter((item) => {
+        const s = normalizeBookingStatus(item.status);
+        return s === "incomplete";
+      }),
+    [filteredBookings]
+  );
+
+  const completedJobs = useMemo(
+    () =>
+      filteredBookings.filter((item) => {
+        const s = normalizeBookingStatus(item.status);
+        return s === "completed";
+      }),
+    [filteredBookings]
+  );
+
+  const otherJobs = useMemo(
+    () =>
+      filteredBookings.filter((item) => {
+        const s = normalizeBookingStatus(item.status);
+        return ![
+          "available",
+          "pending",
+          "new",
+          "accepted",
+          "in_progress",
+          "incomplete",
+          "completed",
+        ].includes(s);
+      }),
+    [filteredBookings]
+  );
+
+  function renderSection(
+    title: string,
+    subtitle: string,
+    items: Booking[]
+  ) {
+    if (items.length === 0) return null;
+
+    return (
+      <section className="space-y-4">
+        <SectionHeader title={title} subtitle={subtitle} />
+        {items.map((booking) => (
+          <BookingCard
+            key={booking.id}
+            booking={booking}
+            installers={installers}
+            expanded={Boolean(expandedRows[booking.id])}
+            onToggle={() => toggleExpanded(booking.id)}
+            onUpdate={updateBookingField}
+            savingId={savingId}
+          />
+        ))}
+      </section>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-black px-6 py-10 text-white">
@@ -744,25 +1541,24 @@ export default function AdminBookingsPage() {
         <h1 className="mb-2 text-4xl font-bold text-yellow-500">Admin Bookings</h1>
 
         <p className="mb-6 text-gray-300">
-          Manage all bookings, push jobs live, dispatch installers, review incomplete jobs,
-          track profit, and control payout readiness.
+          Manage all bookings, push jobs live, dispatch installers, review incomplete
+          jobs, track AI priority, monitor profit, and control payout readiness.
         </p>
 
-        <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-9">
-          <StatCard label="All" value={String(summary.total)} />
-          <StatCard label="New" value={String(summary.new)} />
-          <StatCard label="Available" value={String(summary.available)} />
-          <StatCard label="Pending" value={String(summary.pending)} />
+        <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+          <StatCard label="All Jobs" value={String(summary.total)} />
+          <StatCard label="Available / Live" value={String(summary.available + summary.pending + summary.new)} />
           <StatCard label="Accepted" value={String(summary.accepted)} />
           <StatCard label="In Progress" value={String(summary.inProgress)} />
           <StatCard label="Incomplete" value={String(summary.incomplete)} />
           <StatCard label="Completed" value={String(summary.completed)} />
-          <StatCard label="Cancelled" value={String(summary.cancelled)} />
         </div>
 
-        <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-2">
+        <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatCard label="Ready Payout" value={String(summary.readyPayout)} />
-          <StatCard label="Total Loaded Jobs" value={String(summary.total)} />
+          <StatCard label="Accepted / Assigned" value={String(summary.acceptedAssigned)} />
+          <StatCard label="Cancelled" value={String(summary.cancelled)} />
+          <StatCard label="Total Profit" value={money(summary.totalProfit)} />
         </div>
 
         <div className="mb-4">
@@ -811,737 +1607,42 @@ export default function AdminBookingsPage() {
             No bookings found.
           </div>
         ) : (
-          <div className="space-y-6">
-            {filteredBookings.map((booking) => {
-              const addOnServices = toArray(booking.add_on_services);
-              const justServices = toArray(booking.just_services);
-              const payoutLines = getPayoutLines(booking);
-              const urgencyLabel = getUrgencyLabel(booking);
-              const isExpanded = Boolean(expandedRows[booking.id]);
-              const aiScore = getAiScore(booking);
-              const acceptedState = getAcceptedStateLabel(booking);
-              const normalizedStatus = normalizeBookingStatus(booking.status);
+          <div className="space-y-8">
+            {renderSection(
+              "Available / Live Jobs",
+              "These jobs are visible for installer acceptance or ready to go live.",
+              availableJobs
+            )}
 
-              return (
-                <div
-                  key={booking.id}
-                  className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6"
-                >
-                  <div className="mb-5 flex flex-col gap-4 border-b border-zinc-800 pb-5 xl:flex-row xl:items-start xl:justify-between">
-                    <div className="flex-1">
-                      <div className="mb-3 flex flex-wrap items-center gap-2">
-                        <h2 className="text-2xl font-semibold text-yellow-500">
-                          {booking.company_name || booking.customer_name || "Booking"}
-                        </h2>
+            {renderSection(
+              "Accepted Jobs",
+              "These jobs have been accepted and are now assigned.",
+              acceptedJobs
+            )}
 
-                        <Badge
-                          label={normalizedStatus || "new"}
-                          className="border-zinc-700 bg-zinc-800/40 text-zinc-300"
-                        />
+            {renderSection(
+              "In Progress Jobs",
+              "These jobs are underway and should be monitored closely.",
+              inProgressJobs
+            )}
 
-                        <Badge
-                          label={urgencyLabel}
-                          className={getUrgencyBadgeClass(urgencyLabel)}
-                        />
+            {renderSection(
+              "Incomplete Jobs",
+              "These jobs need follow-up, fees review, redo planning, or payout hold.",
+              incompleteJobs
+            )}
 
-                        <Badge
-                          label={booking.ai_grouping_label || "Solo Route"}
-                          className={getGroupingBadgeClass(booking.ai_grouping_label)}
-                        />
+            {renderSection(
+              "Completed Jobs",
+              "Finished jobs with payout readiness and proof review.",
+              completedJobs
+            )}
 
-                        <Badge
-                          label={`Dispatch ${aiScore}/100`}
-                          className={getDispatchBadgeClass(aiScore)}
-                        />
-
-                        <Badge
-                          label={getProfitLabel(booking.company_profit)}
-                          className={getProfitBadgeClass(booking.company_profit)}
-                        />
-
-                        <Badge
-                          label={acceptedState}
-                          className={getAcceptedStateClass(booking)}
-                        />
-
-                        {booking.is_archived === true ? (
-                          <Badge
-                            label="Archived"
-                            className="border-zinc-600 bg-zinc-700/30 text-zinc-300"
-                          />
-                        ) : null}
-                      </div>
-
-                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                        <div className="rounded-xl border border-zinc-800 bg-black p-3">
-                          <p className="text-[11px] uppercase tracking-wide text-zinc-500">Job</p>
-                          <p className="mt-1 text-sm font-semibold text-white">
-                            {booking.job_id || booking.id}
-                          </p>
-                        </div>
-
-                        <div className="rounded-xl border border-zinc-800 bg-black p-3">
-                          <p className="text-[11px] uppercase tracking-wide text-zinc-500">Date</p>
-                          <p className="mt-1 text-sm font-semibold text-white">
-                            {booking.scheduled_date || "-"}
-                          </p>
-                        </div>
-
-                        <div className="rounded-xl border border-zinc-800 bg-black p-3">
-                          <p className="text-[11px] uppercase tracking-wide text-zinc-500">
-                            Pickup Window
-                          </p>
-                          <p className="mt-1 text-sm font-semibold text-white">
-                            {getPickupWindow(booking)}
-                          </p>
-                        </div>
-
-                        <div className="rounded-xl border border-zinc-800 bg-black p-3">
-                          <p className="text-[11px] uppercase tracking-wide text-zinc-500">Service</p>
-                          <p className="mt-1 text-sm font-semibold text-white">
-                            {getServiceTypeLabel(booking)}
-                          </p>
-                        </div>
-
-                        <div className="rounded-xl border border-zinc-800 bg-black p-3">
-                          <p className="text-[11px] uppercase tracking-wide text-zinc-500">Installer</p>
-                          <p className="mt-1 text-sm font-semibold text-white">
-                            {booking.reassigned_installer_name ||
-                              booking.installer_name ||
-                              "Unassigned"}
-                          </p>
-                        </div>
-
-                        <div className="rounded-xl border border-zinc-800 bg-black p-3">
-                          <p className="text-[11px] uppercase tracking-wide text-zinc-500">Status</p>
-                          <p className="mt-1 text-sm font-semibold text-white">
-                            {booking.status || "new"}
-                          </p>
-                        </div>
-
-                        <div className="rounded-xl border border-zinc-800 bg-black p-3">
-                          <p className="text-[11px] uppercase tracking-wide text-zinc-500">
-                            Accepted Time
-                          </p>
-                          <p className="mt-1 text-sm font-semibold text-white">
-                            {formatDateTime(booking.accepted_at)}
-                          </p>
-                        </div>
-
-                        <div className="rounded-xl border border-zinc-800 bg-black p-3">
-                          <p className="text-[11px] uppercase tracking-wide text-zinc-500">
-                            Installer Pay
-                          </p>
-                          <p className="mt-1 text-sm font-semibold text-white">
-                            {money(booking.installer_pay)}
-                          </p>
-                        </div>
-
-                        <div className="rounded-xl border border-zinc-800 bg-black p-3">
-                          <p className="text-[11px] uppercase tracking-wide text-zinc-500">
-                            Company Profit
-                          </p>
-                          <p
-                            className={`mt-1 text-sm font-semibold ${getProfitTextClass(
-                              booking.company_profit
-                            )}`}
-                          >
-                            {money(booking.company_profit)}
-                          </p>
-                        </div>
-
-                        <div className="rounded-xl border border-zinc-800 bg-black p-3">
-                          <p className="text-[11px] uppercase tracking-wide text-zinc-500">
-                            Payout Status
-                          </p>
-                          <p className="mt-1 text-sm font-semibold text-white">
-                            {booking.installer_pay_status || "-"}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 grid gap-3 md:grid-cols-2">
-                        <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
-                          <p className="text-sm font-semibold text-yellow-400">
-                            AI Suggested Installer Type
-                          </p>
-                          <p className="mt-1 text-sm text-gray-300">
-                            {booking.ai_recommended_installer_type || "Standard Installer"}
-                          </p>
-                        </div>
-
-                        <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
-                          <p className="text-sm font-semibold text-yellow-400">AI Route Hint</p>
-                          <p className="mt-1 text-sm text-gray-300">
-                            {booking.ai_route_hint || "No route hint yet."}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex w-full flex-col gap-3 xl:w-[260px]">
-                      <button
-                        type="button"
-                        onClick={() => toggleExpanded(booking.id)}
-                        className="rounded-xl border border-zinc-700 px-4 py-3 text-sm font-semibold text-white transition hover:border-yellow-500 hover:text-yellow-400"
-                      >
-                        {isExpanded ? "Hide Details" : "View Full Details"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => void updateBookingField(booking.id, "status", "available")}
-                        disabled={savingId === booking.id}
-                        className="rounded-xl bg-yellow-500 px-4 py-3 text-sm font-bold text-black transition hover:bg-yellow-400 disabled:opacity-60"
-                      >
-                        {savingId === booking.id ? "Saving..." : "Set Live / Available"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => void updateBookingField(booking.id, "status", "completed")}
-                        disabled={savingId === booking.id}
-                        className="rounded-xl bg-green-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-green-500 disabled:opacity-60"
-                      >
-                        {savingId === booking.id ? "Saving..." : "Mark Completed"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => void updateBookingField(booking.id, "status", "incomplete")}
-                        disabled={savingId === booking.id}
-                        className="rounded-xl bg-red-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-red-500 disabled:opacity-60"
-                      >
-                        {savingId === booking.id ? "Saving..." : "Mark Incomplete"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void updateBookingField(booking.id, "installer_pay_status", "ready")
-                        }
-                        disabled={savingId === booking.id}
-                        className="rounded-xl border border-zinc-700 bg-black px-4 py-3 text-sm font-bold text-white transition hover:border-yellow-500 disabled:opacity-60"
-                      >
-                        {savingId === booking.id ? "Saving..." : "Set Ready Payout"}
-                      </button>
-                    </div>
-                  </div>
-
-                  {isExpanded ? (
-                    <div className="flex flex-col gap-8 xl:flex-row xl:items-start xl:justify-between">
-                      <div className="flex-1 space-y-6">
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div className="rounded-xl border border-zinc-800 bg-black p-4">
-                            <p className="mb-3 text-sm font-semibold text-yellow-400">
-                              Customer / Job Info
-                            </p>
-                            <div className="space-y-2 text-sm text-gray-300">
-                              <p>Job ID: {booking.job_id || booking.id}</p>
-                              <p>Booking Row ID: {booking.id}</p>
-
-                              {booking.job_group_id ? (
-                                <p>
-                                  Group ID: {String(booking.job_group_id)}
-                                  {booking.job_number ? ` • Job ${booking.job_number}` : ""}
-                                </p>
-                              ) : null}
-
-                              <p>Customer: {booking.customer_name || "-"}</p>
-                              <p>Email: {booking.customer_email || "-"}</p>
-                              <p>Phone: {booking.phone_number || "-"}</p>
-                              <p>Company: {booking.company_name || "-"}</p>
-                              <p>Material Type: {booking.material_type || "-"}</p>
-                              <p>Material Size: {booking.material_size || "-"}</p>
-                              <p>Sqft: {Number(booking.sqft || booking.job_size || 0) || "-"}</p>
-                              <p>Payment Method: {booking.payment_method || "-"}</p>
-                              <p>Timeline: {booking.timeline || "-"}</p>
-                              <p>Created: {formatDateTime(booking.created_at)}</p>
-                            </div>
-                          </div>
-
-                          <div className="rounded-xl border border-zinc-800 bg-black p-4">
-                            <p className="mb-3 text-sm font-semibold text-yellow-400">
-                              Route / Schedule
-                            </p>
-                            <div className="space-y-2 text-sm text-gray-300">
-                              <p>Scheduled Date: {booking.scheduled_date || "-"}</p>
-                              <p>Scheduled Time: {booking.scheduled_time || "-"}</p>
-                              <p>Pickup Window: {getPickupWindow(booking)}</p>
-                              <p>Pick Up: {booking.pickup_address || "-"}</p>
-                              <p>Drop Off: {booking.dropoff_address || "-"}</p>
-                              <p>Distance Tier: {booking.ai_distance_tier || "-"}</p>
-                              <p>Accepted At: {formatDateTime(booking.accepted_at)}</p>
-                              <p>Completed At: {formatDateTime(booking.completed_at)}</p>
-                              <p>Incomplete At: {formatDateTime(booking.incomplete_at)}</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <ServiceBox title="Add-On Services" items={addOnServices} />
-                          <ServiceBox title="Just Services" items={justServices} />
-                        </div>
-
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div className="rounded-xl border border-zinc-800 bg-black p-4">
-                            <p className="mb-3 text-sm font-semibold text-yellow-400">
-                              Incomplete / Return / Redo
-                            </p>
-                            <div className="space-y-2 text-sm text-gray-300">
-                              <p>Incomplete Reason: {booking.incomplete_reason || "-"}</p>
-                              <p>
-                                Incomplete Note:{" "}
-                                {booking.incomplete_notes || booking.incomplete_note || "-"}
-                              </p>
-                              <p>
-                                Customer Return Fee:{" "}
-                                {money(booking.return_fee_charged || booking.return_fee)}
-                              </p>
-                              <p>
-                                Installer Return Pay: {money(booking.return_fee_installer_pay)}
-                              </p>
-                              <p>Mileage Fee: {money(booking.mileage_fee)}</p>
-                              <p>Admin Fee Note: {booking.admin_fee_note || "-"}</p>
-                              <p>Redo Requested: {booking.redo_requested ? "Yes" : "No"}</p>
-                            </div>
-                          </div>
-
-                          <div className="rounded-xl border border-zinc-800 bg-black p-4">
-                            <p className="mb-3 text-sm font-semibold text-yellow-400">
-                              Extra Details / Proof
-                            </p>
-                            <div className="space-y-2 text-sm text-gray-300">
-                              <p>Waterfall Quantity: {booking.waterfall_quantity || "-"}</p>
-                              <p>
-                                Outlet Plug Cutout Quantity:{" "}
-                                {booking.outlet_plug_cutout_quantity || "-"}
-                              </p>
-                              <p>
-                                Disposal Responsibility:{" "}
-                                {getDisposalResponsibilityLabel(
-                                  booking.disposal_responsibility
-                                )}
-                              </p>
-                              <p>
-                                Customer Provided Signing Form:{" "}
-                                {booking.has_signing_form === true
-                                  ? "Yes"
-                                  : booking.has_signing_form === false
-                                    ? "No"
-                                    : "-"}
-                              </p>
-                              <ProofLink
-                                label="Completed Photo Proof"
-                                path={booking.completed_photo_url}
-                              />
-                              <ProofLink
-                                label="Completion Signature"
-                                path={booking.completion_signature_url}
-                              />
-                              <ProofLink
-                                label="Incomplete Photo Proof"
-                                path={booking.incomplete_photo_url}
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="rounded-xl border border-zinc-800 bg-black p-4">
-                          <p className="mb-3 text-sm font-semibold text-yellow-400">
-                            Payout Breakdown
-                          </p>
-
-                          {payoutLines.length > 0 ? (
-                            <div className="space-y-2 text-sm text-gray-300">
-                              {payoutLines.map((line) => (
-                                <div
-                                  key={line.label}
-                                  className="flex items-center justify-between border-b border-zinc-800 pb-2"
-                                >
-                                  <span>{line.label}</span>
-                                  <span>{money(line.amount)}</span>
-                                </div>
-                              ))}
-
-                              <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                                <span>Subtotal Pay</span>
-                                <span>{money(booking.installer_subtotal_pay)}</span>
-                              </div>
-
-                              <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                                <span>HST Pay</span>
-                                <span>{money(booking.installer_hst_pay)}</span>
-                              </div>
-
-                              <div className="flex items-center justify-between pt-2 font-semibold text-yellow-400">
-                                <span>Total Installer Pay</span>
-                                <span>{money(booking.installer_pay)}</span>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="space-y-2 text-sm text-gray-300">
-                              <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                                <span>Subtotal Pay</span>
-                                <span>{money(booking.installer_subtotal_pay)}</span>
-                              </div>
-
-                              <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                                <span>HST Pay</span>
-                                <span>{money(booking.installer_hst_pay)}</span>
-                              </div>
-
-                              <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                                <span>Total Installer Pay</span>
-                                <span>{money(booking.installer_pay)}</span>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="rounded-xl border border-zinc-800 bg-black p-4">
-                          <p className="mb-3 text-sm font-semibold text-yellow-400">
-                            Notes / Totals
-                          </p>
-                          <div className="space-y-2 text-sm text-gray-300">
-                            <p>Notes: {booking.notes || "-"}</p>
-                            <p>Side Note: {booking.side_note || "-"}</p>
-                            <p>Subtotal: {money(booking.subtotal)}</p>
-                            <p>HST: {money(booking.hst)}</p>
-                            <p className="font-semibold text-yellow-400">
-                              Total: {money(booking.final_total)}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="w-full xl:w-[460px]">
-                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                          <div>
-                            <label className="mb-1 block text-sm text-gray-400">
-                              Booking Status
-                            </label>
-                            <select
-                              value={booking.status || ""}
-                              onChange={(e) =>
-                                void updateBookingField(booking.id, "status", e.target.value)
-                              }
-                              className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                            >
-                              <option value="">Select Status</option>
-                              <option value="new">New</option>
-                              <option value="available">Available</option>
-                              <option value="pending">Pending</option>
-                              <option value="confirmed">Confirmed</option>
-                              <option value="accepted">Accepted</option>
-                              <option value="assigned">Assigned</option>
-                              <option value="in_progress">In Progress</option>
-                              <option value="incomplete">Incomplete</option>
-                              <option value="completed_pending_admin_review">
-                                Completed Pending Admin Review
-                              </option>
-                              <option value="completed">Completed</option>
-                              <option value="cancelled">Cancelled</option>
-                            </select>
-                          </div>
-
-                          <div>
-                            <label className="mb-1 block text-sm text-gray-400">
-                              Customer Payment Status
-                            </label>
-                            <select
-                              value={booking.payment_status || ""}
-                              onChange={(e) =>
-                                void updateBookingField(
-                                  booking.id,
-                                  "payment_status",
-                                  e.target.value
-                                )
-                              }
-                              className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                            >
-                              <option value="">Select Payment Status</option>
-                              <option value="unpaid">Unpaid</option>
-                              <option value="pending">Pending</option>
-                              <option value="paid">Paid</option>
-                            </select>
-                          </div>
-
-                          <div>
-                            <label className="mb-1 block text-sm text-gray-400">
-                              Installer
-                            </label>
-                            <select
-                              value={booking.installer_name || ""}
-                              onChange={(e) =>
-                                void updateBookingField(
-                                  booking.id,
-                                  "installer_name",
-                                  e.target.value
-                                )
-                              }
-                              className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                            >
-                              <option value="">Select Installer</option>
-                              {installers
-                                .filter((installer) => normalizeText(installer.status) !== "inactive")
-                                .map((installer) => {
-                                  const installerDisplayName = getInstallerDisplayName(installer);
-
-                                  return (
-                                    <option key={installer.id} value={installerDisplayName}>
-                                      {installerDisplayName}
-                                    </option>
-                                  );
-                                })}
-                            </select>
-                          </div>
-
-                          <div>
-                            <label className="mb-1 block text-sm text-gray-400">
-                              Installer Pay
-                            </label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={booking.installer_pay ?? 0}
-                              onChange={(e) => {
-                                const newValue = Number(e.target.value || 0);
-                                setBookings((prev) =>
-                                  prev.map((item) =>
-                                    item.id === booking.id
-                                      ? {
-                                          ...item,
-                                          installer_pay: newValue,
-                                          company_profit:
-                                            Number(item.final_total || 0) - newValue,
-                                        }
-                                      : item
-                                  )
-                                );
-                              }}
-                              onBlur={(e) =>
-                                void updateBookingField(
-                                  booking.id,
-                                  "installer_pay",
-                                  Number(e.target.value || 0)
-                                )
-                              }
-                              className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="mb-1 block text-sm text-gray-400">
-                              Installer Payout Status
-                            </label>
-                            <select
-                              value={booking.installer_pay_status || ""}
-                              onChange={(e) =>
-                                void updateBookingField(
-                                  booking.id,
-                                  "installer_pay_status",
-                                  e.target.value
-                                )
-                              }
-                              className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                            >
-                              <option value="">Select Payout Status</option>
-                              <option value="unpaid">Unpaid</option>
-                              <option value="pending">Pending</option>
-                              <option value="pending_review">Pending Review</option>
-                              <option value="hold">Hold</option>
-                              <option value="ready">Ready</option>
-                              <option value="paid">Paid</option>
-                            </select>
-                          </div>
-
-                          <div>
-                            <label className="mb-1 block text-sm text-gray-400">
-                              Company Profit
-                            </label>
-                            <input
-                              type="text"
-                              value={money(booking.company_profit)}
-                              readOnly
-                              className="w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-white"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="mb-1 block text-sm text-gray-400">
-                              Customer Return Fee
-                            </label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              defaultValue={booking.return_fee_charged || booking.return_fee || 0}
-                              onBlur={(e) =>
-                                void updateBookingField(
-                                  booking.id,
-                                  "return_fee_charged",
-                                  Number(e.target.value || 0)
-                                )
-                              }
-                              className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="mb-1 block text-sm text-gray-400">
-                              Installer Return Pay
-                            </label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              defaultValue={booking.return_fee_installer_pay || 0}
-                              onBlur={(e) =>
-                                void updateBookingField(
-                                  booking.id,
-                                  "return_fee_installer_pay",
-                                  Number(e.target.value || 0)
-                                )
-                              }
-                              className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="mb-1 block text-sm text-gray-400">
-                              Installer Subtotal Pay
-                            </label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              defaultValue={booking.installer_subtotal_pay || 0}
-                              onBlur={(e) =>
-                                void updateBookingField(
-                                  booking.id,
-                                  "installer_subtotal_pay",
-                                  Number(e.target.value || 0)
-                                )
-                              }
-                              className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="mb-1 block text-sm text-gray-400">
-                              Installer HST Pay
-                            </label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              defaultValue={booking.installer_hst_pay || 0}
-                              onBlur={(e) =>
-                                void updateBookingField(
-                                  booking.id,
-                                  "installer_hst_pay",
-                                  Number(e.target.value || 0)
-                                )
-                              }
-                              className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                            />
-                          </div>
-
-                          <div>
-                            <label className="mb-1 block text-sm text-gray-400">
-                              Mileage Fee
-                            </label>
-                            <input
-                              type="number"
-                              step="0.01"
-                              defaultValue={booking.mileage_fee || 0}
-                              onBlur={(e) =>
-                                void updateBookingField(
-                                  booking.id,
-                                  "mileage_fee",
-                                  Number(e.target.value || 0)
-                                )
-                              }
-                              className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                            />
-                          </div>
-
-                          <div className="md:col-span-2">
-                            <label className="mb-1 block text-sm text-gray-400">
-                              Incomplete Note
-                            </label>
-                            <input
-                              type="text"
-                              defaultValue={booking.incomplete_notes || booking.incomplete_note || ""}
-                              onBlur={(e) =>
-                                void updateBookingField(
-                                  booking.id,
-                                  "incomplete_notes",
-                                  e.target.value
-                                )
-                              }
-                              className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                            />
-                          </div>
-
-                          <div className="md:col-span-2">
-                            <label className="mb-1 block text-sm text-gray-400">
-                              Admin Fee Note
-                            </label>
-                            <input
-                              type="text"
-                              defaultValue={booking.admin_fee_note || ""}
-                              onBlur={(e) =>
-                                void updateBookingField(
-                                  booking.id,
-                                  "admin_fee_note",
-                                  e.target.value
-                                )
-                              }
-                              className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                            />
-                          </div>
-
-                          <div className="md:col-span-2">
-                            <label className="mb-1 block text-sm text-gray-400">
-                              Admin Notes
-                            </label>
-                            <input
-                              type="text"
-                              defaultValue={booking.notes || ""}
-                              onBlur={(e) =>
-                                void updateBookingField(
-                                  booking.id,
-                                  "notes",
-                                  e.target.value
-                                )
-                              }
-                              className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="mt-4 rounded-xl border border-zinc-700 p-4 text-sm text-gray-300">
-                          <p className="mb-1">
-                            Jobs in <span className="text-yellow-400">Available</span> or{" "}
-                            <span className="text-yellow-400">Pending</span> are live for installer acceptance.
-                          </p>
-                          <p className="mb-1">
-                            Incomplete jobs can carry customer return fees, installer return pay,
-                            mileage fees, payout hold, and redo request tracking.
-                          </p>
-                          <p className="mb-1">
-                            Completed jobs can include photo proof and optional signed
-                            completion forms.
-                          </p>
-                          <p>
-                            When a job is marked completed and installer pay is set, payout status
-                            can move to <span className="text-yellow-400">Ready</span>.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
+            {renderSection(
+              "Other Jobs",
+              "Cancelled or uncategorized statuses.",
+              otherJobs
+            )}
           </div>
         )}
       </div>

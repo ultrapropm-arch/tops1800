@@ -1,9 +1,20 @@
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
+import { createClient } from "@supabase/supabase-js";
 
 const ADMIN_PHONE = "647-795-4392";
 const ADMIN_EMAIL = "ultrapropm@gmail.com";
 const DEFAULT_FROM = "1800TOPS <info@mail.1800tops.com>";
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+const supabaseAdmin =
+  process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL,
+        process.env.SUPABASE_SERVICE_ROLE_KEY
+      )
+    : null;
 
 type EmailType =
   | "assignment"
@@ -11,6 +22,7 @@ type EmailType =
   | "incomplete"
   | "resume_request"
   | "installer_accepted"
+  | "new_job_available"
   | "standard";
 
 type SendEmailBody = {
@@ -19,28 +31,49 @@ type SendEmailBody = {
   bcc?: string | string[];
   subject?: string;
   html?: string;
+  text?: string;
   type?: string;
   sendAdminCopy?: boolean;
+  sendApprovedInstallers?: boolean;
   jobReadyUrl?: string;
   jobId?: string;
   replyTo?: string | string[];
 };
 
+type InstallerProfileRow = {
+  email?: string | null;
+  approval_status?: string | null;
+  status?: string | null;
+  is_active?: boolean | null;
+};
+
 function normalizeEmailList(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value
-      .map((item) => String(item || "").trim())
+      .map((item) => String(item || "").trim().toLowerCase())
       .filter(Boolean);
   }
 
   if (typeof value === "string") {
     return value
       .split(",")
-      .map((item) => item.trim())
+      .map((item) => item.trim().toLowerCase())
       .filter(Boolean);
   }
 
   return [];
+}
+
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function dedupeEmails(emails: string[]) {
+  return Array.from(new Set(emails));
+}
+
+function sanitizeEmailList(value: unknown) {
+  return dedupeEmails(normalizeEmailList(value).filter(isValidEmail));
 }
 
 function escapeHtml(value: string) {
@@ -50,6 +83,27 @@ function escapeHtml(value: string) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function stripHtml(html: string) {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<li>/gi, "• ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#039;/gi, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
 }
 
 function normalizeType(value: unknown): EmailType {
@@ -62,6 +116,7 @@ function normalizeType(value: unknown): EmailType {
   if (type === "incomplete") return "incomplete";
   if (type === "resume_request") return "resume_request";
   if (type === "installer_accepted") return "installer_accepted";
+  if (type === "new_job_available") return "new_job_available";
   return "standard";
 }
 
@@ -84,7 +139,7 @@ function buildActionButton(url: string, label: string) {
   return `
     <div style="margin: 24px 0;">
       <a
-        href="${url}"
+        href="${escapeHtml(url)}"
         style="
           display:inline-block;
           background:#eab308;
@@ -104,8 +159,8 @@ function buildActionButton(url: string, label: string) {
 function buildShell(title: string, intro: string, contentHtml: string) {
   return `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
-      <h2>${title}</h2>
-      <p>${intro}</p>
+      <h2>${escapeHtml(title)}</h2>
+      <p>${escapeHtml(intro)}</p>
       ${contentHtml}
     </div>
   `;
@@ -191,10 +246,22 @@ function buildInstallerAcceptedEmail(html: string) {
   );
 }
 
+function buildNewJobAvailableEmail(html: string) {
+  return buildShell(
+    "New Available Job",
+    "A new job is now available in the installer portal.",
+    `
+      ${html}
+      <p>Please log in to the installer portal to review and accept this job if it fits your route.</p>
+      ${buildPolicyBlock()}
+    `
+  );
+}
+
 function buildAdminEmail(html: string, heading = "New Booking Received") {
   return `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
-      <h2>${heading}</h2>
+      <h2>${escapeHtml(heading)}</h2>
       ${html}
       ${buildPolicyBlock()}
     </div>
@@ -207,6 +274,7 @@ function getAdminHeadingByType(type: EmailType) {
   if (type === "incomplete") return "Job Marked Incomplete";
   if (type === "resume_request") return "Resume Job Request Received";
   if (type === "installer_accepted") return "Installer Accepted Job";
+  if (type === "new_job_available") return "New Available Job";
   return "New Booking Received";
 }
 
@@ -220,6 +288,7 @@ function wrapHtmlByType(
   if (type === "incomplete") return buildIncompleteEmail(html, options);
   if (type === "resume_request") return buildResumeRequestEmail(html);
   if (type === "installer_accepted") return buildInstallerAcceptedEmail(html);
+  if (type === "new_job_available") return buildNewJobAvailableEmail(html);
 
   return `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
@@ -229,7 +298,11 @@ function wrapHtmlByType(
   `;
 }
 
-function buildJobReadyUrl(appUrl: string, providedJobReadyUrl?: string, jobId?: string) {
+function buildJobReadyUrl(
+  appUrl: string,
+  providedJobReadyUrl?: string,
+  jobId?: string
+) {
   const directUrl = String(providedJobReadyUrl || "").trim();
   if (directUrl) return directUrl;
 
@@ -239,29 +312,103 @@ function buildJobReadyUrl(appUrl: string, providedJobReadyUrl?: string, jobId?: 
   return `${appUrl}/job-ready?jobId=${encodeURIComponent(cleanJobId)}`;
 }
 
+function emailAlreadyIncluded(
+  target: string,
+  lists: { to: string[]; cc: string[]; bcc: string[] }
+) {
+  const value = target.trim().toLowerCase();
+  return (
+    lists.to.includes(value) ||
+    lists.cc.includes(value) ||
+    lists.bcc.includes(value)
+  );
+}
+
+async function getApprovedInstallerEmails() {
+  if (!supabaseAdmin) {
+    console.error(
+      "SUPABASE ADMIN CLIENT NOT CONFIGURED. Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY."
+    );
+    return [];
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("installer_profiles")
+    .select("email, approval_status, status, is_active")
+    .not("email", "is", null);
+
+  if (error) {
+    console.error("LOAD APPROVED INSTALLERS ERROR:", error);
+    return [];
+  }
+
+  const approvedEmails = ((data || []) as InstallerProfileRow[])
+    .filter((installer) => {
+      const approval = String(
+        installer.approval_status || installer.status || ""
+      )
+        .trim()
+        .toLowerCase();
+
+      const isApproved =
+        !approval || approval === "approved" || approval === "active";
+
+      const isActive = installer.is_active !== false;
+      const email = String(installer.email || "").trim().toLowerCase();
+
+      return Boolean(email) && isApproved && isActive && isValidEmail(email);
+    })
+    .map((installer) => String(installer.email || "").trim().toLowerCase());
+
+  return dedupeEmails(approvedEmails);
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as SendEmailBody;
 
-    const to = normalizeEmailList(body?.to);
-    const cc = normalizeEmailList(body?.cc);
-    const bcc = normalizeEmailList(body?.bcc);
-    const replyTo = normalizeEmailList(body?.replyTo);
+    let to = sanitizeEmailList(body?.to);
+    let cc = sanitizeEmailList(body?.cc);
+    let bcc = sanitizeEmailList(body?.bcc);
+    const replyTo = sanitizeEmailList(body?.replyTo);
 
     const subject = String(body?.subject || "").trim();
     const rawHtml = String(body?.html || "").trim();
+    const rawText = String(body?.text || "").trim();
     const type = normalizeType(body?.type);
     const sendAdminCopy = Boolean(body?.sendAdminCopy);
+    const sendApprovedInstallers = Boolean(body?.sendApprovedInstallers);
 
     const appUrl =
       String(process.env.NEXT_PUBLIC_APP_URL || "").trim() ||
-      "http://localhost:3000";
+      "http://1800tops.com";
 
     const jobReadyUrl = buildJobReadyUrl(appUrl, body?.jobReadyUrl, body?.jobId);
 
+    if (sendApprovedInstallers) {
+      const installerEmails = await getApprovedInstallerEmails();
+
+      const filteredInstallerEmails = installerEmails.filter(
+        (email) =>
+          !emailAlreadyIncluded(email, {
+            to,
+            cc,
+            bcc,
+          })
+      );
+
+      if (filteredInstallerEmails.length) {
+        bcc = dedupeEmails([...bcc, ...filteredInstallerEmails]);
+      }
+
+      if (!to.length) {
+        to = [ADMIN_EMAIL.toLowerCase()];
+      }
+    }
+
     if (!to.length) {
       return NextResponse.json(
-        { error: "Missing required field: to" },
+        { error: "Missing valid recipient email in 'to'" },
         { status: 400 }
       );
     }
@@ -288,16 +435,17 @@ export async function POST(request: Request) {
     }
 
     const finalHtml = wrapHtmlByType(type, rawHtml, { jobReadyUrl });
-    const resend = new Resend(process.env.RESEND_API_KEY);
+    const finalText = rawText || stripHtml(finalHtml);
 
     const { data, error } = await resend.emails.send({
       from: DEFAULT_FROM,
       to,
-      cc: cc.length ? cc : undefined,
-      bcc: bcc.length ? bcc : undefined,
-      replyTo: replyTo.length ? replyTo : undefined,
       subject,
       html: finalHtml,
+      text: finalText,
+      ...(cc.length ? { cc } : {}),
+      ...(bcc.length ? { bcc } : {}),
+      ...(replyTo.length ? { replyTo } : {}),
     });
 
     if (error) {
@@ -313,7 +461,10 @@ export async function POST(request: Request) {
 
     let adminData = null;
 
-    if (sendAdminCopy) {
+    if (
+      sendAdminCopy &&
+      !emailAlreadyIncluded(ADMIN_EMAIL, { to, cc, bcc })
+    ) {
       const adminHeading = getAdminHeadingByType(type);
 
       const adminResult = await resend.emails.send({
@@ -321,6 +472,7 @@ export async function POST(request: Request) {
         to: [ADMIN_EMAIL],
         subject: `Admin Copy - ${subject}`,
         html: buildAdminEmail(rawHtml, adminHeading),
+        text: stripHtml(buildAdminEmail(rawHtml, adminHeading)),
       });
 
       if (adminResult.error) {
@@ -334,6 +486,7 @@ export async function POST(request: Request) {
       success: true,
       data,
       adminData,
+      installerNotificationCount: sendApprovedInstallers ? bcc.length : 0,
     });
   } catch (error: unknown) {
     console.error("EMAIL ERROR:", error);
@@ -342,9 +495,7 @@ export async function POST(request: Request) {
       error instanceof Error ? error.message : "Failed to send email";
 
     return NextResponse.json(
-      {
-        error: message,
-      },
+      { error: message },
       { status: 500 }
     );
   }

@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+
+const INSTAGRAM_URL =
+  "https://www.instagram.com/ultrapro_contracting_inc?igsh=MWY5cjFnajV4ZTVlZg==";
 
 const trustStats = [
   { value: "30+", label: "Installers Across Ontario" },
@@ -107,6 +110,174 @@ const stepByStepFlow = [
   "Job completed",
 ];
 
+function InstagramIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      aria-hidden="true"
+    >
+      <rect x="3.5" y="3.5" width="17" height="17" rx="4.5" />
+      <circle cx="12" cy="12" r="4" />
+      <circle cx="17.2" cy="6.8" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function InstantQuote() {
+  const baseRates: Record<string, number> = {
+    installation_3cm: 10,
+    installation_2cm: 9,
+    backsplash: 10,
+  };
+
+  const addonRates = {
+    waterfall: 100,
+    outlet: 50,
+    sink: 180,
+  };
+
+  const [service, setService] = useState("installation_3cm");
+  const [sqft, setSqft] = useState<number>(50);
+  const [distance, setDistance] = useState<number>(10);
+  const [waterfalls, setWaterfalls] = useState<number>(0);
+  const [outlets, setOutlets] = useState<number>(0);
+  const [sinkCutout, setSinkCutout] = useState<boolean>(false);
+
+  const serviceTotal = useMemo(() => {
+    return (baseRates[service] || 0) * sqft;
+  }, [service, sqft]);
+
+  const addonTotal = useMemo(() => {
+    return (
+      waterfalls * addonRates.waterfall +
+      outlets * addonRates.outlet +
+      (sinkCutout ? addonRates.sink : 0)
+    );
+  }, [waterfalls, outlets, sinkCutout]);
+
+  const mileageTotal = useMemo(() => {
+    return distance * 1.5;
+  }, [distance]);
+
+  const total = useMemo(() => {
+    return serviceTotal + addonTotal + mileageTotal;
+  }, [serviceTotal, addonTotal, mileageTotal]);
+
+  return (
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-6">
+      <div className="mb-5">
+        <p className="text-lg font-semibold text-white">Quick Estimate</p>
+        <p className="mt-1 text-sm text-zinc-400">
+          Use this for a fast idea of price before starting the full booking flow.
+        </p>
+      </div>
+
+      <div className="space-y-4">
+        <div>
+          <label className="mb-2 block text-sm text-zinc-400">Service Type</label>
+          <select
+            value={service}
+            onChange={(e) => setService(e.target.value)}
+            className="w-full rounded-2xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
+          >
+            <option value="installation_3cm">3cm Installation</option>
+            <option value="installation_2cm">2cm Installation</option>
+            <option value="backsplash">Backsplash</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="mb-2 block text-sm text-zinc-400">Square Feet</label>
+          <input
+            type="number"
+            min={0}
+            value={sqft}
+            onChange={(e) => setSqft(Number(e.target.value) || 0)}
+            className="w-full rounded-2xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
+          />
+        </div>
+
+        <div>
+          <label className="mb-2 block text-sm text-zinc-400">Distance (km)</label>
+          <input
+            type="number"
+            min={0}
+            value={distance}
+            onChange={(e) => setDistance(Number(e.target.value) || 0)}
+            className="w-full rounded-2xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
+          />
+        </div>
+
+        <div>
+          <label className="mb-2 block text-sm text-zinc-400">Waterfalls</label>
+          <input
+            type="number"
+            min={0}
+            value={waterfalls}
+            onChange={(e) => setWaterfalls(Number(e.target.value) || 0)}
+            className="w-full rounded-2xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
+          />
+        </div>
+
+        <div>
+          <label className="mb-2 block text-sm text-zinc-400">Outlet Cutouts</label>
+          <input
+            type="number"
+            min={0}
+            value={outlets}
+            onChange={(e) => setOutlets(Number(e.target.value) || 0)}
+            className="w-full rounded-2xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
+          />
+        </div>
+
+        <label className="flex items-center gap-3 rounded-2xl border border-zinc-800 bg-black px-4 py-3 text-sm text-zinc-300">
+          <input
+            type="checkbox"
+            checked={sinkCutout}
+            onChange={(e) => setSinkCutout(e.target.checked)}
+          />
+          Sink Cutout
+        </label>
+
+        <div className="mt-4 rounded-2xl border border-yellow-500/20 bg-black p-4">
+          <div className="space-y-2 text-sm text-zinc-400">
+            <div className="flex justify-between">
+              <span>Service</span>
+              <span>${serviceTotal.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Add-ons</span>
+              <span>${addonTotal.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Mileage</span>
+              <span>${mileageTotal.toFixed(2)}</span>
+            </div>
+          </div>
+
+          <div className="mt-4 flex items-center justify-between border-t border-zinc-800 pt-4">
+            <span className="text-sm text-zinc-400">Estimated Total</span>
+            <span className="text-2xl font-bold text-yellow-500">
+              ${total.toFixed(2)}
+            </span>
+          </div>
+        </div>
+
+        <Link
+          href="/book"
+          className="block w-full rounded-2xl bg-yellow-500 px-6 py-4 text-center font-bold text-black transition hover:bg-yellow-400"
+        >
+          Continue To Full Booking
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 export default function HomePage() {
   const [openMessage, setOpenMessage] = useState(false);
   const [name, setName] = useState("");
@@ -140,6 +311,16 @@ export default function HomePage() {
           </div>
 
           <div className="flex items-center gap-3">
+            <a
+              href={INSTAGRAM_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Instagram"
+              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-zinc-700 text-zinc-300 transition hover:border-yellow-500 hover:text-yellow-400"
+            >
+              <InstagramIcon />
+            </a>
+
             <Link
               href="/login"
               className="rounded-full border border-zinc-700 px-4 py-2 text-sm font-medium transition hover:border-yellow-500 hover:text-yellow-400"
@@ -273,7 +454,7 @@ export default function HomePage() {
 
       <section id="instant-quote" className="px-6 pb-20">
         <div className="mx-auto max-w-7xl rounded-[2rem] border border-zinc-800 bg-zinc-950 p-8 md:p-10">
-          <div className="grid gap-8 lg:grid-cols-2 lg:items-center">
+          <div className="grid gap-8 lg:grid-cols-2 lg:items-start">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.25em] text-yellow-500">
                 Instant Quote
@@ -297,30 +478,7 @@ export default function HomePage() {
             </div>
 
             <div className="rounded-[1.5rem] border border-zinc-800 bg-black p-6">
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-6">
-                <p className="text-lg font-semibold text-white">
-                  Ready to price your next install?
-                </p>
-                <p className="mt-2 text-sm text-zinc-400">
-                  Start the booking flow and lock in the job faster.
-                </p>
-
-                <div className="mt-6 flex flex-col gap-4">
-                  <Link
-                    href="/book"
-                    className="rounded-2xl bg-yellow-500 px-6 py-4 text-center font-bold text-black transition hover:bg-yellow-400"
-                  >
-                    Start Instant Quote
-                  </Link>
-
-                  <Link
-                    href="/book"
-                    className="rounded-2xl border border-zinc-700 px-6 py-4 text-center font-semibold text-white transition hover:border-yellow-500 hover:text-yellow-400"
-                  >
-                    Book Installation / Services
-                  </Link>
-                </div>
-              </div>
+              <InstantQuote />
             </div>
           </div>
         </div>
@@ -474,8 +632,9 @@ export default function HomePage() {
 
       <footer className="border-t border-zinc-800 bg-black px-6 py-8">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 text-sm text-zinc-500 md:flex-row md:items-center md:justify-between">
-          <p>©️ 1-800TOPS. All rights reserved.</p>
-          <div className="flex flex-wrap gap-4">
+          <p>© 1-800TOPS. All rights reserved.</p>
+
+          <div className="flex flex-wrap items-center gap-4">
             <Link href="/book" className="transition hover:text-yellow-400">
               Book
             </Link>
@@ -485,6 +644,16 @@ export default function HomePage() {
             <Link href="/policies" className="transition hover:text-yellow-400">
               Policies
             </Link>
+
+            <a
+              href={INSTAGRAM_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Instagram"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-700 text-zinc-300 transition hover:border-yellow-500 hover:text-yellow-400"
+            >
+              <InstagramIcon />
+            </a>
           </div>
         </div>
       </footer>

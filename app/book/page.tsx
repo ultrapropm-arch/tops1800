@@ -3,7 +3,7 @@
 export const dynamic = "force-dynamic";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 const CUSTOMER_JUST_SERVICE_MINIMUM = 220;
 const INSTALLER_JUST_SERVICE_MINIMUM = 160;
@@ -502,6 +502,7 @@ function SectionTitle({
 
 function BookPageContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
 
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
@@ -1324,7 +1325,7 @@ function BookPageContent() {
       maxServiceDistanceKm: String(MAX_SERVICE_DISTANCE_KM),
     });
 
-    window.location.href = "/checkout?" + params.toString();
+    router.push(`/checkout?${params.toString()}`);
   };
 
   const showMainServiceFields =
@@ -2092,7 +2093,8 @@ function BookPageContent() {
       </div>
     </main>
   );
-} 
+}
+
 export default function BookPage() {
   return (
     <Suspense

@@ -3,7 +3,7 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 
@@ -20,6 +20,7 @@ type Booking = {
   pickup_time_from?: string | null;
   pickup_time_to?: string | null;
   installer_name?: string | null;
+  installer_email?: string | null;
   reassigned_installer_name?: string | null;
   installer_pay?: number | null;
   installer_pay_status?: string | null;
@@ -33,6 +34,12 @@ type Booking = {
   return_fee?: number | null;
   is_archived?: boolean | null;
   created_at?: string | null;
+  one_way_km?: number | null;
+  ai_urgency_label?: string | null;
+  ai_grouping_label?: string | null;
+  ai_recommended_installer_type?: string | null;
+  ai_dispatch_score?: number | null;
+  ai_priority_score?: number | null;
 };
 
 type InstallerSupportMessage = {
@@ -77,18 +84,35 @@ function normalizeText(value?: string | null) {
 function hasRealError(error: unknown) {
   if (!error) return false;
   if (typeof error !== "object") return true;
-  return Object.keys(error as Record<string, unknown>).length > 0;
+
+  const err = error as {
+    message?: string;
+    code?: string;
+    details?: string;
+    hint?: string;
+  };
+
+  return Boolean(
+    safeText(err.message) ||
+      safeText(err.code) ||
+      safeText(err.details) ||
+      safeText(err.hint)
+  );
 }
 
 function normalizeBooking(raw: Booking): Booking {
   return {
     ...raw,
     installer_name: safeText(raw.installer_name),
+    installer_email: safeText(raw.installer_email),
     reassigned_installer_name: safeText(raw.reassigned_installer_name),
     status: normalizeText(raw.status),
     installer_pay: Number(raw.installer_pay || 0),
     mileage_fee: Number(raw.mileage_fee || 0),
     return_fee: Number(raw.return_fee || 0),
+    one_way_km: Number(raw.one_way_km || 0),
+    ai_dispatch_score: Number(raw.ai_dispatch_score || 0),
+    ai_priority_score: Number(raw.ai_priority_score || 0),
   };
 }
 
@@ -130,8 +154,8 @@ function normalizeBookingStatus(status?: string | null): string {
   const value = normalizeText(status);
 
   if (!value) return "new";
-  if (value === "confirmed") return "accepted";
-  if (value === "assigned") return "in_progress";
+  if (value === "confirmed") return "confirmed";
+  if (value === "assigned") return "accepted";
   if (value === "in progress") return "in_progress";
   if (value === "completed_pending_admin_review") return "completed";
   if (value === "canceled") return "cancelled";
@@ -141,18 +165,113 @@ function normalizeBookingStatus(status?: string | null): string {
 
 function bookingBelongsToInstaller(
   booking: Booking,
-  normalizedInstallerName: string
+  normalizedInstallerName: string,
+  normalizedInstallerEmail: string
 ) {
-  if (!normalizedInstallerName) return false;
+  if (!normalizedInstallerName && !normalizedInstallerEmail) return false;
+
+  const bookingInstallerName = normalizeText(booking.installer_name);
+  const bookingReassignedName = normalizeText(booking.reassigned_installer_name);
+  const bookingInstallerEmail = normalizeText(booking.installer_email);
 
   return (
-    normalizeText(booking.installer_name) === normalizedInstallerName ||
-    normalizeText(booking.reassigned_installer_name) === normalizedInstallerName
+    (normalizedInstallerName &&
+      (bookingInstallerName === normalizedInstallerName ||
+        bookingReassignedName === normalizedInstallerName)) ||
+    (normalizedInstallerEmail && bookingInstallerEmail === normalizedInstallerEmail)
+  );
+}
+
+function money(value?: number | null) {
+  return "$" + Number(value || 0).toFixed(2);
+}
+
+function getPickupWindow(job: Booking) {
+  if (job.pickup_time_slot) {
+    return job.pickup_time_slot;
+  }
+
+  const from = job.pickup_time_from || "";
+  const to = job.pickup_time_to || "";
+
+  if (from || to) {
+    return [from, to].filter(Boolean).join(" - ");
+  }
+
+  return job.scheduled_time || "Not set";
+}
+
+function getAiUrgencyLabel(job: Booking) {
+  const existing = safeText(job.ai_urgency_label);
+  if (existing) return existing;
+
+  const status = normalizeBookingStatus(job.status);
+
+  if (status === "confirmed") return "Ready For Installer";
+  if (status === "pending") return "New Booking";
+  return "Standard Priority";
+}
+
+function getAiGroupingLabel(job: Booking) {
+  const existing = safeText(job.ai_grouping_label);
+  if (existing) return existing;
+
+  const km = Number(job.one_way_km || 0);
+  if (km > 0 && km <= 40) return "Possible Group";
+  if (km > 40 && km <= 80) return "Route Candidate";
+  return "Standalone Route";
+}
+
+function getAiRecommendedInstallerType(job: Booking) {
+  const existing = safeText(job.ai_recommended_installer_type);
+  if (existing) return existing;
+
+  if (Number(job.one_way_km || 0) > 120) return "Long Distance Specialist";
+  if (Number(job.installer_pay || 0) >= 500) return "Large Project Specialist";
+  return "Standard Installer";
+}
+
+function getAiBestMatchScore(job: Booking) {
+  let score = Number(job.ai_dispatch_score || job.ai_priority_score || 0);
+
+  if (!score) {
+    score = 55;
+
+    if (getAiRecommendedInstallerType(job) === "Long Distance Specialist") score += 15;
+    if (getAiRecommendedInstallerType(job) === "Large Project Specialist") score += 10;
+
+    if (getAiGroupingLabel(job) === "Possible Group") score += 8;
+    if (getAiGroupingLabel(job) === "Route Candidate") score += 5;
+
+    if (Number(job.installer_pay || 0) >= 500) score += 10;
+    if (getAiUrgencyLabel(job) === "Ready For Installer") score += 12;
+    if (normalizeBookingStatus(job.status) === "pending") score += 6;
+  }
+
+  return Math.max(0, Math.min(100, score));
+}
+
+function MetricCard({
+  label,
+  value,
+  sublabel,
+}: {
+  label: string;
+  value: string;
+  sublabel?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+      <p className="text-sm text-gray-400">{label}</p>
+      <p className="mt-2 text-3xl font-bold text-yellow-500">{value}</p>
+      {sublabel ? <p className="mt-2 text-xs text-gray-500">{sublabel}</p> : null}
+    </div>
   );
 }
 
 export default function InstallerDashboardPage() {
   const router = useRouter();
+  const supabaseRef = useRef(createClient());
 
   const [loading, setLoading] = useState(true);
   const [checkingAccess, setCheckingAccess] = useState(true);
@@ -160,6 +279,7 @@ export default function InstallerDashboardPage() {
 
   const [installerName, setInstallerName] = useState("");
   const [installerEmail, setInstallerEmail] = useState("");
+  const [installerUserId, setInstallerUserId] = useState("");
 
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [messages, setMessages] = useState<InstallerSupportMessage[]>([]);
@@ -168,8 +288,88 @@ export default function InstallerDashboardPage() {
     void initializeInstallerDashboard();
   }, []);
 
+  useEffect(() => {
+    if (!isAuthorized || !installerName) return;
+
+    const supabase = supabaseRef.current;
+
+    const channel = supabase
+      .channel(`installer-dashboard-${installerUserId || installerEmail || installerName}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "bookings" }, async () => {
+        await loadDashboardData(installerName);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "installer_support_messages" }, async () => {
+        await loadDashboardData(installerName);
+      })
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [isAuthorized, installerName, installerEmail, installerUserId]);
+
+  useEffect(() => {
+    if (!isAuthorized || !installerUserId) return;
+
+    const supabase = supabaseRef.current;
+    let heartbeat: NodeJS.Timeout | null = null;
+    let stopped = false;
+
+    const updateOnlineStatus = async (isOnline: boolean) => {
+      if (stopped) return;
+
+      const { error } = await supabase.from("installer_live_status").upsert(
+        {
+          installer_user_id: installerUserId,
+          installer_email: installerEmail,
+          installer_name: installerName,
+          is_online: isOnline,
+          last_seen: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "installer_user_id" }
+      );
+
+      if (hasRealError(error)) {
+        console.warn("Installer live status warning:", error);
+      }
+    };
+
+    void updateOnlineStatus(true);
+
+    heartbeat = setInterval(() => {
+      void updateOnlineStatus(true);
+    }, 30000);
+
+    const handleBeforeUnload = () => {
+      void updateOnlineStatus(false);
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      stopped = true;
+      if (heartbeat) clearInterval(heartbeat);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+
+      void supabase
+        .from("installer_live_status")
+        .upsert(
+          {
+            installer_user_id: installerUserId,
+            installer_email: installerEmail,
+            installer_name: installerName,
+            is_online: false,
+            last_seen: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "installer_user_id" }
+        );
+    };
+  }, [isAuthorized, installerUserId, installerEmail, installerName]);
+
   async function initializeInstallerDashboard() {
-    const supabase = createClient();
+    const supabase = supabaseRef.current;
 
     try {
       const {
@@ -278,6 +478,7 @@ export default function InstallerDashboardPage() {
 
       setInstallerName(cleanInstallerName);
       setInstallerEmail(cleanInstallerEmail);
+      setInstallerUserId(user.id);
       setIsAuthorized(true);
       setCheckingAccess(false);
 
@@ -290,9 +491,8 @@ export default function InstallerDashboardPage() {
   }
 
   async function loadDashboardData(currentInstallerName: string) {
+    const supabase = supabaseRef.current;
     setLoading(true);
-
-    const supabase = createClient();
 
     const bookingsResponse = await supabase
       .from("bookings")
@@ -306,7 +506,10 @@ export default function InstallerDashboardPage() {
 
     if (hasRealError(bookingsResponse.error)) {
       console.warn("Error loading installer dashboard:", bookingsResponse.error);
-      alert(bookingsResponse.error?.message || "Could not load dashboard.");
+      alert(
+        (bookingsResponse.error as { message?: string })?.message ||
+          "Could not load dashboard."
+      );
       setLoading(false);
       return;
     }
@@ -330,48 +533,44 @@ export default function InstallerDashboardPage() {
     setLoading(false);
   }
 
-  function money(value?: number | null) {
-    return "$" + Number(value || 0).toFixed(2);
-  }
-
-  function getPickupWindow(job: Booking) {
-    if (job.pickup_time_slot) {
-      return job.pickup_time_slot;
-    }
-
-    const from = job.pickup_time_from || "";
-    const to = job.pickup_time_to || "";
-
-    if (from || to) {
-      return [from, to].filter(Boolean).join(" - ");
-    }
-
-    return job.scheduled_time || "Not set";
-  }
-
   const normalizedInstallerName = normalizeText(installerName);
+  const normalizedInstallerEmail = normalizeText(installerEmail);
 
-  const availableJobsCount = useMemo(() => {
+  const availableJobs = useMemo(() => {
     return bookings.filter((booking) => {
       const status = normalizeBookingStatus(booking.status);
       const noInstaller =
-        !safeText(booking.installer_name) && !safeText(booking.reassigned_installer_name);
+        !safeText(booking.installer_name) &&
+        !safeText(booking.reassigned_installer_name) &&
+        !safeText(booking.installer_email);
 
       return (
         booking.is_archived !== true &&
         noInstaller &&
-        (status === "available" || status === "pending" || status === "new")
+        (
+          status === "available" ||
+          status === "pending" ||
+          status === "new" ||
+          status === "confirmed" ||
+          status === "open"
+        )
       );
-    }).length;
+    });
   }, [bookings]);
 
+  const availableJobsCount = availableJobs.length;
+
   const myJobs = useMemo(() => {
-    if (!normalizedInstallerName) return [];
+    if (!normalizedInstallerName && !normalizedInstallerEmail) return [];
 
     return bookings.filter((booking) =>
-      bookingBelongsToInstaller(booking, normalizedInstallerName)
+      bookingBelongsToInstaller(
+        booking,
+        normalizedInstallerName,
+        normalizedInstallerEmail
+      )
     );
-  }, [bookings, normalizedInstallerName]);
+  }, [bookings, normalizedInstallerName, normalizedInstallerEmail]);
 
   const myAssignedJobs = useMemo(() => {
     return myJobs.filter((booking) => {
@@ -379,7 +578,11 @@ export default function InstallerDashboardPage() {
 
       return (
         booking.is_archived !== true &&
-        (status === "accepted" || status === "in_progress")
+        (
+          status === "accepted" ||
+          status === "in_progress" ||
+          status === "confirmed"
+        )
       );
     });
   }, [myJobs]);
@@ -450,6 +653,28 @@ export default function InstallerDashboardPage() {
       return belongsToMe && normalizeText(item.status) !== "resolved";
     }).length;
   }, [messages, normalizedInstallerName]);
+
+  const aiReadyJobsCount = useMemo(() => {
+    return availableJobs.filter((job) => getAiBestMatchScore(job) >= 70).length;
+  }, [availableJobs]);
+
+  const sameDayAiJobsCount = useMemo(() => {
+    return availableJobs.filter(
+      (job) => normalizeText(getAiUrgencyLabel(job)) === "ready for installer"
+    ).length;
+  }, [availableJobs]);
+
+  const groupedAiJobsCount = useMemo(() => {
+    return availableJobs.filter(
+      (job) => normalizeText(getAiGroupingLabel(job)) === "possible group"
+    ).length;
+  }, [availableJobs]);
+
+  const topAiJobs = useMemo(() => {
+    return [...availableJobs]
+      .sort((a, b) => getAiBestMatchScore(b) - getAiBestMatchScore(a))
+      .slice(0, 5);
+  }, [availableJobs]);
 
   const cards: PortalCard[] = [
     {
@@ -554,7 +779,11 @@ export default function InstallerDashboardPage() {
       ) : (
         <>
           <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-8">
-            <MetricCard label="Available Jobs" value={String(availableJobsCount)} />
+            <MetricCard
+              label="Available Jobs"
+              value={String(availableJobsCount)}
+              sublabel="Includes confirmed bookings without installer"
+            />
             <MetricCard label="My Assigned Jobs" value={String(myAssignedJobs.length)} />
             <MetricCard label="My Incomplete Jobs" value={String(myIncompleteJobs.length)} />
             <MetricCard label="My Group Jobs" value={String(myGroupJobsCount)} />
@@ -564,10 +793,13 @@ export default function InstallerDashboardPage() {
             <MetricCard label="Paid Out" value={money(paidOutTotal)} />
           </section>
 
-          <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
             <MetricCard label="Pending Review Payouts" value={money(pendingReviewPayoutTotal)} />
             <MetricCard label="Open Messages" value={String(myOpenMessages)} />
             <MetricCard label="All My Jobs" value={String(myJobs.length)} />
+            <MetricCard label="AI Ready Jobs" value={String(aiReadyJobsCount)} />
+            <MetricCard label="AI Priority Jobs" value={String(sameDayAiJobsCount)} />
+            <MetricCard label="AI Grouping Jobs" value={String(groupedAiJobsCount)} />
           </section>
 
           <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.3fr_1fr]">
@@ -638,6 +870,61 @@ export default function InstallerDashboardPage() {
                         </p>
                         <p className="text-sm font-semibold text-yellow-400">
                           Payout: {money(job.installer_pay)}
+                        </p>
+                      </Link>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+                <h2 className="text-2xl font-bold text-yellow-500">
+                  AI Recommended Open Jobs
+                </h2>
+
+                <div className="mt-4 space-y-4">
+                  {topAiJobs.length === 0 ? (
+                    <div className="rounded-xl border border-zinc-800 bg-black p-4 text-gray-400">
+                      No open AI-ranked jobs right now.
+                    </div>
+                  ) : (
+                    topAiJobs.map((job) => (
+                      <Link
+                        key={job.id}
+                        href={"/installer/jobs/" + job.id}
+                        className="block rounded-xl border border-zinc-800 bg-black p-4 transition hover:border-yellow-500"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <p className="text-lg font-semibold text-yellow-400">
+                            {job.company_name || job.customer_name || "Open Job"}
+                          </p>
+                          <span className="rounded-full bg-yellow-500 px-3 py-1 text-xs font-bold text-black">
+                            Match {getAiBestMatchScore(job)}%
+                          </span>
+                        </div>
+                        <p className="mt-2 text-sm text-gray-300">
+                          Job ID: {job.job_id || job.id}
+                        </p>
+                        <p className="text-sm text-gray-300">
+                          Status: {job.status || "-"}
+                        </p>
+                        <p className="text-sm text-gray-300">
+                          AI Urgency: {getAiUrgencyLabel(job)}
+                        </p>
+                        <p className="text-sm text-gray-300">
+                          AI Grouping: {getAiGroupingLabel(job)}
+                        </p>
+                        <p className="text-sm text-gray-300">
+                          Recommended Type: {getAiRecommendedInstallerType(job)}
+                        </p>
+                        <p className="text-sm text-gray-300">
+                          Pick Up: {job.pickup_address || "-"}
+                        </p>
+                        <p className="text-sm text-gray-300">
+                          Drop Off: {job.dropoff_address || "-"}
+                        </p>
+                        <p className="text-sm font-semibold text-yellow-400">
+                          Installer Pay: {money(job.installer_pay)}
                         </p>
                       </Link>
                     ))
@@ -718,20 +1005,5 @@ export default function InstallerDashboardPage() {
         </>
       )}
     </main>
-  );
-}
-
-function MetricCard({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-      <p className="text-sm text-gray-400">{label}</p>
-      <p className="mt-2 text-3xl font-bold text-yellow-500">{value}</p>
-    </div>
   );
 }
