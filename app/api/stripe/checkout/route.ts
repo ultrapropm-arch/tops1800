@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
+import { createClient } from "@/utils/supabase/server";
 
 export async function POST(req: Request) {
   try {
@@ -11,6 +12,7 @@ export async function POST(req: Request) {
     }
 
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+    const supabase = await createClient();
 
     const body = await req.json();
 
@@ -48,7 +50,7 @@ export async function POST(req: Request) {
       process.env.NEXT_PUBLIC_BASE_URL ||
       process.env.NEXT_PUBLIC_APP_URL ||
       req.headers.get("origin") ||
-      "https://1800tops.com";
+      "https://www.1800tops.com";
 
     const successParams = new URLSearchParams();
 
@@ -127,6 +129,20 @@ export async function POST(req: Request) {
         customer_email: String(customerEmail || ""),
       },
     });
+
+    if (bookingId) {
+      const { error: updateError } = await supabase
+        .from("bookings")
+        .update({
+          stripe_session_id: session.id,
+          payment_status: "pending",
+        })
+        .eq("id", bookingId);
+
+      if (updateError) {
+        console.error("Error saving Stripe session to booking:", updateError);
+      }
+    }
 
     return NextResponse.json({
       id: session.id,
