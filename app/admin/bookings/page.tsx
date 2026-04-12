@@ -56,7 +56,6 @@ type Booking = {
   is_archived?: boolean | null;
 
   incomplete_reason?: string | null;
-  incomplete_note?: string | null;
   incomplete_notes?: string | null;
   incomplete_photo_url?: string | null;
 
@@ -162,6 +161,13 @@ type DispatchRecommendation = {
   }[];
 };
 
+type GroupingRecommendation = {
+  groupingLabel: string;
+  groupingScore: number;
+  routeHint: string;
+  matchedJobIds: string[];
+};
+
 type StatusFilter =
   | "all"
   | "new"
@@ -171,7 +177,13 @@ type StatusFilter =
   | "in_progress"
   | "incomplete"
   | "completed"
-  | "cancelled";
+  | "cancelled"
+  | "archived";
+
+type GroupedBookingBucket = {
+  groupKey: string;
+  jobs: Booking[];
+};
 
 function safeText(value?: string | null) {
   return String(value || "").trim();
@@ -368,7 +380,39 @@ function getProfitTextClass(profit?: number | null) {
   return "text-red-400";
 }
 
-function getAiScore(booking: Booking) {
+function getRouteClusterKey(address?: string | null) {
+  if (!address) return "";
+  return address
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .slice(0, 4)
+    .join(" ");
+}
+
+function getGroupingLabel(booking: Booking, allBookings: Booking[]) {
+  if (booking.ai_grouping_label) return booking.ai_grouping_label;
+
+  const clusterKey = getRouteClusterKey(booking.dropoff_address || booking.pickup_address);
+  if (!clusterKey) return "Solo Route";
+
+  const nearbyCount = allBookings.filter((item) => {
+    if (item.id === booking.id) return false;
+    if (item.is_archived === true) return false;
+    if (safeText(item.scheduled_date) !== safeText(booking.scheduled_date)) return false;
+
+    const itemClusterKey = getRouteClusterKey(item.dropoff_address || item.pickup_address);
+    return itemClusterKey && itemClusterKey === clusterKey;
+  }).length;
+
+  if (nearbyCount >= 2) return "Strong Grouping";
+  if (nearbyCount === 1) return "Possible Group";
+  return "Solo Route";
+}
+
+function getAiScore(booking: Booking, allBookings: Booking[]) {
   let score = Number(booking.ai_dispatch_score || booking.ai_priority_score || 0);
 
   if (!score) {
@@ -377,8 +421,10 @@ function getAiScore(booking: Booking) {
     if (getUrgencyLabel(booking) === "Same-Day Priority") score += 20;
     if (getUrgencyLabel(booking) === "Next-Day Priority") score += 10;
     if (Number(booking.installer_pay || 0) >= 500) score += 10;
-    if ((booking.ai_grouping_label || "") === "Strong Grouping") score += 15;
-    if ((booking.ai_grouping_label || "") === "Possible Group") score += 8;
+
+    const groupingLabel = getGroupingLabel(booking, allBookings);
+    if (groupingLabel === "Strong Grouping") score += 15;
+    if (groupingLabel === "Possible Group") score += 8;
     if (Number(booking.mileage_fee || 0) > 0) score += 5;
   }
 
@@ -421,6 +467,8 @@ function normalizeBookingStatus(status?: string | null): string {
 
 function matchesStatusFilter(booking: Booking, filter: StatusFilter): boolean {
   if (filter === "all") return true;
+  if (filter === "archived") return booking.is_archived === true;
+  if (booking.is_archived === true) return false;
   return normalizeBookingStatus(booking.status) === filter;
 }
 
@@ -531,19 +579,108 @@ function ServiceBox({
   );
 }
 
+function GroupSummaryCard({
+  group,
+  allBookings,
+}: {
+  group: GroupedBookingBucket;
+  allBookings: Booking[];
+}) {
+  const totalPay = group.jobs.reduce((sum, job) => sum + Number(job.installer_pay || 0), 0);
+  const totalProfit = group.jobs.reduce(
+    (sum, job) => sum + Number(job.company_profit || 0),
+    0
+  );
+  const maxAi = Math.max(...group.jobs.map((job) => getAiScore(job, allBookings)));
+  const sameDay = group.jobs.some((job) => getUrgencyLabel(job) === "Same-Day Priority");
+  const nextDay = group.jobs.some((job) => getUrgencyLabel(job) === "Next-Day Priority");
+  const groupingLabel = group.jobs.some(
+    (job) => getGroupingLabel(job, allBookings) === "Strong Grouping"
+  )
+    ? "Strong Grouping"
+    : group.jobs.some((job) => getGroupingLabel(job, allBookings) === "Possible Group")
+      ? "Possible Group"
+      : "Solo Route";
+
+  return (
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-lg font-semibold text-yellow-400">Group {group.groupKey}</p>
+        <Badge
+          label={`${group.jobs.length} jobs`}
+          className="border-zinc-700 bg-zinc-800/40 text-zinc-300"
+        />
+        <Badge
+          label={groupingLabel}
+          className={getGroupingBadgeClass(groupingLabel)}
+        />
+        <Badge
+          label={`Best AI ${maxAi}/100`}
+          className={getDispatchBadgeClass(maxAi)}
+        />
+        {sameDay ? (
+          <Badge
+            label="Same-Day Jobs"
+            className="border-red-500/30 bg-red-500/10 text-red-400"
+          />
+        ) : null}
+        {!sameDay && nextDay ? (
+          <Badge
+            label="Next-Day Jobs"
+            className="border-yellow-500/30 bg-yellow-500/10 text-yellow-400"
+          />
+        ) : null}
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-4">
+        <div className="rounded-xl border border-zinc-800 bg-black p-3">
+          <p className="text-[11px] uppercase tracking-wide text-zinc-500">Jobs</p>
+          <p className="mt-1 text-sm font-semibold text-white">{group.jobs.length}</p>
+        </div>
+        <div className="rounded-xl border border-zinc-800 bg-black p-3">
+          <p className="text-[11px] uppercase tracking-wide text-zinc-500">Group Pay</p>
+          <p className="mt-1 text-sm font-semibold text-white">{money(totalPay)}</p>
+        </div>
+        <div className="rounded-xl border border-zinc-800 bg-black p-3">
+          <p className="text-[11px] uppercase tracking-wide text-zinc-500">Group Profit</p>
+          <p className={`mt-1 text-sm font-semibold ${getProfitTextClass(totalProfit)}`}>
+            {money(totalProfit)}
+          </p>
+        </div>
+        <div className="rounded-xl border border-zinc-800 bg-black p-3">
+          <p className="text-[11px] uppercase tracking-wide text-zinc-500">Dates</p>
+          <p className="mt-1 text-sm font-semibold text-white">
+            {group.jobs
+              .map((job) => safeText(job.scheduled_date) || "-")
+              .filter(Boolean)
+              .join(", ")}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BookingCard({
   booking,
+  allBookings,
   installers,
   expanded,
   onToggle,
   onUpdate,
+  onDelete,
   savingId,
   dispatchRecommendation,
   dispatchLoadingId,
   onRunDispatch,
   onAssignRecommendedInstaller,
+  groupingRecommendation,
+  groupingLoadingId,
+  onRunGrouping,
+  onSaveGrouping,
 }: {
   booking: Booking;
+  allBookings: Booking[];
   installers: Installer[];
   expanded: boolean;
   onToggle: () => void;
@@ -552,17 +689,22 @@ function BookingCard({
     field: keyof Booking,
     value: string | number | boolean | null
   ) => void;
+  onDelete: (booking: Booking) => void;
   savingId: string;
   dispatchRecommendation?: DispatchRecommendation;
   dispatchLoadingId: string;
   onRunDispatch: (booking: Booking) => void;
   onAssignRecommendedInstaller: (booking: Booking) => void;
+  groupingRecommendation?: GroupingRecommendation;
+  groupingLoadingId: string;
+  onRunGrouping: (booking: Booking) => void;
+  onSaveGrouping: (booking: Booking) => void;
 }) {
   const addOnServices = toArray(booking.add_on_services);
   const justServices = toArray(booking.just_services);
   const payoutLines = getPayoutLines(booking);
   const urgencyLabel = getUrgencyLabel(booking);
-  const aiScore = getAiScore(booking);
+  const aiScore = getAiScore(booking, allBookings);
   const acceptedState = getAcceptedStateLabel(booking);
   const normalizedStatus = normalizeBookingStatus(booking.status);
   const recommendedInstaller = dispatchRecommendation?.recommended || null;
@@ -587,8 +729,8 @@ function BookingCard({
             />
 
             <Badge
-              label={booking.ai_grouping_label || "Solo Route"}
-              className={getGroupingBadgeClass(booking.ai_grouping_label)}
+              label={getGroupingLabel(booking, allBookings)}
+              className={getGroupingBadgeClass(getGroupingLabel(booking, allBookings))}
             />
 
             <Badge
@@ -780,6 +922,68 @@ function BookingCard({
               </div>
             </div>
           </div>
+
+          <div className="mt-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-blue-300">
+                  AI Grouping Recommendation
+                </p>
+
+                {groupingLoadingId === booking.id ? (
+                  <p className="mt-1 text-sm text-gray-300">
+                    Checking best grouped route...
+                  </p>
+                ) : groupingRecommendation ? (
+                  <div className="mt-1 space-y-1 text-sm text-gray-300">
+                    <p>
+                      Label:{" "}
+                      <span className="font-semibold text-white">
+                        {groupingRecommendation.groupingLabel}
+                      </span>
+                    </p>
+                    <p>
+                      Grouping Score:{" "}
+                      <span className="font-semibold text-blue-300">
+                        {groupingRecommendation.groupingScore}
+                      </span>
+                    </p>
+                    <p>{groupingRecommendation.routeHint}</p>
+                    {groupingRecommendation.matchedJobIds.length > 0 ? (
+                      <p className="text-xs text-zinc-400">
+                        Matches: {groupingRecommendation.matchedJobIds.join(", ")}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-sm text-gray-300">
+                    No grouping recommendation yet.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2 md:items-end">
+                <button
+                  type="button"
+                  onClick={() => onRunGrouping(booking)}
+                  className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-300 hover:bg-blue-500/20"
+                >
+                  {groupingLoadingId === booking.id ? "Running..." : "Run AI Grouping"}
+                </button>
+
+                {groupingRecommendation ? (
+                  <button
+                    type="button"
+                    onClick={() => onSaveGrouping(booking)}
+                    disabled={savingId === booking.id}
+                    className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-500 disabled:opacity-60"
+                  >
+                    {savingId === booking.id ? "Saving..." : "Save Grouping"}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="flex w-full flex-col gap-3 xl:w-[260px]">
@@ -798,6 +1002,15 @@ function BookingCard({
             className="rounded-xl bg-yellow-500 px-4 py-3 text-sm font-bold text-black transition hover:bg-yellow-400 disabled:opacity-60"
           >
             {savingId === booking.id ? "Saving..." : "Set Live / Available"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onUpdate(booking.id, "status", "in_progress")}
+            disabled={savingId === booking.id}
+            className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm font-bold text-cyan-300 transition hover:bg-cyan-500/20 disabled:opacity-60"
+          >
+            {savingId === booking.id ? "Saving..." : "Set In Progress"}
           </button>
 
           <button
@@ -825,6 +1038,28 @@ function BookingCard({
             className="rounded-xl border border-zinc-700 bg-black px-4 py-3 text-sm font-bold text-white transition hover:border-yellow-500 disabled:opacity-60"
           >
             {savingId === booking.id ? "Saving..." : "Set Ready Payout"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onUpdate(booking.id, "is_archived", booking.is_archived !== true)}
+            disabled={savingId === booking.id}
+            className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm font-bold text-zinc-200 transition hover:border-yellow-500 disabled:opacity-60"
+          >
+            {savingId === booking.id
+              ? "Saving..."
+              : booking.is_archived === true
+                ? "Unarchive Job"
+                : "Archive Job"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onDelete(booking)}
+            disabled={savingId === booking.id}
+            className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-300 transition hover:bg-red-500/20 disabled:opacity-60"
+          >
+            {savingId === booking.id ? "Deleting..." : "Delete Job"}
           </button>
         </div>
       </div>
@@ -889,10 +1124,7 @@ function BookingCard({
                 </p>
                 <div className="space-y-2 text-sm text-gray-300">
                   <p>Incomplete Reason: {booking.incomplete_reason || "-"}</p>
-                  <p>
-                    Incomplete Note:{" "}
-                    {booking.incomplete_notes || booking.incomplete_note || "-"}
-                  </p>
+                  <p>Incomplete Notes: {booking.incomplete_notes || "-"}</p>
                   <p>
                     Customer Return Fee:{" "}
                     {money(booking.return_fee_charged || booking.return_fee)}
@@ -1225,11 +1457,25 @@ function BookingCard({
 
               <div className="md:col-span-2">
                 <label className="mb-1 block text-sm text-gray-400">
-                  Incomplete Note
+                  Incomplete Reason
                 </label>
                 <input
                   type="text"
-                  defaultValue={booking.incomplete_notes || booking.incomplete_note || ""}
+                  defaultValue={booking.incomplete_reason || ""}
+                  onBlur={(e) =>
+                    onUpdate(booking.id, "incomplete_reason", e.target.value)
+                  }
+                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-sm text-gray-400">
+                  Incomplete Notes
+                </label>
+                <input
+                  type="text"
+                  defaultValue={booking.incomplete_notes || ""}
                   onBlur={(e) =>
                     onUpdate(booking.id, "incomplete_notes", e.target.value)
                   }
@@ -1301,6 +1547,8 @@ export default function AdminBookingsPage() {
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [dispatchMap, setDispatchMap] = useState<Record<string, DispatchRecommendation>>({});
   const [dispatchLoadingId, setDispatchLoadingId] = useState("");
+  const [groupingMap, setGroupingMap] = useState<Record<string, GroupingRecommendation>>({});
+  const [groupingLoadingId, setGroupingLoadingId] = useState("");
 
   useEffect(() => {
     void loadAllData();
@@ -1362,7 +1610,11 @@ export default function AdminBookingsPage() {
       const normalized = normalizeBookingStatus(item.status);
       const assignedName = safeText(item.reassigned_installer_name || item.installer_name);
 
-      if (assignedName && (normalized === "accepted" || normalized === "in_progress")) {
+      if (
+        assignedName &&
+        item.is_archived !== true &&
+        (normalized === "accepted" || normalized === "in_progress")
+      ) {
         acc[assignedName] = (acc[assignedName] || 0) + 1;
       }
 
@@ -1398,6 +1650,15 @@ export default function AdminBookingsPage() {
           activeJobs,
         };
       });
+  }
+
+  function getOpenBookingsForGrouping(currentBooking: Booking) {
+    return bookings.filter((item) => {
+      if (item.id === currentBooking.id) return false;
+      if (item.is_archived === true) return false;
+      const s = normalizeBookingStatus(item.status);
+      return s === "available" || s === "pending" || s === "new";
+    });
   }
 
   async function runDispatchForBooking(booking: Booking) {
@@ -1436,11 +1697,95 @@ export default function AdminBookingsPage() {
     }
   }
 
+  async function runGroupingForBooking(booking: Booking) {
+    try {
+      setGroupingLoadingId(booking.id);
+
+      const openBookings = getOpenBookingsForGrouping(booking);
+
+      const res = await fetch("/api/ai/grouping", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          currentBooking: booking,
+          openBookings,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to run AI grouping");
+      }
+
+      setGroupingMap((prev) => ({
+        ...prev,
+        [booking.id]: data.result,
+      }));
+    } catch (error) {
+      console.error("Grouping recommendation failed:", error);
+      alert("Could not run AI grouping.");
+    } finally {
+      setGroupingLoadingId("");
+    }
+  }
+
+  async function saveGroupingForBooking(booking: Booking) {
+    const grouping = groupingMap[booking.id];
+    if (!grouping) return;
+
+    setSavingId(booking.id);
+
+    const { error } = await supabase
+      .from("bookings")
+      .update({
+        ai_grouping_label: grouping.groupingLabel,
+        ai_route_hint: grouping.routeHint,
+        ai_priority_score: grouping.groupingScore,
+      })
+      .eq("id", booking.id);
+
+    if (error) {
+      console.error("Error saving grouping:", error);
+      alert("Could not save grouping.");
+      setSavingId("");
+      return;
+    }
+
+    await loadBookings();
+    setSavingId("");
+  }
+
   async function assignRecommendedInstaller(booking: Booking) {
     const recommendedInstaller = dispatchMap[booking.id]?.recommended;
     if (!recommendedInstaller) return;
 
     await updateBookingField(booking.id, "installer_name", recommendedInstaller.name);
+  }
+
+  async function deleteBooking(booking: Booking) {
+    const label = booking.job_id || booking.id;
+    const confirmed = window.confirm(
+      `Delete job ${label}?\n\nThis removes the booking from the system.`
+    );
+
+    if (!confirmed) return;
+
+    setSavingId(booking.id);
+
+    const { error } = await supabase.from("bookings").delete().eq("id", booking.id);
+
+    if (error) {
+      console.error("Error deleting booking:", error);
+      alert("Could not delete booking.");
+      setSavingId("");
+      return;
+    }
+
+    await loadBookings();
+    setSavingId("");
   }
 
   async function updateBookingField(
@@ -1491,7 +1836,41 @@ export default function AdminBookingsPage() {
     if (field === "status" && value === "incomplete") {
       updateData.incomplete_at = new Date().toISOString();
 
-      if (normalizeText(currentBooking.installer_pay_status) === "ready") {
+      const reason =
+        safeText(currentBooking.incomplete_reason) ||
+        window.prompt(
+          "Enter incomplete reason (customer, shop, installer, access issue, damage, other):",
+          ""
+        ) ||
+        "";
+
+      const notes =
+        safeText(currentBooking.incomplete_notes) ||
+        window.prompt("Add incomplete notes for admin:", "") ||
+        "";
+
+      updateData.incomplete_reason = reason;
+      updateData.incomplete_notes = notes;
+
+      const normalizedReason = reason.toLowerCase();
+
+      if (
+        normalizedReason.includes("customer") ||
+        normalizedReason.includes("shop") ||
+        normalizedReason.includes("homeowner")
+      ) {
+        if (!Number(currentBooking.return_fee_charged || currentBooking.return_fee || 0)) {
+          updateData.return_fee_charged = 200;
+        }
+        if (!Number(currentBooking.return_fee_installer_pay || 0)) {
+          updateData.return_fee_installer_pay = 180;
+        }
+      }
+
+      if (
+        normalizedReason.includes("installer") ||
+        normalizeText(currentBooking.installer_pay_status) === "ready"
+      ) {
         updateData.installer_pay_status = "hold";
       }
     }
@@ -1524,6 +1903,8 @@ export default function AdminBookingsPage() {
     }
 
     if (field === "installer_name" && value) {
+      updateData.reassigned_installer_name = null;
+
       if (
         ["available", "confirmed", "assigned", "new", "pending"].includes(
           normalizeText(currentBooking.status)
@@ -1535,6 +1916,8 @@ export default function AdminBookingsPage() {
     }
 
     if (field === "installer_name" && !value) {
+      updateData.reassigned_installer_name = null;
+
       if (
         normalizeText(currentBooking.status) === "accepted" ||
         normalizeText(currentBooking.status) === "assigned" ||
@@ -1598,7 +1981,6 @@ export default function AdminBookingsPage() {
           safeText(booking.installer_pay_status).toLowerCase().includes(term) ||
           safeText(booking.notes).toLowerCase().includes(term) ||
           safeText(booking.incomplete_reason).toLowerCase().includes(term) ||
-          safeText(booking.incomplete_note).toLowerCase().includes(term) ||
           safeText(booking.incomplete_notes).toLowerCase().includes(term) ||
           safeText(booking.admin_fee_note).toLowerCase().includes(term) ||
           safeText(booking.ai_grouping_label).toLowerCase().includes(term) ||
@@ -1607,6 +1989,30 @@ export default function AdminBookingsPage() {
         );
       });
   }, [bookings, search, statusFilter]);
+
+  const visibleNonArchived = useMemo(
+    () => filteredBookings.filter((item) => item.is_archived !== true),
+    [filteredBookings]
+  );
+
+  const groupedBuckets = useMemo(() => {
+    const map = new Map<string, Booking[]>();
+
+    visibleNonArchived.forEach((booking) => {
+      const key = String(booking.job_group_id || booking.id);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(booking);
+    });
+
+    return Array.from(map.entries())
+      .map(([groupKey, jobs]) => ({
+        groupKey,
+        jobs: [...jobs].sort(
+          (a, b) => Number(a.job_number || 0) - Number(b.job_number || 0)
+        ),
+      }))
+      .filter((group) => group.jobs.length > 1);
+  }, [visibleNonArchived]);
 
   const summary = useMemo(() => {
     const countBy = (filter: StatusFilter) =>
@@ -1618,9 +2024,12 @@ export default function AdminBookingsPage() {
 
     const acceptedAssigned = bookings.filter(
       (item) =>
-        normalizeBookingStatus(item.status) === "accepted" ||
-        safeText(item.installer_name).length > 0 ||
-        safeText(item.reassigned_installer_name).length > 0
+        item.is_archived !== true &&
+        (
+          normalizeBookingStatus(item.status) === "accepted" ||
+          safeText(item.installer_name).length > 0 ||
+          safeText(item.reassigned_installer_name).length > 0
+        )
     ).length;
 
     const totalProfit = bookings.reduce(
@@ -1637,61 +2046,68 @@ export default function AdminBookingsPage() {
       incomplete: countBy("incomplete"),
       completed: countBy("completed"),
       cancelled: countBy("cancelled"),
+      archived: countBy("archived"),
       readyPayout,
       acceptedAssigned,
       total: bookings.length,
       totalProfit,
+      groupedRuns: groupedBuckets.length,
     };
-  }, [bookings]);
+  }, [bookings, groupedBuckets]);
 
   const availableJobs = useMemo(
     () =>
-      filteredBookings.filter((item) => {
+      visibleNonArchived.filter((item) => {
         const s = normalizeBookingStatus(item.status);
         return s === "available" || s === "pending" || s === "new";
       }),
-    [filteredBookings]
+    [visibleNonArchived]
   );
 
   const acceptedJobs = useMemo(
     () =>
-      filteredBookings.filter((item) => {
+      visibleNonArchived.filter((item) => {
         const s = normalizeBookingStatus(item.status);
         return s === "accepted";
       }),
-    [filteredBookings]
+    [visibleNonArchived]
   );
 
   const inProgressJobs = useMemo(
     () =>
-      filteredBookings.filter((item) => {
+      visibleNonArchived.filter((item) => {
         const s = normalizeBookingStatus(item.status);
         return s === "in_progress";
       }),
-    [filteredBookings]
+    [visibleNonArchived]
   );
 
   const incompleteJobs = useMemo(
     () =>
-      filteredBookings.filter((item) => {
+      visibleNonArchived.filter((item) => {
         const s = normalizeBookingStatus(item.status);
         return s === "incomplete";
       }),
-    [filteredBookings]
+    [visibleNonArchived]
   );
 
   const completedJobs = useMemo(
     () =>
-      filteredBookings.filter((item) => {
+      visibleNonArchived.filter((item) => {
         const s = normalizeBookingStatus(item.status);
         return s === "completed";
       }),
+    [visibleNonArchived]
+  );
+
+  const archivedJobs = useMemo(
+    () => filteredBookings.filter((item) => item.is_archived === true),
     [filteredBookings]
   );
 
   const otherJobs = useMemo(
     () =>
-      filteredBookings.filter((item) => {
+      visibleNonArchived.filter((item) => {
         const s = normalizeBookingStatus(item.status);
         return ![
           "available",
@@ -1703,7 +2119,7 @@ export default function AdminBookingsPage() {
           "completed",
         ].includes(s);
       }),
-    [filteredBookings]
+    [visibleNonArchived]
   );
 
   function renderSection(
@@ -1720,15 +2136,21 @@ export default function AdminBookingsPage() {
           <BookingCard
             key={booking.id}
             booking={booking}
+            allBookings={bookings}
             installers={installers}
             expanded={Boolean(expandedRows[booking.id])}
             onToggle={() => toggleExpanded(booking.id)}
             onUpdate={updateBookingField}
+            onDelete={deleteBooking}
             savingId={savingId}
             dispatchRecommendation={dispatchMap[booking.id]}
             dispatchLoadingId={dispatchLoadingId}
             onRunDispatch={runDispatchForBooking}
             onAssignRecommendedInstaller={assignRecommendedInstaller}
+            groupingRecommendation={groupingMap[booking.id]}
+            groupingLoadingId={groupingLoadingId}
+            onRunGrouping={runGroupingForBooking}
+            onSaveGrouping={saveGroupingForBooking}
           />
         ))}
       </section>
@@ -1742,22 +2164,30 @@ export default function AdminBookingsPage() {
 
         <p className="mb-6 text-gray-300">
           Manage all bookings, push jobs live, dispatch installers, review incomplete
-          jobs, track AI priority, monitor profit, and control payout readiness.
+          jobs, track AI priority, monitor profit, control payout readiness, and run
+          grouped route suggestions.
         </p>
 
         <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
           <StatCard label="All Jobs" value={String(summary.total)} />
-          <StatCard label="Available / Live" value={String(summary.available + summary.pending + summary.new)} />
+          <StatCard
+            label="Available / Live"
+            value={String(summary.available + summary.pending + summary.new)}
+          />
           <StatCard label="Accepted" value={String(summary.accepted)} />
           <StatCard label="In Progress" value={String(summary.inProgress)} />
           <StatCard label="Incomplete" value={String(summary.incomplete)} />
           <StatCard label="Completed" value={String(summary.completed)} />
         </div>
 
-        <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <StatCard label="Ready Payout" value={String(summary.readyPayout)} />
-          <StatCard label="Accepted / Assigned" value={String(summary.acceptedAssigned)} />
-          <StatCard label="Cancelled" value={String(summary.cancelled)} />
+          <StatCard
+            label="Accepted / Assigned"
+            value={String(summary.acceptedAssigned)}
+          />
+          <StatCard label="Grouped Runs" value={String(summary.groupedRuns)} />
+          <StatCard label="Archived" value={String(summary.archived)} />
           <StatCard label="Total Profit" value={money(summary.totalProfit)} />
         </div>
 
@@ -1783,6 +2213,7 @@ export default function AdminBookingsPage() {
               ["incomplete", "Incomplete"],
               ["completed", "Completed"],
               ["cancelled", "Cancelled"],
+              ["archived", "Archived"],
             ] as [StatusFilter, string][]
           ).map(([value, label]) => (
             <button
@@ -1808,6 +2239,22 @@ export default function AdminBookingsPage() {
           </div>
         ) : (
           <div className="space-y-8">
+            {groupedBuckets.length > 0 && statusFilter !== "archived" ? (
+              <section className="space-y-4">
+                <SectionHeader
+                  title="Grouped Job Runs"
+                  subtitle="Admin visibility for grouped jobs on the same run."
+                />
+                {groupedBuckets.map((group) => (
+                  <GroupSummaryCard
+                    key={group.groupKey}
+                    group={group}
+                    allBookings={bookings}
+                  />
+                ))}
+              </section>
+            ) : null}
+
             {renderSection(
               "Available / Live Jobs",
               "These jobs are visible for installer acceptance or ready to go live.",
@@ -1836,6 +2283,12 @@ export default function AdminBookingsPage() {
               "Completed Jobs",
               "Finished jobs with payout readiness and proof review.",
               completedJobs
+            )}
+
+            {renderSection(
+              "Archived Jobs",
+              "Completed or older jobs removed from the main active workflow.",
+              archivedJobs
             )}
 
             {renderSection(

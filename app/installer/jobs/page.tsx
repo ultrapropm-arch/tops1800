@@ -19,6 +19,7 @@ type Booking = {
   customer_name?: string | null;
   customer_email?: string | null;
   company_name?: string | null;
+  phone_number?: string | null;
 
   pickup_address?: string | null;
   dropoff_address?: string | null;
@@ -81,6 +82,9 @@ type Booking = {
   ai_grouping_label?: string | null;
   ai_route_hint?: string | null;
   ai_urgency_label?: string | null;
+
+  incomplete_reason?: string | null;
+  incomplete_notes?: string | null;
 };
 
 type InstallerProfile = {
@@ -162,7 +166,9 @@ function normalizeBookingStatus(status?: string | null) {
   if (!value) return "new";
   if (value === "confirmed") return "pending";
   if (value === "assigned") return "accepted";
+  if (value === "accepted_by_installer") return "accepted";
   if (value === "in progress") return "in_progress";
+  if (value === "in-progress") return "in_progress";
   if (value === "completed_pending_admin_review") return "completed";
   if (value === "canceled") return "cancelled";
 
@@ -523,6 +529,8 @@ function StatusPill({ job }: { job: Booking }) {
     className = "border-zinc-600 bg-zinc-700/30 text-zinc-300";
   } else if (normalized === "accepted") {
     className = "border-blue-500/30 bg-blue-500/10 text-blue-300";
+  } else if (normalized === "in_progress") {
+    className = "border-cyan-500/30 bg-cyan-500/10 text-cyan-300";
   } else if (normalized === "completed") {
     className = "border-green-500/30 bg-green-500/10 text-green-400";
   } else if (normalized === "incomplete") {
@@ -553,6 +561,11 @@ function JobDetailBlock({
   onAccept,
   acceptLoading,
   showAcceptButton = true,
+  showMyJobActions = false,
+  actionLoading = false,
+  onStartJob,
+  onCompleteJob,
+  onIncompleteJob,
 }: {
   job: Booking;
   allJobs: Booking[];
@@ -562,6 +575,11 @@ function JobDetailBlock({
   onAccept: () => void;
   acceptLoading: boolean;
   showAcceptButton?: boolean;
+  showMyJobActions?: boolean;
+  actionLoading?: boolean;
+  onStartJob?: () => void;
+  onCompleteJob?: () => void;
+  onIncompleteJob?: () => void;
 }) {
   const addOns = toArray(job.add_on_services);
   const justServices = toArray(job.just_services);
@@ -571,6 +589,7 @@ function JobDetailBlock({
   const ai = getAiInsight(job, allJobs);
   const sameDay = isSameDayJob(job);
   const nextDay = isNextDayJob(job);
+  const normalizedStatus = normalizeBookingStatus(job.status);
 
   return (
     <div
@@ -687,6 +706,43 @@ function JobDetailBlock({
               </div>
             )
           ) : null}
+
+          {showMyJobActions ? (
+            <div className="space-y-3">
+              {normalizedStatus === "accepted" ? (
+                <button
+                  type="button"
+                  onClick={onStartJob}
+                  disabled={actionLoading}
+                  className="w-full rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-4 py-3 text-sm font-bold text-cyan-300 transition hover:bg-cyan-500/20 disabled:opacity-60"
+                >
+                  {actionLoading ? "Updating..." : "Start Job"}
+                </button>
+              ) : null}
+
+              {(normalizedStatus === "accepted" || normalizedStatus === "in_progress") ? (
+                <button
+                  type="button"
+                  onClick={onCompleteJob}
+                  disabled={actionLoading}
+                  className="w-full rounded-xl border border-green-500/40 bg-green-500/10 px-4 py-3 text-sm font-bold text-green-300 transition hover:bg-green-500/20 disabled:opacity-60"
+                >
+                  {actionLoading ? "Updating..." : "Mark Completed"}
+                </button>
+              ) : null}
+
+              {(normalizedStatus === "accepted" || normalizedStatus === "in_progress") ? (
+                <button
+                  type="button"
+                  onClick={onIncompleteJob}
+                  disabled={actionLoading}
+                  className="w-full rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-300 transition hover:bg-red-500/20 disabled:opacity-60"
+                >
+                  {actionLoading ? "Updating..." : "Mark Incomplete"}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -695,10 +751,14 @@ function JobDetailBlock({
           <div className="space-y-1 text-sm text-gray-300">
             <p>Customer: {job.company_name || job.customer_name || "Job"}</p>
             <p>Email: {job.customer_email || "-"}</p>
+            <p>Phone: {job.phone_number || "-"}</p>
             <p>Pick Up: {job.pickup_address || "-"}</p>
             <p>Drop Off: {job.dropoff_address || "-"}</p>
-            <p>Installer Assigned: {job.installer_name || "-"}</p>
+            <p>Installer Assigned: {job.installer_name || job.reassigned_installer_name || "-"}</p>
             <p>Created At: {job.created_at || "-"}</p>
+            <p>Accepted At: {job.accepted_at || "-"}</p>
+            <p>Completed At: {job.completed_at || "-"}</p>
+            <p>Incomplete At: {job.incomplete_at || "-"}</p>
 
             {Number(job.waterfall_quantity || 0) > 0 ? (
               <p>Waterfall Quantity: {String(job.waterfall_quantity)}</p>
@@ -716,6 +776,8 @@ function JobDetailBlock({
             ) : null}
 
             {job.side_note ? <p>Side Note: {job.side_note}</p> : null}
+            {job.incomplete_reason ? <p>Incomplete Reason: {job.incomplete_reason}</p> : null}
+            {job.incomplete_notes ? <p>Incomplete Notes: {job.incomplete_notes}</p> : null}
           </div>
 
           {addOns.length > 0 ? (
@@ -779,6 +841,7 @@ export default function InstallerJobsPage() {
   const [loading, setLoading] = useState(true);
   const [installerName, setInstallerName] = useState("");
   const [acceptingKey, setAcceptingKey] = useState("");
+  const [statusActionKey, setStatusActionKey] = useState("");
   const [expandedKeys, setExpandedKeys] = useState<Record<string, boolean>>({});
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterValue>("all");
@@ -828,11 +891,17 @@ export default function InstallerJobsPage() {
   }
 
   function isMyJob(job: Booking, currentInstallerName: string) {
-    const assigned = safeText(job.installer_name || job.reassigned_installer_name || "");
-    return (
-      assigned.length > 0 &&
-      assigned.toLowerCase() === currentInstallerName.trim().toLowerCase()
-    );
+    const assignedNames = [
+      safeText(job.installer_name),
+      safeText(job.reassigned_installer_name),
+    ]
+      .filter(Boolean)
+      .map((value) => value.toLowerCase());
+
+    const current = safeText(currentInstallerName).toLowerCase();
+    if (!current) return false;
+
+    return assignedNames.includes(current);
   }
 
   async function bootPage() {
@@ -943,6 +1012,7 @@ export default function InstallerJobsPage() {
       const { data, error } = await supabase
         .from("bookings")
         .select("*")
+        .eq("is_archived", false)
         .order("created_at", { ascending: false });
 
       if (error) {
@@ -1154,12 +1224,114 @@ export default function InstallerJobsPage() {
     }
   }
 
+  async function updateMyJobStatus(
+    job: Booking,
+    nextStatus: "in_progress" | "completed" | "incomplete"
+  ) {
+    if (!installerName.trim()) {
+      alert("Installer profile name not found.");
+      return;
+    }
+
+    if (!isMyJob(job, installerName)) {
+      alert("You can only update your own jobs.");
+      return;
+    }
+
+    setStatusActionKey(job.id);
+
+    try {
+      const supabase = createClient();
+      const updates: Record<string, unknown> = {
+        status: nextStatus,
+      };
+
+      if (nextStatus === "in_progress") {
+        updates.status = "in_progress";
+      }
+
+      if (nextStatus === "completed") {
+        updates.status = "completed";
+        updates.completed_at = new Date().toISOString();
+      }
+
+      if (nextStatus === "incomplete") {
+        const reason = window.prompt(
+          "Enter incomplete reason (customer, shop, installer, access issue, damage, other):",
+          job.incomplete_reason || ""
+        );
+
+        if (reason === null) {
+          setStatusActionKey("");
+          return;
+        }
+
+        const notes = window.prompt(
+          "Add incomplete notes for admin:",
+          job.incomplete_notes || ""
+        );
+
+        if (notes === null) {
+          setStatusActionKey("");
+          return;
+        }
+
+        updates.status = "incomplete";
+        updates.incomplete_at = new Date().toISOString();
+        updates.incomplete_reason = reason.trim();
+        updates.incomplete_notes = notes.trim();
+      }
+
+      const { error } = await supabase
+        .from("bookings")
+        .update(updates)
+        .eq("id", job.id);
+
+      if (error) {
+        throw new Error(error.message || "Failed to update job status.");
+      }
+
+      alert(
+        nextStatus === "in_progress"
+          ? "Job marked in progress ✅"
+          : nextStatus === "completed"
+            ? "Job marked completed ✅"
+            : "Job marked incomplete ✅"
+      );
+
+      await loadJobs();
+    } catch (error) {
+      console.error("UPDATE JOB STATUS ERROR:", error);
+      alert(error instanceof Error ? error.message : "Failed to update job");
+    } finally {
+      setStatusActionKey("");
+    }
+  }
+
   const availableJobs = useMemo(() => {
     return allJobs.filter(isJobAvailable);
   }, [allJobs]);
 
   const myJobs = useMemo(() => {
-    return allJobs.filter((job) => isMyJob(job, installerName));
+    const jobs = allJobs.filter((job) => isMyJob(job, installerName));
+
+    return [...jobs].sort((a, b) => {
+      const aStatus = normalizeBookingStatus(a.status);
+      const bStatus = normalizeBookingStatus(b.status);
+
+      const priority = (status: string) => {
+        if (status === "accepted") return 1;
+        if (status === "in_progress") return 2;
+        if (status === "incomplete") return 3;
+        if (status === "completed") return 4;
+        return 5;
+      };
+
+      const diff = priority(aStatus) - priority(bStatus);
+      if (diff !== 0) return diff;
+
+      return Number(b.job_number || 0) - Number(a.job_number || 0);
+    });
   }, [allJobs, installerName]);
 
   const visibleJobs = useMemo(() => {
@@ -1493,6 +1665,11 @@ export default function InstallerJobsPage() {
                   onAccept={() => void acceptSingleJob(job)}
                   acceptLoading={acceptingKey === job.id}
                   showAcceptButton={viewMode === "available"}
+                  showMyJobActions={viewMode === "myJobs"}
+                  actionLoading={statusActionKey === job.id}
+                  onStartJob={() => void updateMyJobStatus(job, "in_progress")}
+                  onCompleteJob={() => void updateMyJobStatus(job, "completed")}
+                  onIncompleteJob={() => void updateMyJobStatus(job, "incomplete")}
                 />
               </div>
             );
@@ -1587,10 +1764,7 @@ export default function InstallerJobsPage() {
           <CompactStat label="In Progress" value={String(myJobsSummary.inProgress)} />
           <CompactStat label="Completed" value={String(myJobsSummary.completed)} />
           <CompactStat label="Incomplete" value={String(myJobsSummary.incomplete)} />
-          <CompactStat
-            label="My Total Jobs"
-            value={String(myJobsSummary.total)}
-          />
+          <CompactStat label="My Total Jobs" value={String(myJobsSummary.total)} />
         </div>
       ) : null}
 
