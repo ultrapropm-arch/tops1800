@@ -122,6 +122,44 @@ type Installer = {
   notes?: string | null;
   status?: string | null;
   approval_status?: string | null;
+  rating?: number | null;
+};
+
+type DispatchInstaller = {
+  id: string;
+  name: string;
+  distanceKm?: number;
+  rating?: number;
+  activeJobs?: number;
+};
+
+type DispatchRecommendation = {
+  recommended: {
+    id: string;
+    name: string;
+    distanceKm?: number;
+    rating?: number;
+    activeJobs?: number;
+    score: number;
+    scoreBreakdown: {
+      distanceScore: number;
+      ratingScore: number;
+      workloadScore: number;
+    };
+  } | null;
+  all: {
+    id: string;
+    name: string;
+    distanceKm?: number;
+    rating?: number;
+    activeJobs?: number;
+    score: number;
+    scoreBreakdown: {
+      distanceScore: number;
+      ratingScore: number;
+      workloadScore: number;
+    };
+  }[];
 };
 
 type StatusFilter =
@@ -500,6 +538,10 @@ function BookingCard({
   onToggle,
   onUpdate,
   savingId,
+  dispatchRecommendation,
+  dispatchLoadingId,
+  onRunDispatch,
+  onAssignRecommendedInstaller,
 }: {
   booking: Booking;
   installers: Installer[];
@@ -511,6 +553,10 @@ function BookingCard({
     value: string | number | boolean | null
   ) => void;
   savingId: string;
+  dispatchRecommendation?: DispatchRecommendation;
+  dispatchLoadingId: string;
+  onRunDispatch: (booking: Booking) => void;
+  onAssignRecommendedInstaller: (booking: Booking) => void;
 }) {
   const addOnServices = toArray(booking.add_on_services);
   const justServices = toArray(booking.just_services);
@@ -519,6 +565,7 @@ function BookingCard({
   const aiScore = getAiScore(booking);
   const acceptedState = getAcceptedStateLabel(booking);
   const normalizedStatus = normalizeBookingStatus(booking.status);
+  const recommendedInstaller = dispatchRecommendation?.recommended || null;
 
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
@@ -670,6 +717,67 @@ function BookingCard({
               <p className="mt-1 text-sm text-gray-300">
                 {booking.ai_route_hint || "No route hint yet."}
               </p>
+            </div>
+          </div>
+
+          <div className="mt-3 rounded-xl border border-purple-500/20 bg-purple-500/5 p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-purple-300">
+                  AI Dispatch Recommendation
+                </p>
+
+                {dispatchLoadingId === booking.id ? (
+                  <p className="mt-1 text-sm text-gray-300">
+                    Calculating best installer...
+                  </p>
+                ) : recommendedInstaller ? (
+                  <div className="mt-1 space-y-1 text-sm text-gray-300">
+                    <p>
+                      Recommended:{" "}
+                      <span className="font-semibold text-white">
+                        {recommendedInstaller.name}
+                      </span>
+                    </p>
+                    <p>
+                      Score:{" "}
+                      <span className="font-semibold text-purple-300">
+                        {recommendedInstaller.score}
+                      </span>
+                    </p>
+                    <p className="text-xs text-zinc-400">
+                      Distance {recommendedInstaller.scoreBreakdown.distanceScore} •
+                      Rating {recommendedInstaller.scoreBreakdown.ratingScore} •
+                      Workload {recommendedInstaller.scoreBreakdown.workloadScore}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="mt-1 text-sm text-gray-300">
+                    No recommendation yet.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2 md:items-end">
+                <button
+                  type="button"
+                  onClick={() => onRunDispatch(booking)}
+                  className="rounded-xl border border-purple-500/30 bg-purple-500/10 px-4 py-2 text-sm font-semibold text-purple-300 hover:bg-purple-500/20"
+                >
+                  {dispatchLoadingId === booking.id ? "Running..." : "Run AI Dispatch"}
+                </button>
+
+                {recommendedInstaller ? (
+                  <button
+                    type="button"
+                    onClick={() => onAssignRecommendedInstaller(booking)}
+                    disabled={savingId === booking.id}
+                    className="rounded-xl bg-purple-600 px-4 py-2 text-sm font-bold text-white hover:bg-purple-500 disabled:opacity-60"
+                  >
+                    {savingId === booking.id ? "Saving..." : "Assign Recommended"}
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>
@@ -1191,6 +1299,8 @@ export default function AdminBookingsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+  const [dispatchMap, setDispatchMap] = useState<Record<string, DispatchRecommendation>>({});
+  const [dispatchLoadingId, setDispatchLoadingId] = useState("");
 
   useEffect(() => {
     void loadAllData();
@@ -1245,6 +1355,92 @@ export default function AdminBookingsPage() {
     }
 
     setInstallers((data as Installer[]) || []);
+  }
+
+  function buildDispatchInstallers(currentBooking: Booking): DispatchInstaller[] {
+    const acceptedCountByName = bookings.reduce<Record<string, number>>((acc, item) => {
+      const normalized = normalizeBookingStatus(item.status);
+      const assignedName = safeText(item.reassigned_installer_name || item.installer_name);
+
+      if (assignedName && (normalized === "accepted" || normalized === "in_progress")) {
+        acc[assignedName] = (acc[assignedName] || 0) + 1;
+      }
+
+      return acc;
+    }, {});
+
+    return installers
+      .filter((installer) => normalizeText(installer.status) !== "inactive")
+      .map((installer) => {
+        const name = getInstallerDisplayName(installer);
+        const activeJobs = acceptedCountByName[name] || 0;
+
+        let distanceKm = 15;
+
+        const routeText = `${safeText(currentBooking.pickup_address)} ${safeText(
+          currentBooking.dropoff_address
+        )}`.toLowerCase();
+
+        if (routeText.includes("toronto")) distanceKm = 10;
+        if (routeText.includes("mississauga")) distanceKm = 18;
+        if (routeText.includes("brampton")) distanceKm = 22;
+        if (routeText.includes("vaughan")) distanceKm = 16;
+        if (routeText.includes("scarborough")) distanceKm = 20;
+        if (routeText.includes("markham")) distanceKm = 19;
+        if (routeText.includes("north york")) distanceKm = 12;
+        if (routeText.includes("etobicoke")) distanceKm = 14;
+
+        return {
+          id: installer.id,
+          name,
+          distanceKm,
+          rating: Number(installer.rating || 4.5),
+          activeJobs,
+        };
+      });
+  }
+
+  async function runDispatchForBooking(booking: Booking) {
+    try {
+      setDispatchLoadingId(booking.id);
+
+      const dispatchInstallers = buildDispatchInstallers(booking);
+
+      const res = await fetch("/api/ai/dispatch", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          bookingId: booking.id,
+          jobId: booking.job_id,
+          installers: dispatchInstallers,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to run AI dispatch");
+      }
+
+      setDispatchMap((prev) => ({
+        ...prev,
+        [booking.id]: data.result,
+      }));
+    } catch (error) {
+      console.error("Dispatch recommendation failed:", error);
+      alert("Could not run AI dispatch.");
+    } finally {
+      setDispatchLoadingId("");
+    }
+  }
+
+  async function assignRecommendedInstaller(booking: Booking) {
+    const recommendedInstaller = dispatchMap[booking.id]?.recommended;
+    if (!recommendedInstaller) return;
+
+    await updateBookingField(booking.id, "installer_name", recommendedInstaller.name);
   }
 
   async function updateBookingField(
@@ -1529,6 +1725,10 @@ export default function AdminBookingsPage() {
             onToggle={() => toggleExpanded(booking.id)}
             onUpdate={updateBookingField}
             savingId={savingId}
+            dispatchRecommendation={dispatchMap[booking.id]}
+            dispatchLoadingId={dispatchLoadingId}
+            onRunDispatch={runDispatchForBooking}
+            onAssignRecommendedInstaller={assignRecommendedInstaller}
           />
         ))}
       </section>
