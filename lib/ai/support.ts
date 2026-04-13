@@ -1,33 +1,21 @@
 import { openai } from "./client";
 
-export async function supportReply(messages: any[]) {
+export async function supportReply(message: string) {
   if (!openai) return "AI not configured.";
 
-  const res = await openai.chat.completions.create({
-    model: "gpt-4.1-mini",
-    messages: [
-      {
-        role: "system",
-        content: `
-You are an AI assistant for 1800TOPS.
+  try {
+    const res = await openai.responses.create({
+      model: "gpt-4.1-mini",
+      input: `You are 1800TOPS AI assistant.
 
-You help customers:
-- Get countertop installation quotes
-- Understand pricing
-- Book jobs
+Help customers with countertop installation quotes.
 
-Ask smart follow-up questions if needed:
-- square footage
-- material (2cm or 3cm)
-- location
-- add-ons (sink, cutouts, waterfalls)
+Customer: ${message}`,
+    });
 
-Be short, clear, and professional.
-`,
-      },
-      ...messages,
-    ],
-  });
-
-  return res.choices[0]?.message?.content || "No response.";
+    return res.output_text || "No response.";
+  } catch (error) {
+    console.error("OpenAI ERROR:", error);
+    return "AI failed. Check server logs.";
+  }
 }
