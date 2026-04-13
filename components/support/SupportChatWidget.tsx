@@ -2,57 +2,78 @@
 
 import { useState } from "react";
 
+type Message = {
+  role: "user" | "assistant";
+  content: string;
+};
+
 type SupportChatWidgetProps = {
   bookingId?: string;
-  senderType?: "customer" | "installer";
+  senderType?: "customer" | "admin" | "installer";
 };
 
 export default function SupportChatWidget({
-  bookingId = "general-support",
+  bookingId,
   senderType = "customer",
 }: SupportChatWidgetProps) {
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [companyName, setCompanyName] = useState("");
-  const [subject, setSubject] = useState("");
-  const [message, setMessage] = useState("");
-  const [image, setImage] = useState<File | null>(null);
-  const [sending, setSending] = useState(false);
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      role: "assistant",
+      content: bookingId
+        ? `Hi 👋 I’m the 1800TOPS assistant. I can help with your booking #${bookingId}.`
+        : "Hi 👋 I’m the 1800TOPS assistant. Tell me your job details and I’ll help you get a quote.",
+    },
+  ]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
 
   async function sendMessage() {
-    if (!subject.trim() || !message.trim()) {
-      alert("Please enter a subject and message.");
-      return;
-    }
+    const trimmed = input.trim();
+    if (!trimmed || loading) return;
 
-    setSending(true);
+    const newMessages: Message[] = [
+      ...messages,
+      { role: "user", content: trimmed },
+    ];
+
+    setMessages(newMessages);
+    setInput("");
+    setLoading(true);
 
     try {
-      console.log({
-        bookingId,
-        senderType,
-        name,
-        email,
-        companyName,
-        subject,
-        message,
-        image,
+      const res = await fetch("/api/ai/support", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messages: newMessages,
+          bookingId,
+          senderType,
+        }),
       });
 
-      alert("Message ready to send.");
-      setName("");
-      setEmail("");
-      setCompanyName("");
-      setSubject("");
-      setMessage("");
-      setImage(null);
-      setOpen(false);
+      const data = await res.json();
+
+      setMessages([
+        ...newMessages,
+        {
+          role: "assistant",
+          content:
+            data?.reply || "I couldn’t generate a response right now.",
+        },
+      ]);
     } catch (error) {
-      console.error(error);
-      alert("Could not send message.");
+      setMessages([
+        ...newMessages,
+        {
+          role: "assistant",
+          content: "Error connecting to AI.",
+        },
+      ]);
     } finally {
-      setSending(false);
+      setLoading(false);
     }
   }
 
@@ -61,90 +82,63 @@ export default function SupportChatWidget({
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="fixed bottom-6 right-6 z-50 rounded-full bg-yellow-500 px-5 py-3 font-semibold text-black shadow-lg hover:bg-yellow-400"
+        className="fixed bottom-6 right-6 z-50 rounded-full bg-yellow-400 px-5 py-3 font-bold text-black shadow-lg"
       >
-        Chat
+        {open ? "Close" : "💬 Get Quote"}
       </button>
 
       {open && (
-        <div className="fixed bottom-20 right-6 z-50 w-[360px] rounded-2xl border border-yellow-500 bg-zinc-950 p-5 shadow-2xl">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-bold text-yellow-500">
-                Contact Support
-              </h3>
-              <p className="mt-1 text-xs text-gray-400">
-                Send a message and one photo if needed.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              className="text-gray-400 hover:text-white"
-            >
-              ✕
-            </button>
+        <div className="fixed bottom-20 right-6 z-50 flex h-[500px] w-[360px] max-w-[calc(100vw-2rem)] flex-col rounded-xl bg-[#111] text-white shadow-xl">
+          <div className="border-b border-white/10 p-4">
+            <h3 className="font-bold">1800TOPS AI</h3>
+            <p className="text-sm text-gray-400">
+              {bookingId
+                ? `Booking support for ${bookingId}`
+                : "Describe your job to get a quote"}
+            </p>
           </div>
 
-          <div className="space-y-3">
-            <input
-              type="text"
-              placeholder={senderType === "installer" ? "Installer Name" : "Your Name"}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
-            />
+          <div className="flex-1 space-y-3 overflow-y-auto p-4">
+            {messages.map((message, index) => (
+              <div
+                key={index}
+                className={
+                  message.role === "user"
+                    ? "ml-auto max-w-[80%] rounded bg-yellow-400 p-2 text-black"
+                    : "max-w-[80%] rounded bg-white/10 p-2"
+                }
+              >
+                {message.content}
+              </div>
+            ))}
 
-            {senderType === "customer" && (
-              <>
-                <input
-                  type="email"
-                  placeholder="Your Email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
-                />
-
-                <input
-                  type="text"
-                  placeholder="Company Name"
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
-                />
-              </>
+            {loading && (
+              <div className="max-w-[80%] rounded bg-white/10 p-2">
+                Typing...
+              </div>
             )}
+          </div>
 
+          <div className="flex gap-2 border-t border-white/10 p-3">
             <input
               type="text"
-              placeholder="Subject"
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-              className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  void sendMessage();
+                }
+              }}
+              placeholder="Type your message..."
+              className="flex-1 rounded p-2 text-black"
             />
-
-            <textarea
-              placeholder="How can we help?"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              className="min-h-[120px] w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
-            />
-
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(e) => setImage(e.target.files?.[0] || null)}
-              className="w-full text-sm text-gray-300"
-            />
-
             <button
               type="button"
-              onClick={sendMessage}
-              disabled={sending}
-              className="w-full rounded-xl bg-yellow-500 py-3 font-semibold text-black hover:bg-yellow-400 disabled:opacity-60"
+              onClick={() => void sendMessage()}
+              disabled={loading}
+              className="rounded bg-yellow-400 px-3 text-black disabled:opacity-60"
             >
-              {sending ? "Sending..." : "Send Message"}
+              Send
             </button>
           </div>
         </div>

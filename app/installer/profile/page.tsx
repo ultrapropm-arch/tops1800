@@ -7,15 +7,25 @@ import { createClient } from "@/utils/supabase/client";
 
 type InstallerProfile = {
   id?: string | null;
+  user_id?: string | null;
+
   full_name?: string | null;
+  installer_name?: string | null;
+  name?: string | null;
+
   email?: string | null;
   phone?: string | null;
+  phone_number?: string | null;
+
   company_name?: string | null;
+  business_name?: string | null;
   company_address?: string | null;
+
   years_experience?: number | null;
   service_area?: string | null;
   vehicle_type?: string | null;
   has_tools?: string | null;
+
   payout_email?: string | null;
   payout_method?: string | null;
   bank_name?: string | null;
@@ -23,9 +33,78 @@ type InstallerProfile = {
   transit_number?: string | null;
   institution_number?: string | null;
   account_number?: string | null;
+
+  status?: string | null;
+  approval_status?: string | null;
+  is_active?: boolean | null;
 };
 
+function safeText(value?: string | null) {
+  return String(value || "").trim();
+}
+
+function normalizeText(value?: string | null) {
+  return safeText(value).toLowerCase();
+}
+
+function hasRealError(error: unknown) {
+  if (!error) return false;
+  if (typeof error !== "object") return true;
+
+  const err = error as {
+    message?: string;
+    code?: string;
+    details?: string;
+    hint?: string;
+  };
+
+  return Boolean(
+    safeText(err.message) ||
+      safeText(err.code) ||
+      safeText(err.details) ||
+      safeText(err.hint)
+  );
+}
+
+function getResolvedFullName(profile?: InstallerProfile | null) {
+  if (!profile) return "";
+  return (
+    safeText(profile.full_name) ||
+    safeText(profile.installer_name) ||
+    safeText(profile.name) ||
+    ""
+  );
+}
+
+function getResolvedPhone(profile?: InstallerProfile | null) {
+  if (!profile) return "";
+  return safeText(profile.phone) || safeText(profile.phone_number);
+}
+
+function getResolvedCompanyName(profile?: InstallerProfile | null) {
+  if (!profile) return "";
+  return safeText(profile.company_name) || safeText(profile.business_name);
+}
+
+function getApprovalLabel(profile?: InstallerProfile | null) {
+  if (!profile) return "-";
+
+  const approval = normalizeText(profile.approval_status);
+  const status = normalizeText(profile.status);
+
+  if (profile.is_active === false) return "Inactive";
+  if (approval === "approved" || approval === "active") return "Approved";
+  if (status === "approved" || status === "active") return "Approved";
+  if (approval) return approval;
+  if (status) return status;
+
+  return "-";
+}
+
 export default function InstallerProfilePage() {
+  const [profileId, setProfileId] = useState("");
+  const [profileUserId, setProfileUserId] = useState("");
+
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -42,6 +121,8 @@ export default function InstallerProfilePage() {
   const [transitNumber, setTransitNumber] = useState("");
   const [institutionNumber, setInstitutionNumber] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
+  const [approvalLabel, setApprovalLabel] = useState("-");
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -49,68 +130,137 @@ export default function InstallerProfilePage() {
     void loadProfile();
   }, []);
 
-  async function loadProfile() {
-    setLoading(true);
-
+  async function findInstallerProfile() {
     const supabase = createClient();
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
 
     const savedEmail = localStorage.getItem("installerPortalEmail") || "";
     const savedId = localStorage.getItem("installerPortalId") || "";
 
+    if (hasRealError(authError)) {
+      console.warn("Auth warning while loading installer profile:", authError);
+    }
+
     let profile: InstallerProfile | null = null;
 
-    if (savedId) {
-      const { data, error } = await supabase
+    if (user?.id) {
+      const byUserId = await supabase
         .from("installer_profiles")
-        .select(
-          "id, full_name, email, phone, company_name, company_address, years_experience, service_area, vehicle_type, has_tools, payout_email, payout_method, bank_name, account_holder_name, transit_number, institution_number, account_number"
-        )
-        .eq("id", savedId)
-        .maybeSingle<InstallerProfile>();
+        .select("*")
+        .eq("user_id", user.id)
+        .maybeSingle();
 
-      if (!error && data) {
-        profile = data;
+      if (!hasRealError(byUserId.error) && byUserId.data) {
+        profile = byUserId.data as InstallerProfile;
+      }
+    }
+
+    if (!profile && user?.id) {
+      const byId = await supabase
+        .from("installer_profiles")
+        .select("*")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (!hasRealError(byId.error) && byId.data) {
+        profile = byId.data as InstallerProfile;
+      }
+    }
+
+    if (!profile && user?.email) {
+      const byEmail = await supabase
+        .from("installer_profiles")
+        .select("*")
+        .ilike("email", user.email)
+        .maybeSingle();
+
+      if (!hasRealError(byEmail.error) && byEmail.data) {
+        profile = byEmail.data as InstallerProfile;
+      }
+    }
+
+    if (!profile && savedId) {
+      const bySavedId = await supabase
+        .from("installer_profiles")
+        .select("*")
+        .eq("id", savedId)
+        .maybeSingle();
+
+      if (!hasRealError(bySavedId.error) && bySavedId.data) {
+        profile = bySavedId.data as InstallerProfile;
       }
     }
 
     if (!profile && savedEmail) {
-      const { data, error } = await supabase
+      const bySavedEmail = await supabase
         .from("installer_profiles")
-        .select(
-          "id, full_name, email, phone, company_name, company_address, years_experience, service_area, vehicle_type, has_tools, payout_email, payout_method, bank_name, account_holder_name, transit_number, institution_number, account_number"
-        )
+        .select("*")
         .ilike("email", savedEmail)
-        .maybeSingle<InstallerProfile>();
+        .maybeSingle();
 
-      if (!error && data) {
-        profile = data;
+      if (!hasRealError(bySavedEmail.error) && bySavedEmail.data) {
+        profile = bySavedEmail.data as InstallerProfile;
       }
     }
 
-    if (profile) {
-      setFullName(profile.full_name || "");
-      setEmail(profile.email || "");
-      setPhone(profile.phone || "");
-      setCompanyName(profile.company_name || "");
-      setCompanyAddress(profile.company_address || "");
+    return {
+      profile,
+      authUserId: user?.id || "",
+      authEmail: user?.email || "",
+    };
+  }
+
+  async function loadProfile() {
+    setLoading(true);
+
+    try {
+      const { profile, authUserId, authEmail } = await findInstallerProfile();
+
+      if (!profile) {
+        if (authUserId) setProfileUserId(authUserId);
+        if (authEmail) setEmail(authEmail);
+        setLoading(false);
+        return;
+      }
+
+      setProfileId(safeText(profile.id));
+      setProfileUserId(safeText(profile.user_id) || authUserId);
+
+      setFullName(getResolvedFullName(profile));
+      setEmail(safeText(profile.email) || authEmail);
+      setPhone(getResolvedPhone(profile));
+      setCompanyName(getResolvedCompanyName(profile));
+      setCompanyAddress(safeText(profile.company_address));
       setYearsExperience(
         profile.years_experience !== null && profile.years_experience !== undefined
           ? String(profile.years_experience)
           : ""
       );
-      setServiceArea(profile.service_area || "");
-      setVehicleType(profile.vehicle_type || "");
-      setHasTools(profile.has_tools || "");
-      setPayoutEmail(profile.payout_email || "");
-      setPayoutMethod(profile.payout_method || "");
-      setBankName(profile.bank_name || "");
-      setAccountHolderName(profile.account_holder_name || "");
-      setTransitNumber(profile.transit_number || "");
-      setInstitutionNumber(profile.institution_number || "");
-      setAccountNumber(profile.account_number || "");
-    }
+      setServiceArea(safeText(profile.service_area));
+      setVehicleType(safeText(profile.vehicle_type));
+      setHasTools(safeText(profile.has_tools));
+      setPayoutEmail(safeText(profile.payout_email));
+      setPayoutMethod(safeText(profile.payout_method));
+      setBankName(safeText(profile.bank_name));
+      setAccountHolderName(safeText(profile.account_holder_name));
+      setTransitNumber(safeText(profile.transit_number));
+      setInstitutionNumber(safeText(profile.institution_number));
+      setAccountNumber(safeText(profile.account_number));
+      setApprovalLabel(getApprovalLabel(profile));
 
-    setLoading(false);
+      localStorage.setItem("installerPortalId", safeText(profile.id));
+      localStorage.setItem("installerPortalEmail", safeText(profile.email) || authEmail);
+      localStorage.setItem("installerPortalName", getResolvedFullName(profile));
+    } catch (error) {
+      console.error("PROFILE LOAD ERROR:", error);
+      alert("Could not load installer profile.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleSave() {
@@ -143,80 +293,152 @@ export default function InstallerProfilePage() {
 
     setSaving(true);
 
-    const supabase = createClient();
-    const savedId = localStorage.getItem("installerPortalId") || "";
+    try {
+      const supabase = createClient();
 
-    const payload = {
-      full_name: fullName.trim(),
-      email: email.trim(),
-      phone: phone.trim(),
-      company_name: companyName.trim(),
-      company_address: companyAddress.trim(),
-      years_experience: Number(yearsExperience || 0),
-      service_area: serviceArea.trim(),
-      vehicle_type: vehicleType.trim(),
-      has_tools: hasTools.trim(),
-      payout_email: payoutMethod === "etransfer" ? payoutEmail.trim() : email.trim(),
-      payout_method: payoutMethod.trim(),
-      bank_name: payoutMethod === "bank" ? bankName.trim() : "",
-      account_holder_name: payoutMethod === "bank" ? accountHolderName.trim() : "",
-      transit_number: payoutMethod === "bank" ? transitNumber.trim() : "",
-      institution_number: payoutMethod === "bank" ? institutionNumber.trim() : "",
-      account_number: payoutMethod === "bank" ? accountNumber.trim() : "",
-    };
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
 
-    let error = null;
+      if (hasRealError(authError)) {
+        console.warn("Auth warning while saving installer profile:", authError);
+      }
 
-    if (savedId) {
-      const updateResult = await supabase
-        .from("installer_profiles")
-        .update(payload)
-        .eq("id", savedId);
+      const resolvedUserId = safeText(profileUserId) || safeText(user?.id);
+      const resolvedEmail = email.trim();
 
-      error = updateResult.error;
-    } else {
-      const updateResult = await supabase
-        .from("installer_profiles")
-        .update(payload)
-        .ilike("email", email.trim());
+      const payload = {
+        user_id: resolvedUserId || null,
+        full_name: fullName.trim(),
+        installer_name: fullName.trim(),
+        email: resolvedEmail,
+        phone: phone.trim(),
+        phone_number: phone.trim(),
+        company_name: companyName.trim(),
+        business_name: companyName.trim(),
+        company_address: companyAddress.trim(),
+        years_experience: yearsExperience.trim() ? Number(yearsExperience) : 0,
+        service_area: serviceArea.trim(),
+        vehicle_type: vehicleType.trim(),
+        has_tools: hasTools.trim(),
+        payout_email: payoutMethod === "etransfer" ? payoutEmail.trim() : resolvedEmail,
+        payout_method: payoutMethod.trim(),
+        bank_name: payoutMethod === "bank" ? bankName.trim() : "",
+        account_holder_name: payoutMethod === "bank" ? accountHolderName.trim() : "",
+        transit_number: payoutMethod === "bank" ? transitNumber.trim() : "",
+        institution_number: payoutMethod === "bank" ? institutionNumber.trim() : "",
+        account_number: payoutMethod === "bank" ? accountNumber.trim() : "",
+      };
 
-      error = updateResult.error;
-    }
+      let error: unknown = null;
+      let savedProfileId = profileId;
 
-    if (error) {
-      console.error("Profile save error:", error);
-      alert(error.message || "Could not save profile.");
+      if (profileId) {
+        const result = await supabase
+          .from("installer_profiles")
+          .update(payload)
+          .eq("id", profileId)
+          .select("id")
+          .maybeSingle();
+
+        error = result.error;
+        if (!hasRealError(error) && result.data?.id) {
+          savedProfileId = String(result.data.id);
+        }
+      } else if (resolvedUserId) {
+        const existing = await supabase
+          .from("installer_profiles")
+          .select("id")
+          .eq("user_id", resolvedUserId)
+          .maybeSingle();
+
+        if (!hasRealError(existing.error) && existing.data?.id) {
+          const result = await supabase
+            .from("installer_profiles")
+            .update(payload)
+            .eq("id", existing.data.id)
+            .select("id")
+            .maybeSingle();
+
+          error = result.error;
+          if (!hasRealError(error) && result.data?.id) {
+            savedProfileId = String(result.data.id);
+          }
+        } else {
+          const result = await supabase
+            .from("installer_profiles")
+            .upsert(payload, { onConflict: "email" })
+            .select("id")
+            .maybeSingle();
+
+          error = result.error;
+          if (!hasRealError(error) && result.data?.id) {
+            savedProfileId = String(result.data.id);
+          }
+        }
+      } else {
+        const result = await supabase
+          .from("installer_profiles")
+          .upsert(payload, { onConflict: "email" })
+          .select("id")
+          .maybeSingle();
+
+        error = result.error;
+        if (!hasRealError(error) && result.data?.id) {
+          savedProfileId = String(result.data.id);
+        }
+      }
+
+      if (hasRealError(error)) {
+        const err = error as { message?: string };
+        console.error("Profile save error:", error);
+        alert(err.message || "Could not save profile.");
+        setSaving(false);
+        return;
+      }
+
+      setProfileId(savedProfileId);
+      setProfileUserId(resolvedUserId);
+
+      localStorage.setItem("installerPortalName", fullName.trim());
+      localStorage.setItem("installerPortalEmail", resolvedEmail);
+      if (savedProfileId) {
+        localStorage.setItem("installerPortalId", savedProfileId);
+      }
+
+      localStorage.setItem(
+        "installerProfile",
+        JSON.stringify({
+          profileId: savedProfileId,
+          profileUserId: resolvedUserId,
+          fullName,
+          email,
+          phone,
+          companyName,
+          companyAddress,
+          yearsExperience,
+          serviceArea,
+          vehicleType,
+          hasTools,
+          payoutEmail,
+          payoutMethod,
+          bankName,
+          accountHolderName,
+          transitNumber,
+          institutionNumber,
+          accountNumber,
+        })
+      );
+
+      alert("Profile saved successfully.");
+      await loadProfile();
+    } catch (error) {
+      console.error("PROFILE SAVE ERROR:", error);
+      alert("Could not save profile.");
+    } finally {
       setSaving(false);
-      return;
     }
-
-    localStorage.setItem("installerPortalName", fullName.trim());
-    localStorage.setItem("installerPortalEmail", email.trim());
-
-    localStorage.setItem(
-      "installerProfile",
-      JSON.stringify({
-        fullName,
-        email,
-        phone,
-        companyName,
-        companyAddress,
-        yearsExperience,
-        serviceArea,
-        vehicleType,
-        hasTools,
-        payoutEmail,
-        payoutMethod,
-        bankName,
-        accountHolderName,
-        transitNumber,
-        institutionNumber,
-        accountNumber,
-      })
-    );
-
-    setSaving(false);
-    alert("Profile saved successfully.");
   }
 
   return (
@@ -230,6 +452,27 @@ export default function InstallerProfilePage() {
           Manage your personal details, company information, service area, and
           payout information.
         </p>
+
+        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="rounded-xl border border-zinc-800 bg-black p-4">
+            <p className="text-sm text-gray-400">Profile Status</p>
+            <p className="mt-2 text-lg font-semibold text-white">{approvalLabel}</p>
+          </div>
+
+          <div className="rounded-xl border border-zinc-800 bg-black p-4">
+            <p className="text-sm text-gray-400">Installer ID</p>
+            <p className="mt-2 text-sm font-semibold text-white">
+              {profileId || "-"}
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-zinc-800 bg-black p-4">
+            <p className="text-sm text-gray-400">Linked User ID</p>
+            <p className="mt-2 text-sm font-semibold text-white">
+              {profileUserId || "-"}
+            </p>
+          </div>
+        </div>
       </section>
 
       {loading ? (

@@ -89,6 +89,43 @@ function money(value?: number | null) {
   return "$" + Number(value || 0).toFixed(2);
 }
 
+function safeText(value?: string | null) {
+  return String(value || "").trim();
+}
+
+function getCityOnly(address?: string | null) {
+  const value = safeText(address);
+  if (!value) return "-";
+
+  const parts = value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length >= 2) {
+    const provincePattern =
+      /^(on|ontario|ab|alberta|bc|british columbia|mb|manitoba|nb|new brunswick|nl|newfoundland and labrador|ns|nova scotia|nt|northwest territories|nu|nunavut|pe|prince edward island|qc|quebec|sk|saskatchewan|yt|yukon)$/i;
+
+    const countryPattern = /^(canada|usa|united states)$/i;
+
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const part = parts[i];
+      if (
+        provincePattern.test(part) ||
+        countryPattern.test(part) ||
+        /\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b/i.test(part)
+      ) {
+        continue;
+      }
+      return part;
+    }
+
+    return parts[parts.length - 2] || parts[0];
+  }
+
+  return parts[0] || value;
+}
+
 function getPickupWindow(job: Booking) {
   if (job.pickup_time_slot) {
     return job.pickup_time_slot;
@@ -172,6 +209,33 @@ function getPayoutLines(job: Booking) {
   return lines;
 }
 
+function normalizeStatus(status?: string | null) {
+  const value = safeText(status).toLowerCase();
+
+  if (!value) return "new";
+  if (value === "assigned") return "accepted";
+  if (value === "accepted_by_installer") return "accepted";
+  if (value === "in progress") return "in_progress";
+  if (value === "in-progress") return "in_progress";
+  return value;
+}
+
+function isAssignedStatus(status?: string | null) {
+  const normalized = normalizeStatus(status);
+
+  return (
+    normalized === "accepted" ||
+    normalized === "confirmed" ||
+    normalized === "in_progress" ||
+    normalized === "completed_pending_admin_review" ||
+    normalized === "completed"
+  );
+}
+
+function isIncompleteStatus(status?: string | null) {
+  return normalizeStatus(status) === "incomplete";
+}
+
 export default function InstallerAssignedJobsPage() {
   const [jobs, setJobs] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
@@ -199,6 +263,7 @@ export default function InstallerAssignedJobsPage() {
     const { data, error } = await supabase
       .from("bookings")
       .select("*")
+      .eq("is_archived", false)
       .order("scheduled_date", { ascending: true });
 
     if (error) {
@@ -219,7 +284,7 @@ export default function InstallerAssignedJobsPage() {
     let result = jobs.filter((job) => {
       const assignedToInstaller =
         installer !== "" &&
-        (job.installer_name || "").trim().toLowerCase() === installer;
+        safeText(job.installer_name).toLowerCase() === installer;
 
       return assignedToInstaller;
     });
@@ -228,48 +293,33 @@ export default function InstallerAssignedJobsPage() {
 
     return result.filter((job) => {
       return (
-        (job.job_id || "").toLowerCase().includes(term) ||
-        (job.customer_name || "").toLowerCase().includes(term) ||
-        (job.customer_email || "").toLowerCase().includes(term) ||
-        (job.company_name || "").toLowerCase().includes(term) ||
-        (job.phone_number || "").toLowerCase().includes(term) ||
-        (job.pickup_address || "").toLowerCase().includes(term) ||
-        (job.dropoff_address || "").toLowerCase().includes(term) ||
-        (job.service_type || "").toLowerCase().includes(term) ||
-        (job.service_type_label || "").toLowerCase().includes(term) ||
-        (job.scheduled_date || "").toLowerCase().includes(term) ||
-        (job.scheduled_time || "").toLowerCase().includes(term) ||
-        (job.pickup_time_slot || "").toLowerCase().includes(term) ||
-        (job.status || "").toLowerCase().includes(term) ||
-        (job.incomplete_reason || "").toLowerCase().includes(term) ||
-        (job.incomplete_note || "").toLowerCase().includes(term) ||
-        (job.incomplete_notes || "").toLowerCase().includes(term) ||
-        (job.installer_pay_status || "").toLowerCase().includes(term)
+        safeText(job.job_id).toLowerCase().includes(term) ||
+        safeText(job.customer_name).toLowerCase().includes(term) ||
+        safeText(job.customer_email).toLowerCase().includes(term) ||
+        safeText(job.company_name).toLowerCase().includes(term) ||
+        safeText(job.phone_number).toLowerCase().includes(term) ||
+        safeText(job.pickup_address).toLowerCase().includes(term) ||
+        safeText(job.dropoff_address).toLowerCase().includes(term) ||
+        safeText(job.service_type).toLowerCase().includes(term) ||
+        safeText(job.service_type_label).toLowerCase().includes(term) ||
+        safeText(job.scheduled_date).toLowerCase().includes(term) ||
+        safeText(job.scheduled_time).toLowerCase().includes(term) ||
+        safeText(job.pickup_time_slot).toLowerCase().includes(term) ||
+        safeText(job.status).toLowerCase().includes(term) ||
+        safeText(job.incomplete_reason).toLowerCase().includes(term) ||
+        safeText(job.incomplete_note).toLowerCase().includes(term) ||
+        safeText(job.incomplete_notes).toLowerCase().includes(term) ||
+        safeText(job.installer_pay_status).toLowerCase().includes(term)
       );
     });
   }, [jobs, installerName, search]);
 
   const activeJobs = useMemo(() => {
-    return searchedJobs.filter((job) => {
-      const status = (job.status || "").toLowerCase();
-
-      return (
-        status === "accepted" ||
-        status === "assigned" ||
-        status === "confirmed" ||
-        status === "in_progress" ||
-        status === "in progress" ||
-        status === "completed_pending_admin_review" ||
-        status === "completed"
-      );
-    });
+    return searchedJobs.filter((job) => isAssignedStatus(job.status));
   }, [searchedJobs]);
 
   const incompleteJobs = useMemo(() => {
-    return searchedJobs.filter((job) => {
-      const status = (job.status || "").toLowerCase();
-      return status === "incomplete";
-    });
+    return searchedJobs.filter((job) => isIncompleteStatus(job.status));
   }, [searchedJobs]);
 
   const groupedActiveJobs = useMemo(() => {
@@ -476,6 +526,9 @@ export default function InstallerAssignedJobsPage() {
                             <p>Pickup Window: {getPickupWindow(job)}</p>
                             <p>Pick Up: {job.pickup_address || "-"}</p>
                             <p>Drop Off: {job.dropoff_address || "-"}</p>
+                            <p>Pick Up City: {getCityOnly(job.pickup_address)}</p>
+                            <p>Drop Off City: {getCityOnly(job.dropoff_address)}</p>
+                            <p>One-Way KM: {Number(job.one_way_km || 0).toFixed(2)}</p>
                             <p>Status: {job.status || "-"}</p>
                             <p>Payout Status: {job.installer_pay_status || "-"}</p>
                           </div>
@@ -619,6 +672,9 @@ export default function InstallerAssignedJobsPage() {
                             <p>Pickup Window: {getPickupWindow(job)}</p>
                             <p>Pick Up: {job.pickup_address || "-"}</p>
                             <p>Drop Off: {job.dropoff_address || "-"}</p>
+                            <p>Pick Up City: {getCityOnly(job.pickup_address)}</p>
+                            <p>Drop Off City: {getCityOnly(job.dropoff_address)}</p>
+                            <p>One-Way KM: {Number(job.one_way_km || 0).toFixed(2)}</p>
                             <p>Status: {job.status || "-"}</p>
                             <p>Incomplete Reason: {job.incomplete_reason || "-"}</p>
                             <p>Note: {job.incomplete_notes || job.incomplete_note || "-"}</p>

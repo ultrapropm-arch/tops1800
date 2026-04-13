@@ -18,7 +18,9 @@ type Booking = {
   pickup_address?: string | null;
   dropoff_address?: string | null;
   installer_name?: string | null;
+  reassigned_installer_name?: string | null;
   status?: string | null;
+  is_archived?: boolean | null;
   one_way_km?: number | null;
   installer_pay?: number | null;
   company_profit?: number | null;
@@ -43,8 +45,38 @@ type FilterValue =
   | "bestAi"
   | "highPay";
 
+function safeText(value?: string | null) {
+  return String(value || "").trim();
+}
+
 function money(value?: number | null) {
   return "$" + Number(value || 0).toFixed(2);
+}
+
+function normalizeBookingStatus(status?: string | null) {
+  const value = safeText(status).toLowerCase();
+
+  if (!value) return "new";
+  if (value === "confirmed") return "pending";
+  if (value === "assigned") return "accepted";
+  if (value === "in progress") return "in_progress";
+  if (value === "completed_pending_admin_review") return "completed";
+  if (value === "canceled") return "cancelled";
+
+  return value;
+}
+
+function isAvailableSuggestionJob(job: Booking) {
+  const status = normalizeBookingStatus(job.status);
+  const hasInstaller =
+    safeText(job.installer_name).length > 0 ||
+    safeText(job.reassigned_installer_name).length > 0;
+
+  return (
+    job.is_archived !== true &&
+    !hasInstaller &&
+    (status === "available" || status === "pending" || status === "new")
+  );
 }
 
 function getPickupWindow(job: Booking) {
@@ -101,6 +133,10 @@ function getUrgencyLabel(job: Booking) {
   if (text.includes("next")) return "Next-Day Priority";
 
   return "Open Scheduling";
+}
+
+function getGroupingLabel(job: Booking) {
+  return job.ai_grouping_label || "Solo Route";
 }
 
 function getAiScore(job: Booking) {
@@ -212,6 +248,7 @@ function SuggestionCard({
 }) {
   const urgency = getUrgencyLabel(job);
   const aiScore = getAiScore(job);
+  const groupingLabel = getGroupingLabel(job);
 
   return (
     <div className="rounded-2xl border border-zinc-800 bg-black p-5">
@@ -221,8 +258,8 @@ function SuggestionCard({
         <Badge label={urgency} className={getUrgencyClass(urgency)} />
 
         <Badge
-          label={job.ai_grouping_label || "Solo Route"}
-          className={getGroupingClass(job.ai_grouping_label)}
+          label={groupingLabel}
+          className={getGroupingClass(groupingLabel)}
         />
 
         <Badge
@@ -310,30 +347,36 @@ export default function AiSuggestionsPage() {
 
   async function loadJobs() {
     setLoading(true);
-    const supabase = createClient();
-    const today = new Date().toISOString().split("T")[0];
+    setRunMessage("");
 
-    const { data, error } = await supabase
-      .from("bookings")
-      .select("*")
-      .eq("is_archived", false)
-      .gte("scheduled_date", today)
-      .order("scheduled_date", { ascending: true });
+    try {
+      const supabase = createClient();
+      const today = new Date().toISOString().split("T")[0];
 
-    if (error) {
-      console.error("AI SUGGESTIONS LOAD ERROR:", error);
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("*")
+        .gte("scheduled_date", today)
+        .order("scheduled_date", { ascending: true });
+
+      if (error) {
+        console.error("AI SUGGESTIONS LOAD ERROR:", error);
+        setJobs([]);
+        setLoading(false);
+        return;
+      }
+
+      const filtered = ((data as Booking[]) || [])
+        .filter(isAvailableSuggestionJob)
+        .sort((a, b) => getAiScore(b) - getAiScore(a));
+
+      setJobs(filtered);
+    } catch (error) {
+      console.error("AI SUGGESTIONS UNEXPECTED LOAD ERROR:", error);
+      setJobs([]);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const filtered = ((data as Booking[]) || []).filter(
-      (job) =>
-        (job.status || "").toLowerCase() === "available" &&
-        !(job.installer_name || "").trim()
-    );
-
-    setJobs(filtered);
-    setLoading(false);
   }
 
   async function runAiDispatch() {
@@ -341,7 +384,7 @@ export default function AiSuggestionsPage() {
       setRunningAi(true);
       setRunMessage("");
 
-      const response = await fetch("/api/ai-dispatch", {
+      const response = await fetch("/api/ai/dispatch", {
         method: "POST",
       });
 
@@ -400,8 +443,8 @@ export default function AiSuggestionsPage() {
       jobs
         .filter(
           (j) =>
-            j.ai_grouping_label === "Strong Grouping" ||
-            j.ai_grouping_label === "Possible Group"
+            getGroupingLabel(j) === "Strong Grouping" ||
+            getGroupingLabel(j) === "Possible Group"
         )
         .sort((a, b) => getAiScore(b) - getAiScore(a)),
     [jobs]
@@ -441,21 +484,32 @@ export default function AiSuggestionsPage() {
     return result
       .filter((job) => {
         return (
-          (job.job_id || "").toLowerCase().includes(term) ||
-          (job.company_name || "").toLowerCase().includes(term) ||
-          (job.customer_name || "").toLowerCase().includes(term) ||
-          (job.pickup_address || "").toLowerCase().includes(term) ||
-          (job.dropoff_address || "").toLowerCase().includes(term) ||
-          (job.scheduled_date || "").toLowerCase().includes(term) ||
-          (job.ai_recommended_installer_type || "").toLowerCase().includes(term) ||
-          (job.ai_grouping_label || "").toLowerCase().includes(term) ||
-          (job.ai_urgency_label || "").toLowerCase().includes(term) ||
-          (job.service_type || "").toLowerCase().includes(term) ||
-          (job.service_type_label || "").toLowerCase().includes(term)
+          safeText(job.job_id).toLowerCase().includes(term) ||
+          safeText(job.company_name).toLowerCase().includes(term) ||
+          safeText(job.customer_name).toLowerCase().includes(term) ||
+          safeText(job.pickup_address).toLowerCase().includes(term) ||
+          safeText(job.dropoff_address).toLowerCase().includes(term) ||
+          safeText(job.scheduled_date).toLowerCase().includes(term) ||
+          safeText(job.ai_recommended_installer_type).toLowerCase().includes(term) ||
+          safeText(job.ai_grouping_label).toLowerCase().includes(term) ||
+          safeText(job.ai_urgency_label).toLowerCase().includes(term) ||
+          safeText(job.service_type).toLowerCase().includes(term) ||
+          safeText(job.service_type_label).toLowerCase().includes(term) ||
+          safeText(job.ai_route_hint).toLowerCase().includes(term)
         );
       })
       .sort((a, b) => getAiScore(b) - getAiScore(a));
-  }, [jobs, sameDay, nextDay, longDistance, grouped, topMatches, highPay, filter, search]);
+  }, [
+    jobs,
+    sameDay,
+    nextDay,
+    longDistance,
+    grouped,
+    topMatches,
+    highPay,
+    filter,
+    search,
+  ]);
 
   const summary = useMemo(() => {
     const sameDayCount = sameDay.length;
@@ -495,7 +549,7 @@ export default function AiSuggestionsPage() {
             </p>
           </div>
 
-          <div className="w-full xl:w-auto">
+          <div className="flex w-full flex-col gap-3 xl:w-auto">
             <button
               type="button"
               onClick={() => void runAiDispatch()}
@@ -505,8 +559,16 @@ export default function AiSuggestionsPage() {
               {runningAi ? "Running AI Dispatch..." : "Run AI Dispatch"}
             </button>
 
+            <button
+              type="button"
+              onClick={() => void loadJobs()}
+              className="w-full rounded-2xl border border-zinc-700 bg-black px-6 py-4 text-sm font-bold text-white transition hover:border-yellow-500 hover:text-yellow-400 xl:w-auto"
+            >
+              Refresh Suggestions
+            </button>
+
             {runMessage ? (
-              <p className="mt-3 text-sm text-gray-300">{runMessage}</p>
+              <p className="text-sm text-gray-300">{runMessage}</p>
             ) : null}
           </div>
         </div>

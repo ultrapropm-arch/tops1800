@@ -141,6 +141,39 @@ function safeText(value?: string | null) {
   return String(value || "").trim();
 }
 
+function getCityOnly(address?: string | null) {
+  const value = safeText(address);
+  if (!value) return "-";
+
+  const parts = value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length >= 2) {
+    const provincePattern =
+      /^(on|ontario|ab|alberta|bc|british columbia|mb|manitoba|nb|new brunswick|nl|newfoundland and labrador|ns|nova scotia|nt|northwest territories|nu|nunavut|pe|prince edward island|qc|quebec|sk|saskatchewan|yt|yukon)$/i;
+
+    const countryPattern = /^(canada|usa|united states)$/i;
+
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const part = parts[i];
+      if (
+        provincePattern.test(part) ||
+        countryPattern.test(part) ||
+        /\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b/i.test(part)
+      ) {
+        continue;
+      }
+      return part;
+    }
+
+    return parts[parts.length - 2] || parts[0];
+  }
+
+  return parts[0] || value;
+}
+
 function toArray(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value.filter(Boolean).map(String);
@@ -566,6 +599,7 @@ function JobDetailBlock({
   onStartJob,
   onCompleteJob,
   onIncompleteJob,
+  viewMode,
 }: {
   job: Booking;
   allJobs: Booking[];
@@ -580,6 +614,7 @@ function JobDetailBlock({
   onStartJob?: () => void;
   onCompleteJob?: () => void;
   onIncompleteJob?: () => void;
+  viewMode: ViewMode;
 }) {
   const addOns = toArray(job.add_on_services);
   const justServices = toArray(job.just_services);
@@ -590,6 +625,14 @@ function JobDetailBlock({
   const sameDay = isSameDayJob(job);
   const nextDay = isNextDayJob(job);
   const normalizedStatus = normalizeBookingStatus(job.status);
+
+  const showFullAddress = viewMode === "myJobs";
+  const pickupDisplay = showFullAddress
+    ? job.pickup_address || "-"
+    : getCityOnly(job.pickup_address);
+  const dropoffDisplay = showFullAddress
+    ? job.dropoff_address || "-"
+    : getCityOnly(job.dropoff_address);
 
   return (
     <div
@@ -752,8 +795,8 @@ function JobDetailBlock({
             <p>Customer: {job.company_name || job.customer_name || "Job"}</p>
             <p>Email: {job.customer_email || "-"}</p>
             <p>Phone: {job.phone_number || "-"}</p>
-            <p>Pick Up: {job.pickup_address || "-"}</p>
-            <p>Drop Off: {job.dropoff_address || "-"}</p>
+            <p>Pick Up: {pickupDisplay}</p>
+            <p>Drop Off: {dropoffDisplay}</p>
             <p>Installer Assigned: {job.installer_name || job.reassigned_installer_name || "-"}</p>
             <p>Created At: {job.created_at || "-"}</p>
             <p>Accepted At: {job.accepted_at || "-"}</p>
@@ -1670,6 +1713,7 @@ export default function InstallerJobsPage() {
                   onStartJob={() => void updateMyJobStatus(job, "in_progress")}
                   onCompleteJob={() => void updateMyJobStatus(job, "completed")}
                   onIncompleteJob={() => void updateMyJobStatus(job, "incomplete")}
+                  viewMode={viewMode}
                 />
               </div>
             );

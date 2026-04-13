@@ -16,12 +16,38 @@ type Booking = {
   pickup_address?: string | null;
   dropoff_address?: string | null;
   service_type?: string | null;
+  service_type_label?: string | null;
   scheduled_date?: string | null;
+  scheduled_time?: string | null;
   pickup_time_slot?: string | null;
+  pickup_time_from?: string | null;
+  pickup_time_to?: string | null;
   status?: string | null;
   incomplete_reason?: string | null;
   incomplete_note?: string | null;
+  incomplete_notes?: string | null;
+  redo_requested?: boolean | null;
+  admin_fee_note?: string | null;
+  installer_name?: string | null;
+  reassigned_installer_name?: string | null;
 };
+
+function safeText(value?: string | null) {
+  return String(value || "").trim();
+}
+
+function getServiceTypeLabel(job?: Booking | null) {
+  const value = safeText(job?.service_type_label) || safeText(job?.service_type);
+
+  if (!value) return "-";
+  if (value === "full_height_backsplash") return "Full Height Backsplash";
+  if (value === "installation_3cm") return "3cm Installation";
+  if (value === "installation_2cm_standard") return "2cm Standard Installation";
+  if (value === "backsplash_tiling") return "Backsplash Tiling";
+  if (value === "justServices") return "Just Services";
+
+  return value;
+}
 
 export default function JobReadyPage() {
   return (
@@ -61,29 +87,101 @@ function JobReadyPageContent() {
   async function loadJob() {
     setLoading(true);
 
-    const supabase = createClient();
+    try {
+      const supabase = createClient();
 
-    const { data, error } = await supabase
-      .from("bookings")
-      .select(
-        "id, job_id, customer_name, company_name, customer_email, phone_number, pickup_address, dropoff_address, service_type, scheduled_date, pickup_time_slot, status, incomplete_reason, incomplete_note"
-      )
-      .eq("id", jobId)
-      .maybeSingle<Booking>();
+      const { data, error } = await supabase
+        .from("bookings")
+        .select(
+          [
+            "id",
+            "job_id",
+            "customer_name",
+            "company_name",
+            "customer_email",
+            "phone_number",
+            "pickup_address",
+            "dropoff_address",
+            "service_type",
+            "service_type_label",
+            "scheduled_date",
+            "scheduled_time",
+            "pickup_time_slot",
+            "pickup_time_from",
+            "pickup_time_to",
+            "status",
+            "incomplete_reason",
+            "incomplete_note",
+            "incomplete_notes",
+            "redo_requested",
+            "admin_fee_note",
+            "installer_name",
+            "reassigned_installer_name",
+          ].join(", ")
+        )
+        .eq("id", jobId)
+        .maybeSingle<Booking>();
 
-    if (error || !data) {
-      console.error("Error loading job-ready booking:", error);
+      if (error || !data) {
+        console.error("Error loading job-ready booking:", error);
+        setLoading(false);
+        return;
+      }
+
+      setJob(data);
+      setPickupWindow(
+        safeText(data.pickup_time_slot) ||
+          [
+            safeText(data.pickup_time_from),
+            safeText(data.pickup_time_to),
+          ]
+            .filter(Boolean)
+            .join(" - ")
+      );
+      setCustomerNote(
+        safeText(data.incomplete_notes) ||
+          safeText(data.incomplete_note) ||
+          ""
+      );
+
+      if (data.redo_requested === true) {
+        setSubmitted(true);
+      }
+    } catch (error) {
+      console.error("JOB READY LOAD ERROR:", error);
+    } finally {
       setLoading(false);
-      return;
     }
+  }
 
-    setJob(data);
-    setPickupWindow(data.pickup_time_slot || "");
-    setLoading(false);
+  async function sendEmail(payload: {
+    to: string;
+    subject: string;
+    type: string;
+    html: string;
+  }) {
+    const response = await fetch("/api/send-email", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const result = await response.json().catch(() => null);
+      throw new Error(result?.error || "Failed to send email.");
+    }
   }
 
   async function submitReadyRequest() {
     if (!job) return;
+
+    if (job.redo_requested === true) {
+      alert("This job ready request was already submitted.");
+      setSubmitted(true);
+      return;
+    }
 
     if (isJobReady !== "yes") {
       alert("Please click this button when the job is ready.");
@@ -98,6 +196,9 @@ function JobReadyPageContent() {
     setSaving(true);
 
     try {
+      const noteLine = customerNote.trim() || "Customer marked job ready";
+      const combinedAdminNote = `Customer ready note: ${noteLine}`;
+
       const adminHtml = `
         <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
           <h2>Job Ready Request Submitted</h2>
@@ -106,11 +207,12 @@ function JobReadyPageContent() {
           <p><strong>Customer Name:</strong> ${job.customer_name || "-"}</p>
           <p><strong>Email:</strong> ${job.customer_email || "-"}</p>
           <p><strong>Phone:</strong> ${job.phone_number || "-"}</p>
-          <p><strong>Service:</strong> ${job.service_type || "-"}</p>
+          <p><strong>Service:</strong> ${getServiceTypeLabel(job)}</p>
           <p><strong>Pick Up:</strong> ${job.pickup_address || "-"}</p>
           <p><strong>Drop Off:</strong> ${job.dropoff_address || "-"}</p>
           <p><strong>Requested Pickup Window:</strong> ${pickupWindow}</p>
           <p><strong>Customer Note:</strong> ${customerNote || "-"}</p>
+          <p><strong>Previous Installer:</strong> ${job.installer_name || job.reassigned_installer_name || "-"}</p>
           <p><strong>Next Step:</strong> Check original installer first. If unavailable, assign another installer.</p>
         </div>
       `;
@@ -127,51 +229,64 @@ function JobReadyPageContent() {
         </div>
       `;
 
-      await fetch(`/api/bookings/${job.id}`, {
+      const patchResponse = await fetch(`/api/bookings/${job.id}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           redo_requested: true,
-          admin_fee_note: customerNote.trim()
-            ? `Customer ready note: ${customerNote.trim()}`
-            : "Customer marked job ready",
+          status: "pending",
+          pickup_time_slot: pickupWindow.trim(),
+          admin_fee_note: combinedAdminNote,
+          incomplete_notes: customerNote.trim(),
+          reassigned_installer_name: null,
         }),
       });
 
-      await fetch("/api/send-email", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          to: "ultrapropm@gmail.com",
-          subject: `Job Ready Request - ${job.job_id || job.id}`,
-          type: "resume_request",
-          html: adminHtml,
-        }),
+      if (!patchResponse.ok) {
+        const patchResult = await patchResponse.json().catch(() => null);
+        throw new Error(patchResult?.error || "Could not update booking.");
+      }
+
+      await sendEmail({
+        to: "ultrapropm@gmail.com",
+        subject: `Job Ready Request - ${job.job_id || job.id}`,
+        type: "resume_request",
+        html: adminHtml,
       });
 
       if (job.customer_email) {
-        await fetch("/api/send-email", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            to: job.customer_email,
-            subject: `We Received Your Job Ready Request - ${job.job_id || job.id}`,
-            type: "resume_request",
-            html: customerHtml,
-          }),
+        await sendEmail({
+          to: job.customer_email,
+          subject: `We Received Your Job Ready Request - ${job.job_id || job.id}`,
+          type: "resume_request",
+          html: customerHtml,
         });
       }
+
+      setJob((prev) =>
+        prev
+          ? {
+              ...prev,
+              redo_requested: true,
+              pickup_time_slot: pickupWindow.trim(),
+              admin_fee_note: combinedAdminNote,
+              incomplete_notes: customerNote.trim(),
+              status: "pending",
+              reassigned_installer_name: null,
+            }
+          : prev
+      );
 
       setSubmitted(true);
     } catch (error) {
       console.error("Job ready request error:", error);
-      alert("Could not submit request. Please try again.");
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Could not submit request. Please try again."
+      );
     } finally {
       setSaving(false);
     }
@@ -211,6 +326,7 @@ function JobReadyPageContent() {
               <p>Job ID: {job.job_id || job.id}</p>
               <p>Requested Pickup Window: {pickupWindow}</p>
               <p>Note: {customerNote || "-"}</p>
+              <p>Status: pending</p>
             </div>
           </div>
         ) : (
@@ -228,7 +344,7 @@ function JobReadyPageContent() {
                 />
                 <Info label="Customer Name" value={job.customer_name || "-"} />
                 <Info label="Phone" value={job.phone_number || "-"} />
-                <Info label="Service" value={job.service_type || "-"} />
+                <Info label="Service" value={getServiceTypeLabel(job)} />
                 <Info label="Last Date" value={job.scheduled_date || "-"} />
                 <Info label="Pick Up" value={job.pickup_address || "-"} />
                 <Info label="Drop Off" value={job.dropoff_address || "-"} />
@@ -238,7 +354,7 @@ function JobReadyPageContent() {
                 />
                 <Info
                   label="Previous Incomplete Note"
-                  value={job.incomplete_note || "-"}
+                  value={job.incomplete_notes || job.incomplete_note || "-"}
                 />
               </div>
             </div>

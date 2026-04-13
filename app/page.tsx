@@ -2,12 +2,16 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import SupportChatWidget from "@/components/support/SupportChatWidget";
 
 const INSTAGRAM_URL =
   "https://www.instagram.com/ultrapro_contracting_inc?igsh=MWY5cjFnajV4ZTVlZg==";
 
+const TIKTOK_URL =
+  "https://www.tiktok.com/@ultraprocontracting?_r=1&_t=ZS-95W2GFP9xyv";
+
 const trustStats = [
-  { value: "30+", label: "Installers Across Ontario" },
+  { value: "30+", label: "Installers Across Canada" },
   { value: "24 Hours", label: "Guaranteed Install Target" },
   { value: "Live", label: "Job Tracking" },
 ];
@@ -127,6 +131,19 @@ function InstagramIcon() {
   );
 }
 
+function TikTokIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M16.8 3c.3 2.1 1.6 3.8 3.7 4v3a7.3 7.3 0 0 1-3.6-1v6.2a6.2 6.2 0 1 1-6.2-6.2c.3 0 .6 0 .9.1v3.1a3.2 3.2 0 1 0 2.3 3.1V3h2.9Z" />
+    </svg>
+  );
+}
+
 function InstantQuote() {
   const baseRates: Record<string, number> = {
     installation_3cm: 10,
@@ -140,28 +157,33 @@ function InstantQuote() {
     sink: 180,
   };
 
-  const [service, setService] = useState("installation_3cm");
-  const [sqft, setSqft] = useState<number>(50);
-  const [distance, setDistance] = useState<number>(10);
-  const [waterfalls, setWaterfalls] = useState<number>(0);
-  const [outlets, setOutlets] = useState<number>(0);
-  const [sinkCutout, setSinkCutout] = useState<boolean>(false);
+  const [service, setService] = useState("");
+  const [sqft, setSqft] = useState("");
+  const [distance, setDistance] = useState("");
+  const [waterfalls, setWaterfalls] = useState("");
+  const [outlets, setOutlets] = useState("");
+  const [sinkCutout, setSinkCutout] = useState(false);
+
+  const sqftNum = Number(sqft) || 0;
+  const distanceNum = Number(distance) || 0;
+  const waterfallsNum = Number(waterfalls) || 0;
+  const outletsNum = Number(outlets) || 0;
 
   const serviceTotal = useMemo(() => {
-    return (baseRates[service] || 0) * sqft;
-  }, [service, sqft]);
+    return (baseRates[service] || 0) * sqftNum;
+  }, [service, sqftNum]);
 
   const addonTotal = useMemo(() => {
     return (
-      waterfalls * addonRates.waterfall +
-      outlets * addonRates.outlet +
+      waterfallsNum * addonRates.waterfall +
+      outletsNum * addonRates.outlet +
       (sinkCutout ? addonRates.sink : 0)
     );
-  }, [waterfalls, outlets, sinkCutout]);
+  }, [waterfallsNum, outletsNum, sinkCutout]);
 
   const mileageTotal = useMemo(() => {
-    return distance * 1.5;
-  }, [distance]);
+    return distanceNum * 1.5;
+  }, [distanceNum]);
 
   const total = useMemo(() => {
     return serviceTotal + addonTotal + mileageTotal;
@@ -184,6 +206,7 @@ function InstantQuote() {
             onChange={(e) => setService(e.target.value)}
             className="w-full rounded-2xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
           >
+            <option value="">Select service type</option>
             <option value="installation_3cm">3cm Installation</option>
             <option value="installation_2cm">2cm Installation</option>
             <option value="backsplash">Backsplash</option>
@@ -196,7 +219,8 @@ function InstantQuote() {
             type="number"
             min={0}
             value={sqft}
-            onChange={(e) => setSqft(Number(e.target.value) || 0)}
+            onChange={(e) => setSqft(e.target.value)}
+            placeholder=""
             className="w-full rounded-2xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
           />
         </div>
@@ -207,7 +231,8 @@ function InstantQuote() {
             type="number"
             min={0}
             value={distance}
-            onChange={(e) => setDistance(Number(e.target.value) || 0)}
+            onChange={(e) => setDistance(e.target.value)}
+            placeholder=""
             className="w-full rounded-2xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
           />
         </div>
@@ -218,7 +243,8 @@ function InstantQuote() {
             type="number"
             min={0}
             value={waterfalls}
-            onChange={(e) => setWaterfalls(Number(e.target.value) || 0)}
+            onChange={(e) => setWaterfalls(e.target.value)}
+            placeholder=""
             className="w-full rounded-2xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
           />
         </div>
@@ -229,7 +255,8 @@ function InstantQuote() {
             type="number"
             min={0}
             value={outlets}
-            onChange={(e) => setOutlets(Number(e.target.value) || 0)}
+            onChange={(e) => setOutlets(e.target.value)}
+            placeholder=""
             className="w-full rounded-2xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
           />
         </div>
@@ -321,6 +348,23 @@ export default function HomePage() {
               <InstagramIcon />
             </a>
 
+            <a
+              href={TIKTOK_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="TikTok"
+              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-zinc-700 text-zinc-300 transition hover:border-yellow-500 hover:text-yellow-400"
+            >
+              <TikTokIcon />
+            </a>
+
+            <a
+              href="#ai-assistant"
+              className="rounded-full border border-zinc-700 px-4 py-2 text-sm font-medium transition hover:border-yellow-500 hover:text-yellow-400"
+            >
+              AI
+            </a>
+
             <Link
               href="/login"
               className="rounded-full border border-zinc-700 px-4 py-2 text-sm font-medium transition hover:border-yellow-500 hover:text-yellow-400"
@@ -388,7 +432,7 @@ export default function HomePage() {
               </div>
 
               <div className="mt-8 flex flex-wrap gap-3 text-sm text-zinc-400">
-                <span>30+ Installers Across Ontario</span>
+                <span>30+ Installers Across Canada</span>
                 <span>•</span>
                 <span>Fully Insured & Vetted Crews</span>
                 <span>•</span>
@@ -479,6 +523,52 @@ export default function HomePage() {
 
             <div className="rounded-[1.5rem] border border-zinc-800 bg-black p-6">
               <InstantQuote />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="ai-assistant"
+        className="border-t border-zinc-800 bg-black px-6 py-20"
+      >
+        <div className="mx-auto max-w-7xl rounded-[2rem] border border-yellow-500/20 bg-zinc-950 p-8 md:p-10">
+          <div className="grid gap-8 lg:grid-cols-2 lg:items-center">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.25em] text-yellow-500">
+                AI Assistant
+              </p>
+              <h3 className="mt-4 text-3xl font-bold text-white md:text-4xl">
+                Let AI help collect the job details faster
+              </h3>
+              <p className="mt-4 max-w-2xl text-zinc-300">
+                Customers can message the 1800TOPS AI assistant to describe the
+                job, answer follow-up questions, and move toward quote and booking
+                faster.
+              </p>
+
+              <div className="mt-6 space-y-3 text-sm text-zinc-400">
+                <p>• Ask for missing job details automatically</p>
+                <p>• Help collect sqft, distance, and add-ons</p>
+                <p>• Guide customers toward quote and booking</p>
+                <p>• Built to expand into full AI quoting later</p>
+              </div>
+            </div>
+
+            <div className="rounded-[1.5rem] border border-zinc-800 bg-black p-6">
+              <div className="space-y-4 rounded-2xl border border-zinc-800 bg-zinc-950 p-6">
+                <div className="rounded-2xl bg-white/10 p-4 text-sm text-white">
+                  Hi 👋 I’m the 1800TOPS AI assistant. Tell me your job details and
+                  I’ll help you get a quote.
+                </div>
+                <div className="ml-auto max-w-[80%] rounded-2xl bg-yellow-400 p-4 text-sm text-black">
+                  I need a 3cm install, about 50 sqft, one waterfall, in Toronto.
+                </div>
+                <div className="rounded-2xl bg-white/10 p-4 text-sm text-white">
+                  Got it. I can help with that. Do you also need outlet cutouts,
+                  sink cutout, and what is the approximate distance in km?
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -632,7 +722,7 @@ export default function HomePage() {
 
       <footer className="border-t border-zinc-800 bg-black px-6 py-8">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 text-sm text-zinc-500 md:flex-row md:items-center md:justify-between">
-          <p>© 1-800TOPS. All rights reserved.</p>
+          <p>©️ 1-800TOPS. All rights reserved.</p>
 
           <div className="flex flex-wrap items-center gap-4">
             <Link href="/book" className="transition hover:text-yellow-400">
@@ -654,17 +744,19 @@ export default function HomePage() {
             >
               <InstagramIcon />
             </a>
+
+            <a
+              href={TIKTOK_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="TikTok"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-700 text-zinc-300 transition hover:border-yellow-500 hover:text-yellow-400"
+            >
+              <TikTokIcon />
+            </a>
           </div>
         </div>
       </footer>
-
-      <button
-        type="button"
-        onClick={() => setOpenMessage(true)}
-        className="fixed bottom-6 right-6 rounded-full bg-yellow-500 px-5 py-3 font-bold text-black shadow-lg shadow-black/40 transition hover:bg-yellow-400"
-      >
-        Message
-      </button>
 
       {openMessage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6">
@@ -726,6 +818,8 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
+      <SupportChatWidget />
     </main>
   );
 }
