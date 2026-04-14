@@ -1,25 +1,34 @@
 import { NextResponse } from "next/server";
-import { supportReply } from "@/lib/ai/support";
+import { supportReply, ChatMessage } from "@/lib/ai/support";
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    const messages = Array.isArray(body?.messages) ? body.messages : [];
-    const lastMessage = messages[messages.length - 1]?.content?.trim() || "";
+    const rawMessages = Array.isArray(body?.messages) ? body.messages : [];
 
-    if (!lastMessage) {
-      return NextResponse.json({ reply: "No message sent." }, { status: 400 });
-    }
+    const messages: ChatMessage[] = rawMessages
+      .filter(
+        (msg: unknown) =>
+          typeof msg === "object" &&
+          msg !== null &&
+          "role" in msg &&
+          "content" in msg
+      )
+      .map((msg: any) => ({
+        role: msg.role === "assistant" ? "assistant" : "user",
+        content: typeof msg.content === "string" ? msg.content : "",
+      }))
+      .filter((msg) => msg.content.trim().length > 0);
 
-    const reply = await supportReply(lastMessage);
+    const reply = await supportReply(messages);
 
     return NextResponse.json({ reply });
-  } catch (err) {
-    console.error("AI Support Error:", err);
+  } catch (error) {
+    console.error("AI support route error:", error);
 
     return NextResponse.json(
-      { reply: "Error connecting to AI." },
+      { reply: "Something went wrong. Please try again." },
       { status: 500 }
     );
   }

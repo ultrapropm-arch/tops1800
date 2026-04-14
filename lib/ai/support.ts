@@ -31,8 +31,19 @@ type QuoteInput = {
 
 const BOOKING_URL = "https://1800tops.com/book";
 
-function normalizeText(message: string) {
-  return message.toLowerCase().trim();
+function normalizeText(value: string) {
+  return value.toLowerCase().trim();
+}
+
+function formatCurrency(value: number) {
+  return `$${value.toFixed(2)}`;
+}
+
+function titleCase(value: string) {
+  return value
+    .split(" ")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function isGreeting(text: string) {
@@ -42,25 +53,34 @@ function isGreeting(text: string) {
 }
 
 function isBookingIntent(text: string) {
-  return /\b(book|booking|go ahead|move forward|yes book|want to book|proceed|continue|yes)\b/i.test(
+  return /\b(book|booking|go ahead|move forward|yes book|want to book|proceed|continue)\b/i.test(
     text
   );
 }
 
-function isNegative(text: string) {
-  return /\b(no|none|nope|nah)\b/i.test(text);
-}
+function detectServiceType(text: string): ServiceType | undefined {
+  const normalized = normalizeText(text);
 
-function parseBooleanIntent(
-  text: string,
-  keywords: string[],
-  negativeKeywords: string[] = []
-): boolean | undefined {
-  const hasKeyword = keywords.some((k) => text.includes(k));
-  const hasNegative = negativeKeywords.some((k) => text.includes(k));
+  if (
+    /\b2\s*cm\b/.test(normalized) ||
+    normalized.includes("2cm") ||
+    normalized.includes("2 cm")
+  ) {
+    return "installation_2cm";
+  }
 
-  if (hasKeyword && hasNegative) return false;
-  if (hasKeyword) return true;
+  if (
+    /\b3\s*cm\b/.test(normalized) ||
+    normalized.includes("3cm") ||
+    normalized.includes("3 cm")
+  ) {
+    return "installation_3cm";
+  }
+
+  if (normalized.includes("backsplash")) {
+    return "backsplash";
+  }
+
   return undefined;
 }
 
@@ -78,11 +98,6 @@ function detectQuoteInput(message: string): QuoteInput {
   const helperMatch = text.match(
     /(\d+)\s*(extra helper|extra helpers|helper|helpers)\b/i
   );
-
-  let serviceType: QuoteInput["serviceType"];
-  if (text.includes("3cm")) serviceType = "installation_3cm";
-  else if (text.includes("2cm")) serviceType = "installation_2cm";
-  else if (text.includes("backsplash")) serviceType = "backsplash";
 
   let timeline: QuoteInput["timeline"];
   if (text.includes("same day") || text.includes("same-day")) timeline = "same-day";
@@ -108,51 +123,70 @@ function detectQuoteInput(message: string): QuoteInput {
   const city = cityList.find((c) => text.includes(c));
 
   const sinkCutout =
-    parseBooleanIntent(text, ["sink cutout", "sink"], ["no sink", "no sink cutout"]) ??
-    undefined;
+    /\bno sink\b|\bno sink cutout\b/.test(text)
+      ? false
+      : /\bsink cutout\b|\bsink\b/.test(text)
+      ? true
+      : undefined;
 
   const cooktopCutout =
-    parseBooleanIntent(text, ["cooktop cutout", "cooktop"], ["no cooktop", "no cooktop cutout"]) ??
-    undefined;
+    /\bno cooktop\b|\bno cooktop cutout\b/.test(text)
+      ? false
+      : /\bcooktop cutout\b|\bcooktop\b/.test(text)
+      ? true
+      : undefined;
 
   const condoHighRise =
-    parseBooleanIntent(text, ["condo", "high-rise", "high rise"], ["not condo", "not high-rise"]) ??
-    undefined;
+    /\bnot condo\b|\bno condo\b|\bhouse\b/.test(text)
+      ? false
+      : /\bcondo\b|\bhigh-rise\b|\bhigh rise\b/.test(text)
+      ? true
+      : undefined;
 
   const difficultAccess =
-    parseBooleanIntent(
-      text,
-      ["stairs", "basement", "difficult access"],
-      ["no stairs", "no basement", "easy access"]
-    ) ?? undefined;
+    /\bno stairs\b|\bno basement\b|\beasy access\b/.test(text)
+      ? false
+      : /\bstairs\b|\bbasement\b|\bdifficult access\b/.test(text)
+      ? true
+      : undefined;
 
   const onsiteCutting =
-    parseBooleanIntent(text, ["onsite cutting", "on-site cutting"], ["no onsite cutting"]) ??
-    undefined;
+    /\bno onsite cutting\b/.test(text)
+      ? false
+      : /\bonsite cutting\b|\bon-site cutting\b/.test(text)
+      ? true
+      : undefined;
 
   const onsitePolishing =
-    parseBooleanIntent(text, ["onsite polishing", "on-site polishing"], ["no onsite polishing"]) ??
-    undefined;
+    /\bno onsite polishing\b/.test(text)
+      ? false
+      : /\bonsite polishing\b|\bon-site polishing\b/.test(text)
+      ? true
+      : undefined;
 
   const plumbingRemoval =
-    parseBooleanIntent(text, ["plumbing removal"], ["no plumbing removal"]) ?? undefined;
+    /\bno plumbing removal\b/.test(text)
+      ? false
+      : /\bplumbing removal\b/.test(text)
+      ? true
+      : undefined;
 
   const sealing =
-    parseBooleanIntent(
-      text,
-      ["sealing", "marble sealing", "granite sealing"],
-      ["no sealing"]
-    ) ?? undefined;
+    /\bno sealing\b/.test(text)
+      ? false
+      : /\bsealing\b|\bmarble sealing\b|\bgranite sealing\b/.test(text)
+      ? true
+      : undefined;
 
   const removal =
-    parseBooleanIntent(
-      text,
-      ["removal", "remove", "disposal", "haul away", "tear out"],
-      ["no removal", "no disposal"]
-    ) ?? undefined;
+    /\bno removal\b|\bno disposal\b/.test(text)
+      ? false
+      : /\bremoval\b|\bremove\b|\bdisposal\b|\bhaul away\b|\btear out\b/.test(text)
+      ? true
+      : undefined;
 
   return {
-    serviceType,
+    serviceType: detectServiceType(text),
     sqft: sqftMatch ? Number(sqftMatch[1]) : undefined,
     distanceKm: kmMatch ? Number(kmMatch[1]) : undefined,
     waterfalls: waterfallMatch ? Number(waterfallMatch[1]) : undefined,
@@ -198,6 +232,16 @@ function mergeQuoteInputs(base: QuoteInput, next: QuoteInput): QuoteInput {
   };
 }
 
+function getMissingFieldKeys(input: QuoteInput) {
+  const missing: string[] = [];
+
+  if (!input.serviceType) missing.push("serviceType");
+  if (!input.sqft) missing.push("sqft");
+  if (input.distanceKm === undefined) missing.push("distanceKm");
+
+  return missing;
+}
+
 function applySmartSingleNumber(
   message: string,
   current: QuoteInput,
@@ -209,44 +253,36 @@ function applySmartSingleNumber(
   if (!plainNumber) return current;
 
   const value = Number(plainNumber[1]);
-  const next = { ...current };
 
-  if (!next.sqft && previousMissingFields.includes("sqft")) {
-    next.sqft = value;
-    return next;
+  if (!current.sqft && previousMissingFields.includes("sqft")) {
+    return { ...current, sqft: value };
   }
 
-  if (next.distanceKm === undefined && previousMissingFields.includes("distanceKm")) {
-    next.distanceKm = value;
-    return next;
+  if (current.distanceKm === undefined && previousMissingFields.includes("distanceKm")) {
+    return { ...current, distanceKm: value };
   }
 
-  if (next.waterfalls === undefined && previousMissingFields.includes("waterfalls")) {
-    next.waterfalls = value;
-    return next;
+  if (current.waterfalls === undefined && previousMissingFields.includes("waterfalls")) {
+    return { ...current, waterfalls: value };
   }
 
-  if (next.outletCutouts === undefined && previousMissingFields.includes("outletCutouts")) {
-    next.outletCutouts = value;
-    return next;
+  if (current.outletCutouts === undefined && previousMissingFields.includes("outletCutouts")) {
+    return { ...current, outletCutouts: value };
   }
 
-  if (next.extraHelpers === undefined && previousMissingFields.includes("extraHelpers")) {
-    next.extraHelpers = value;
-    return next;
+  if (current.extraHelpers === undefined && previousMissingFields.includes("extraHelpers")) {
+    return { ...current, extraHelpers: value };
   }
 
-  if (!next.sqft) {
-    next.sqft = value;
-    return next;
+  if (!current.sqft && current.serviceType) {
+    return { ...current, sqft: value };
   }
 
-  if (next.distanceKm === undefined) {
-    next.distanceKm = value;
-    return next;
+  if (current.distanceKm === undefined && current.sqft) {
+    return { ...current, distanceKm: value };
   }
 
-  return next;
+  return current;
 }
 
 function buildQuoteInputFromMessages(messages: ChatMessage[]) {
@@ -312,21 +348,48 @@ function calculateQuote(input: QuoteInput) {
     });
   }
 
-  if (input.sinkCutout) lineItems.push({ label: "Sink Cutout Onsite", amount: 180 });
-  if (input.cooktopCutout) lineItems.push({ label: "Cooktop Cutout", amount: 180 });
-  if (input.condoHighRise) lineItems.push({ label: "Condo / High-Rise", amount: 80 });
+  if (input.sinkCutout) {
+    lineItems.push({ label: "Sink Cutout Onsite", amount: 180 });
+  }
+
+  if (input.cooktopCutout) {
+    lineItems.push({ label: "Cooktop Cutout", amount: 180 });
+  }
+
+  if (input.condoHighRise) {
+    lineItems.push({ label: "Condo / High-Rise", amount: 80 });
+  }
+
   if (input.difficultAccess) {
     lineItems.push({
       label: "Difficult Access / Stairs 7+ / Basement",
       amount: 180,
     });
   }
-  if (input.onsiteCutting) lineItems.push({ label: "Onsite Cutting", amount: 175 });
-  if (input.onsitePolishing) lineItems.push({ label: "Onsite Polishing", amount: 175 });
-  if (input.plumbingRemoval) lineItems.push({ label: "Plumbing Removal", amount: 50 });
-  if (input.sealing) lineItems.push({ label: "Marble / Granite Sealing", amount: 50 });
-  if (input.remeasureFH) lineItems.push({ label: "Remeasure Backsplash FH", amount: 180 });
-  if (input.remeasureLH) lineItems.push({ label: "Remeasure Backsplash LH", amount: 80 });
+
+  if (input.onsiteCutting) {
+    lineItems.push({ label: "Onsite Cutting", amount: 175 });
+  }
+
+  if (input.onsitePolishing) {
+    lineItems.push({ label: "Onsite Polishing", amount: 175 });
+  }
+
+  if (input.plumbingRemoval) {
+    lineItems.push({ label: "Plumbing Removal", amount: 50 });
+  }
+
+  if (input.sealing) {
+    lineItems.push({ label: "Marble / Granite Sealing", amount: 50 });
+  }
+
+  if (input.remeasureFH) {
+    lineItems.push({ label: "Remeasure Backsplash FH", amount: 180 });
+  }
+
+  if (input.remeasureLH) {
+    lineItems.push({ label: "Remeasure Backsplash LH", amount: 80 });
+  }
 
   if (typeof input.extraHelpers === "number" && input.extraHelpers > 0) {
     lineItems.push({
@@ -337,20 +400,6 @@ function calculateQuote(input: QuoteInput) {
 
   const total = lineItems.reduce((sum, item) => sum + item.amount, 0);
   return { lineItems, total };
-}
-
-function formatCurrency(value: number) {
-  return `$${value.toFixed(2)}`;
-}
-
-function getMissingFieldKeys(input: QuoteInput) {
-  const missing: string[] = [];
-
-  if (!input.serviceType) missing.push("serviceType");
-  if (!input.sqft) missing.push("sqft");
-  if (input.distanceKm === undefined) missing.push("distanceKm");
-
-  return missing;
 }
 
 function getStraightQuestions(input: QuoteInput) {
@@ -398,7 +447,7 @@ function buildIntro(input: QuoteInput) {
   if (input.serviceType === "installation_2cm") parts.push("2cm installation");
   if (input.serviceType === "backsplash") parts.push("full height backsplash");
   if (input.sqft) parts.push(`${input.sqft} sqft`);
-  if (input.city) parts.push(input.city.charAt(0).toUpperCase() + input.city.slice(1));
+  if (input.city) parts.push(`in ${titleCase(input.city)}`);
 
   return parts.length ? `Got it — ${parts.join(", ")}.` : "Got it.";
 }
@@ -414,18 +463,17 @@ function buildDeterministicQuoteReply(messages: ChatMessage[]) {
   }
 
   if (isBookingIntent(lastText)) {
-    return `Perfect — book here:\n👉 ${BOOKING_URL}`;
+    return `Perfect — you can book here:\n👉 ${BOOKING_URL}`;
   }
 
   const parsed = buildQuoteInputFromMessages(messages);
   const { lineItems, total } = calculateQuote(parsed);
   const followUps = getStraightQuestions(parsed);
+  const intro = buildIntro(parsed);
 
   if (!parsed.serviceType && !parsed.sqft && !parsed.distanceKm) {
     return "What are you looking for today — 2cm installation, 3cm installation, or full height backsplash?";
   }
-
-  const intro = buildIntro(parsed);
 
   if (lineItems.length > 0) {
     const breakdown = lineItems
@@ -457,9 +505,15 @@ Do you want to book?
 👉 ${BOOKING_URL}`;
   }
 
-  return `${intro}
+  if (followUps.length > 0) {
+    return `${intro}
 
 ${followUps.join("\n")}`;
+  }
+
+  return `Do you want to book?
+
+👉 ${BOOKING_URL}`;
 }
 
 export async function supportReply(messages: ChatMessage[]) {
