@@ -5,17 +5,16 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    // ✅ Get last user message from chat
-    const lastMessage =
-      body?.messages?.[body.messages.length - 1]?.content || "";
+    const messages = Array.isArray(body?.messages) ? body.messages : [];
+    const lastMessage = messages[messages.length - 1]?.content?.trim() || "";
 
-    // ✅ Call your AI logic
+    if (!lastMessage) {
+      return NextResponse.json({ reply: "No message sent." }, { status: 400 });
+    }
+
     const reply = await supportReply(lastMessage);
 
-    return NextResponse.json({
-      success: true,
-      reply,
-    });
+    return NextResponse.json({ reply });
   } catch (err) {
     console.error("AI Support Error:", err);
 

@@ -17,6 +17,7 @@ export default function SupportChatWidget({
   senderType = "customer",
 }: SupportChatWidgetProps) {
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
@@ -60,11 +61,10 @@ export default function SupportChatWidget({
         ...newMessages,
         {
           role: "assistant",
-          content:
-            data?.reply || "I couldn’t generate a response right now.",
+          content: data?.reply || "I couldn’t generate a response right now.",
         },
       ]);
-    } catch (error) {
+    } catch {
       setMessages([
         ...newMessages,
         {
@@ -88,14 +88,40 @@ export default function SupportChatWidget({
       </button>
 
       {open && (
-        <div className="fixed bottom-20 right-6 z-50 flex h-[500px] w-[360px] max-w-[calc(100vw-2rem)] flex-col rounded-xl bg-[#111] text-white shadow-xl">
-          <div className="border-b border-white/10 p-4">
-            <h3 className="font-bold">1800TOPS AI</h3>
-            <p className="text-sm text-gray-400">
-              {bookingId
-                ? `Booking support for ${bookingId}`
-                : "Describe your job to get a quote"}
-            </p>
+        <div
+          className={`fixed z-50 flex flex-col rounded-xl bg-[#111] text-white shadow-xl transition-all duration-200 ${
+            expanded
+              ? "bottom-4 right-4 h-[85vh] w-[min(900px,calc(100vw-2rem))]"
+              : "bottom-20 right-6 h-[500px] w-[360px] max-w-[calc(100vw-2rem)]"
+          }`}
+        >
+          <div className="flex items-center justify-between border-b border-white/10 p-4">
+            <div>
+              <h3 className="font-bold">1800TOPS AI</h3>
+              <p className="text-sm text-gray-400">
+                {bookingId
+                  ? `Booking support for ${bookingId}`
+                  : "Describe your job to get a quote"}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setExpanded((prev) => !prev)}
+                className="rounded border border-white/10 px-3 py-1 text-xs text-white hover:bg-white/10"
+              >
+                {expanded ? "Shrink" : "Expand"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="rounded border border-white/10 px-3 py-1 text-xs text-white hover:bg-white/10"
+              >
+                Close
+              </button>
+            </div>
           </div>
 
           <div className="flex-1 space-y-3 overflow-y-auto p-4">
@@ -104,8 +130,8 @@ export default function SupportChatWidget({
                 key={index}
                 className={
                   message.role === "user"
-                    ? "ml-auto max-w-[80%] rounded bg-yellow-400 p-2 text-black"
-                    : "max-w-[80%] rounded bg-white/10 p-2"
+                    ? "ml-auto max-w-[80%] rounded bg-yellow-400 p-3 text-black"
+                    : "max-w-[80%] rounded bg-white/10 p-3"
                 }
               >
                 {message.content}
@@ -113,7 +139,7 @@ export default function SupportChatWidget({
             ))}
 
             {loading && (
-              <div className="max-w-[80%] rounded bg-white/10 p-2">
+              <div className="max-w-[80%] rounded bg-white/10 p-3">
                 Typing...
               </div>
             )}
@@ -130,13 +156,13 @@ export default function SupportChatWidget({
                 }
               }}
               placeholder="Type your message..."
-              className="flex-1 rounded p-2 text-black"
+              className="flex-1 rounded p-3 text-black"
             />
             <button
               type="button"
               onClick={() => void sendMessage()}
               disabled={loading}
-              className="rounded bg-yellow-400 px-3 text-black disabled:opacity-60"
+              className="rounded bg-yellow-400 px-4 text-black disabled:opacity-60"
             >
               Send
             </button>
