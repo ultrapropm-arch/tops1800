@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 type Message = {
   role: "user" | "assistant";
@@ -11,6 +12,8 @@ type SupportChatWidgetProps = {
   bookingId?: string;
   senderType?: "customer" | "admin" | "installer";
 };
+
+const BOOKING_URL = "https://1800tops.com/book";
 
 export default function SupportChatWidget({
   bookingId,
@@ -61,7 +64,8 @@ export default function SupportChatWidget({
         ...newMessages,
         {
           role: "assistant",
-          content: data?.reply || "I couldn’t generate a response right now.",
+          content:
+            data?.reply || "I couldn’t generate a response right now.",
         },
       ]);
     } catch {
@@ -77,6 +81,10 @@ export default function SupportChatWidget({
     }
   }
 
+  function messageHasBookingLink(content: string) {
+    return content.includes(BOOKING_URL);
+  }
+
   return (
     <>
       <button
@@ -89,10 +97,10 @@ export default function SupportChatWidget({
 
       {open && (
         <div
-          className={`fixed z-50 flex flex-col rounded-xl bg-[#111] text-white shadow-xl transition-all duration-200 ${
+          className={`fixed z-50 flex flex-col rounded-2xl bg-[#111] text-white shadow-2xl transition-all duration-200 ${
             expanded
-              ? "bottom-4 right-4 h-[85vh] w-[min(900px,calc(100vw-2rem))]"
-              : "bottom-20 right-6 h-[500px] w-[360px] max-w-[calc(100vw-2rem)]"
+              ? "inset-2"
+              : "bottom-20 left-3 right-3 h-[72vh] md:bottom-20 md:left-auto md:right-6 md:h-[560px] md:w-[390px]"
           }`}
         >
           <div className="flex items-center justify-between border-b border-white/10 p-4">
@@ -109,7 +117,7 @@ export default function SupportChatWidget({
               <button
                 type="button"
                 onClick={() => setExpanded((prev) => !prev)}
-                className="rounded border border-white/10 px-3 py-1 text-xs text-white hover:bg-white/10"
+                className="rounded-lg border border-white/10 px-3 py-1 text-xs text-white hover:bg-white/10"
               >
                 {expanded ? "Shrink" : "Expand"}
               </button>
@@ -117,7 +125,7 @@ export default function SupportChatWidget({
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="rounded border border-white/10 px-3 py-1 text-xs text-white hover:bg-white/10"
+                className="rounded-lg border border-white/10 px-3 py-1 text-xs text-white hover:bg-white/10"
               >
                 Close
               </button>
@@ -125,47 +133,72 @@ export default function SupportChatWidget({
           </div>
 
           <div className="flex-1 space-y-3 overflow-y-auto p-4">
-            {messages.map((message, index) => (
-              <div
-                key={index}
-                className={
-                  message.role === "user"
-                    ? "ml-auto max-w-[80%] rounded bg-yellow-400 p-3 text-black"
-                    : "max-w-[80%] rounded bg-white/10 p-3"
-                }
-              >
-                {message.content}
-              </div>
-            ))}
+            {messages.map((message, index) => {
+              const isUser = message.role === "user";
+              const showBookingButton =
+                !isUser && messageHasBookingLink(message.content);
+
+              return (
+                <div
+                  key={index}
+                  className={isUser ? "ml-auto max-w-[85%]" : "max-w-[85%]"}
+                >
+                  <div
+                    className={
+                      isUser
+                        ? "rounded-2xl bg-yellow-400 p-3 text-black"
+                        : "rounded-2xl bg-white/10 p-3 text-white"
+                    }
+                  >
+                    <p className="whitespace-pre-line text-sm leading-6">
+                      {message.content.replace(BOOKING_URL, "").trim() || message.content}
+                    </p>
+                  </div>
+
+                  {showBookingButton && (
+                    <div className="mt-2">
+                      <Link
+                        href="/book"
+                        className="inline-flex rounded-xl bg-yellow-400 px-4 py-2 text-sm font-bold text-black transition hover:bg-yellow-300"
+                      >
+                        Book Now
+                      </Link>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
 
             {loading && (
-              <div className="max-w-[80%] rounded bg-white/10 p-3">
+              <div className="max-w-[85%] rounded-2xl bg-white/10 p-3 text-sm text-white">
                 Typing...
               </div>
             )}
           </div>
 
-          <div className="flex gap-2 border-t border-white/10 p-3">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  void sendMessage();
-                }
-              }}
-              placeholder="Type your message..."
-              className="flex-1 rounded p-3 text-black"
-            />
-            <button
-              type="button"
-              onClick={() => void sendMessage()}
-              disabled={loading}
-              className="rounded bg-yellow-400 px-4 text-black disabled:opacity-60"
-            >
-              Send
-            </button>
+          <div className="border-t border-white/10 p-3">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    void sendMessage();
+                  }
+                }}
+                placeholder="Type your job details..."
+                className="flex-1 rounded-xl p-3 text-black outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => void sendMessage()}
+                disabled={loading}
+                className="rounded-xl bg-yellow-400 px-4 font-semibold text-black disabled:opacity-60"
+              >
+                Send
+              </button>
+            </div>
           </div>
         </div>
       )}
