@@ -11,6 +11,30 @@ const RETURN_FEE_CUSTOMER = 200;
 const RETURN_FEE_INSTALLER_PAY = 180;
 const BASE_MILEAGE_RATE = 1.5;
 const REBOOK_CUSTOMER_MILEAGE_PERCENT = 0.6;
+const INSTALLER_HST_RATE = 0.13;
+
+const INSTALLER_RATES = {
+  installation_3cm: 7,
+  installation_2cm_standard: 6.5,
+  installation_2cm: 6.5,
+  full_height_backsplash: 7,
+
+  mileage_per_km: 1,
+
+  waterfall: 60,
+  outlet_plug_cutout: 25,
+  difficult: 100,
+  remeasure_backsplash_fh: 100,
+  remeasure_backsplash_lh: 50,
+  extra_helper: 110,
+  condo_highrise: 50,
+  sink_cutout_onsite: 100,
+  cooktop_cutout: 100,
+  sealing: 25,
+  plumbing_removal: 25,
+  onsite_cutting: 100,
+  onsite_polishing: 90,
+} as const;
 
 type Booking = {
   id: string;
@@ -95,6 +119,22 @@ type Booking = {
     | null;
 };
 
+type InstallerPricing = {
+  basePay: number;
+  mileagePay: number;
+  addonPay: number;
+  cutPolishPay: number;
+  sinkPay: number;
+  otherPay: number;
+  subtotalPay: number;
+  hstPay: number;
+  returnPay: number;
+  totalPay: number;
+  payoutLines: { label: string; amount: number }[];
+  parsedAddons: { label: string; amount: number }[];
+  parsedJustServices: { label: string; amount: number }[];
+};
+
 function money(value?: number | null) {
   const n = Number(value || 0);
   return "$" + n.toFixed(2);
@@ -106,6 +146,11 @@ function safeText(value?: string | null) {
 
 function normalizeText(value?: string | null) {
   return safeText(value).toLowerCase();
+}
+
+function num(value?: number | string | null) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function getPickupWindow(job: Booking) {
@@ -165,85 +210,6 @@ function joinPipe(values: string[]) {
   return values.filter(Boolean).join(" | ");
 }
 
-function splitPipe(value?: string | null) {
-  if (!value) return [];
-  return value
-    .split(" | ")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function getPayoutLines(job: Booking) {
-  const lines: { label: string; amount: number }[] = [];
-
-  if (Array.isArray(job.installer_payout_lines) && job.installer_payout_lines.length > 0) {
-    return job.installer_payout_lines.map((line) => ({
-      label: line.label || "Payout Line",
-      amount: Number(line.amount || 0),
-    }));
-  }
-
-  if (Number(job.installer_base_pay || 0) > 0) {
-    lines.push({
-      label: "Base Install Pay",
-      amount: Number(job.installer_base_pay || 0),
-    });
-  }
-
-  if (Number(job.installer_mileage_pay || 0) > 0) {
-    lines.push({
-      label: "Mileage Pay",
-      amount: Number(job.installer_mileage_pay || 0),
-    });
-  }
-
-  if (Number(job.installer_addon_pay || 0) > 0) {
-    lines.push({
-      label: "Add-On Pay",
-      amount: Number(job.installer_addon_pay || 0),
-    });
-  }
-
-  if (Number(job.installer_cut_polish_pay || 0) > 0) {
-    lines.push({
-      label: "Cut / Polish Pay",
-      amount: Number(job.installer_cut_polish_pay || 0),
-    });
-  }
-
-  if (Number(job.installer_sink_pay || 0) > 0) {
-    lines.push({
-      label: "Sink / Reattach Pay",
-      amount: Number(job.installer_sink_pay || 0),
-    });
-  }
-
-  if (Number(job.installer_other_pay || 0) > 0) {
-    lines.push({
-      label: "Other Service Pay",
-      amount: Number(job.installer_other_pay || 0),
-    });
-  }
-
-  return lines;
-}
-
-function getDiscountedIncompleteMileage(job: Booking) {
-  const chargeableKm = Number(job.chargeable_km || 0);
-  const discountedMileage =
-    chargeableKm * BASE_MILEAGE_RATE * REBOOK_CUSTOMER_MILEAGE_PERCENT;
-  return Number(discountedMileage.toFixed(2));
-}
-
-function getIncompleteTotalDue(job: Booking, returnFee: number) {
-  const discountedMileage = getDiscountedIncompleteMileage(job);
-  return Number((Number(returnFee || 0) + discountedMileage).toFixed(2));
-}
-
-function getRebookUrl(job: Booking) {
-  return `https://www.1800tops.com/rebook/${job.id}`;
-}
-
 function normalizeStatus(status?: string | null) {
   const value = normalizeText(status);
 
@@ -275,6 +241,321 @@ function isAssignedToInstaller(job: Booking, installerName: string) {
     normalizeText(job.installer_name) === current ||
     normalizeText(job.reassigned_installer_name) === current
   );
+}
+
+function extractVisibleArea(address?: string | null) {
+  const raw = safeText(address);
+  if (!raw) return "-";
+
+  const parts = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length >= 3) {
+    if (/\d/.test(parts[0])) return parts[1] || parts[0];
+    return parts[0];
+  }
+
+  if (parts.length === 2) {
+    if (/\d/.test(parts[0])) return parts[1] || parts[0];
+    return parts[0];
+  }
+
+  return raw;
+}
+
+function getVisibleAddress(address?: string | null, canSeeFull?: boolean) {
+  return canSeeFull ? safeText(address) || "-" : extractVisibleArea(address);
+}
+
+function getDiscountedIncompleteMileage(job: Booking) {
+  const chargeableKm =
+    num(job.chargeable_km) > 0
+      ? num(job.chargeable_km)
+      : num(job.round_trip_km) > 0
+      ? num(job.round_trip_km)
+      : num(job.one_way_km) > 0
+      ? num(job.one_way_km) * 2
+      : 0;
+
+  const discounted = chargeableKm * BASE_MILEAGE_RATE * REBOOK_CUSTOMER_MILEAGE_PERCENT;
+  return Number(discounted.toFixed(2));
+}
+
+function getIncompleteTotalDue(job: Booking, returnFee: number) {
+  return Number((num(returnFee) + getDiscountedIncompleteMileage(job)).toFixed(2));
+}
+
+function getRebookUrl(job: Booking) {
+  const bookingId = safeText(job.id);
+  const publicJobId = safeText(job.job_id) || bookingId;
+
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return `${window.location.origin}/rebook?booking_id=${encodeURIComponent(
+      bookingId
+    )}&job_id=${encodeURIComponent(publicJobId)}`;
+  }
+
+  return `/rebook?booking_id=${encodeURIComponent(
+    bookingId
+  )}&job_id=${encodeURIComponent(publicJobId)}`;
+}
+
+function parseInstallerServiceLine(raw: string, job: Booking) {
+  const value = normalizeText(raw);
+
+  if (value.includes("waterfall")) {
+    const qty = Math.max(1, num(job.waterfall_quantity));
+    return {
+      label: `Waterfall x${qty}`,
+      amount: INSTALLER_RATES.waterfall * qty,
+      bucket: "addon" as const,
+    };
+  }
+
+  if (value.includes("outlet")) {
+    const qty = Math.max(1, num(job.outlet_plug_cutout_quantity));
+    return {
+      label: `Outlet Plug Cutout x${qty}`,
+      amount: INSTALLER_RATES.outlet_plug_cutout * qty,
+      bucket: "addon" as const,
+    };
+  }
+
+  if (value.includes("extra helper")) {
+    return {
+      label: "Extra Helper",
+      amount: INSTALLER_RATES.extra_helper,
+      bucket: "addon" as const,
+    };
+  }
+
+  if (value.includes("difficult") || value.includes("stairs") || value.includes("basement")) {
+    return {
+      label: "Difficult / Stairs / Basement",
+      amount: INSTALLER_RATES.difficult,
+      bucket: "addon" as const,
+    };
+  }
+
+  if (value.includes("condo") || value.includes("high rise") || value.includes("high-rise")) {
+    return {
+      label: "Condo / High-Rise",
+      amount: INSTALLER_RATES.condo_highrise,
+      bucket: "other" as const,
+    };
+  }
+
+  if (value.includes("sink cutout")) {
+    return {
+      label: "Sink Cutout Onsite",
+      amount: INSTALLER_RATES.sink_cutout_onsite,
+      bucket: "sink" as const,
+    };
+  }
+
+  if (value.includes("cooktop")) {
+    return {
+      label: "Cooktop Cutout",
+      amount: INSTALLER_RATES.cooktop_cutout,
+      bucket: "other" as const,
+    };
+  }
+
+  if (value.includes("plumbing")) {
+    return {
+      label: "Plumbing Removal",
+      amount: INSTALLER_RATES.plumbing_removal,
+      bucket: "other" as const,
+    };
+  }
+
+  if (value.includes("sealing")) {
+    return {
+      label: "Marble / Granite Sealing",
+      amount: INSTALLER_RATES.sealing,
+      bucket: "other" as const,
+    };
+  }
+
+  if (value.includes("onsite cutting")) {
+    return {
+      label: "Onsite Cutting",
+      amount: INSTALLER_RATES.onsite_cutting,
+      bucket: "cut_polish" as const,
+    };
+  }
+
+  if (value.includes("onsite polishing")) {
+    return {
+      label: "Onsite Polishing",
+      amount: INSTALLER_RATES.onsite_polishing,
+      bucket: "cut_polish" as const,
+    };
+  }
+
+  if (value.includes("remeasure backsplash fh")) {
+    return {
+      label: "Remeasure Backsplash FH",
+      amount: INSTALLER_RATES.remeasure_backsplash_fh,
+      bucket: "other" as const,
+    };
+  }
+
+  if (value.includes("remeasure backsplash lh")) {
+    return {
+      label: "Remeasure Backsplash LH",
+      amount: INSTALLER_RATES.remeasure_backsplash_lh,
+      bucket: "other" as const,
+    };
+  }
+
+  return {
+    label: raw,
+    amount: 0,
+    bucket: "other" as const,
+  };
+}
+
+function calculateInstallerPricing(job: Booking): InstallerPricing {
+  if (Array.isArray(job.installer_payout_lines) && job.installer_payout_lines.length > 0) {
+    const payoutLines = job.installer_payout_lines.map((line) => ({
+      label: safeText(line.label) || "Payout Line",
+      amount: num(line.amount),
+    }));
+
+    const subtotalPay =
+      num(job.installer_subtotal_pay) > 0
+        ? num(job.installer_subtotal_pay)
+        : payoutLines.reduce((sum, line) => sum + line.amount, 0);
+
+    const hstPay =
+      num(job.installer_hst_pay) > 0
+        ? num(job.installer_hst_pay)
+        : Number((subtotalPay * INSTALLER_HST_RATE).toFixed(2));
+
+    const returnPay =
+      num(job.return_fee_installer_pay) > 0 ? num(job.return_fee_installer_pay) : 0;
+
+    const totalPay =
+      num(job.installer_pay) > 0 ? num(job.installer_pay) : subtotalPay + hstPay + returnPay;
+
+    return {
+      basePay: num(job.installer_base_pay),
+      mileagePay: num(job.installer_mileage_pay),
+      addonPay: num(job.installer_addon_pay),
+      cutPolishPay: num(job.installer_cut_polish_pay),
+      sinkPay: num(job.installer_sink_pay),
+      otherPay: num(job.installer_other_pay),
+      subtotalPay,
+      hstPay,
+      returnPay,
+      totalPay,
+      payoutLines,
+      parsedAddons: [],
+      parsedJustServices: [],
+    };
+  }
+
+  const serviceType = safeText(job.service_type);
+  const sqft = num(job.sqft || job.job_size);
+
+  const derivedBaseRate =
+    serviceType === "installation_3cm"
+      ? INSTALLER_RATES.installation_3cm
+      : serviceType === "installation_2cm_standard" || serviceType === "installation_2cm"
+      ? INSTALLER_RATES.installation_2cm_standard
+      : serviceType === "full_height_backsplash"
+      ? INSTALLER_RATES.full_height_backsplash
+      : 0;
+
+  const basePay =
+    num(job.installer_base_pay) > 0 ? num(job.installer_base_pay) : sqft * derivedBaseRate;
+
+  const parsedAddons = toArray(job.add_on_services).map((item) =>
+    parseInstallerServiceLine(item, job)
+  );
+  const parsedJustServices = toArray(job.just_services).map((item) =>
+    parseInstallerServiceLine(item, job)
+  );
+
+  let derivedAddonPay = 0;
+  let derivedCutPolishPay = 0;
+  let derivedSinkPay = 0;
+  let derivedOtherPay = 0;
+
+  [...parsedAddons, ...parsedJustServices].forEach((line) => {
+    if (line.bucket === "addon") derivedAddonPay += line.amount;
+    else if (line.bucket === "cut_polish") derivedCutPolishPay += line.amount;
+    else if (line.bucket === "sink") derivedSinkPay += line.amount;
+    else derivedOtherPay += line.amount;
+  });
+
+  const addonPay =
+    num(job.installer_addon_pay) > 0 ? num(job.installer_addon_pay) : derivedAddonPay;
+  const cutPolishPay =
+    num(job.installer_cut_polish_pay) > 0
+      ? num(job.installer_cut_polish_pay)
+      : derivedCutPolishPay;
+  const sinkPay = num(job.installer_sink_pay) > 0 ? num(job.installer_sink_pay) : derivedSinkPay;
+  const otherPay =
+    num(job.installer_other_pay) > 0 ? num(job.installer_other_pay) : derivedOtherPay;
+
+  const mileagePay =
+    num(job.installer_mileage_pay) > 0
+      ? num(job.installer_mileage_pay)
+      : num(job.chargeable_km) > 0
+      ? num(job.chargeable_km) * INSTALLER_RATES.mileage_per_km
+      : 0;
+
+  const subtotalPay =
+    num(job.installer_subtotal_pay) > 0
+      ? num(job.installer_subtotal_pay)
+      : basePay + addonPay + cutPolishPay + sinkPay + otherPay + mileagePay;
+
+  const hstPay =
+    num(job.installer_hst_pay) > 0
+      ? num(job.installer_hst_pay)
+      : Number((subtotalPay * INSTALLER_HST_RATE).toFixed(2));
+
+  const returnPay =
+    num(job.return_fee_installer_pay) > 0
+      ? num(job.return_fee_installer_pay)
+      : num(job.return_fee_charged || job.return_fee) > 0
+      ? RETURN_FEE_INSTALLER_PAY
+      : 0;
+
+  const totalPay =
+    num(job.installer_pay) > 0 ? num(job.installer_pay) : subtotalPay + hstPay + returnPay;
+
+  const payoutLines = [
+    { label: "Base Install Pay", amount: basePay },
+    { label: "Add-On Pay", amount: addonPay },
+    { label: "Cut / Polish Pay", amount: cutPolishPay },
+    { label: "Sink / Reattach Pay", amount: sinkPay },
+    { label: "Other Service Pay", amount: otherPay },
+    { label: "Mileage Pay", amount: mileagePay },
+  ].filter((line) => line.amount > 0);
+
+  return {
+    basePay,
+    mileagePay,
+    addonPay,
+    cutPolishPay,
+    sinkPay,
+    otherPay,
+    subtotalPay,
+    hstPay,
+    returnPay,
+    totalPay,
+    payoutLines,
+    parsedAddons: parsedAddons.map((item) => ({ label: item.label, amount: item.amount })),
+    parsedJustServices: parsedJustServices.map((item) => ({
+      label: item.label,
+      amount: item.amount,
+    })),
+  };
 }
 
 async function sendCustomerEmail(params: {
@@ -371,8 +652,7 @@ function buildLinksHtml(title: string, urls: string[]) {
       <ul>
         ${urls
           .map(
-            (url, index) =>
-              `<li><a href="${url}">Open ${title} ${index + 1}</a></li>`
+            (url, index) => `<li><a href="${url}">Open ${title} ${index + 1}</a></li>`
           )
           .join("")}
       </ul>
@@ -446,10 +726,10 @@ function incompleteEmailHtml(
     reason === "customer"
       ? "Customer / Homeowner Issue"
       : reason === "shop"
-        ? "Shop Issue"
-        : reason === "installer"
-          ? "Installer Issue"
-          : reason || "-";
+      ? "Shop Issue"
+      : reason === "installer"
+      ? "Installer Issue"
+      : reason || "-";
 
   const discountedMileageCharge = getDiscountedIncompleteMileage(job);
   const totalDue = getIncompleteTotalDue(job, returnFee);
@@ -536,6 +816,8 @@ function incompleteEmailHtml(
 }
 
 function adminAcceptedEmailHtml(job: Booking, installerName: string) {
+  const pricing = calculateInstallerPricing(job);
+
   return `
     <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
       <p><strong>Job ID:</strong> ${job.job_id || job.id}</p>
@@ -549,7 +831,7 @@ function adminAcceptedEmailHtml(job: Booking, installerName: string) {
       <p><strong>Pick Up:</strong> ${job.pickup_address || "-"}</p>
       <p><strong>Drop Off:</strong> ${job.dropoff_address || "-"}</p>
       <p><strong>Status:</strong> accepted</p>
-      <p><strong>Installer Payout:</strong> ${money(job.installer_pay)}</p>
+      <p><strong>Installer Payout:</strong> ${money(pricing.totalPay)}</p>
     </div>
   `;
 }
@@ -599,10 +881,10 @@ function adminIncompleteEmailHtml(
     reason === "customer"
       ? "Customer / Homeowner Issue"
       : reason === "shop"
-        ? "Shop Issue"
-        : reason === "installer"
-          ? "Installer Issue"
-          : reason || "-";
+      ? "Shop Issue"
+      : reason === "installer"
+      ? "Installer Issue"
+      : reason || "-";
 
   const discountedMileageCharge = getDiscountedIncompleteMileage(job);
   const totalDue = getIncompleteTotalDue(job, returnFee);
@@ -710,6 +992,30 @@ function ServiceBox({
   );
 }
 
+function InstallerAmountBox({
+  title,
+  items,
+}: {
+  title: string;
+  items: { label: string; amount: number }[];
+}) {
+  if (items.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-zinc-800 bg-black p-4">
+      <p className="mb-3 text-lg font-semibold text-yellow-400">{title}</p>
+      <div className="space-y-2 text-sm text-gray-300">
+        {items.map((item) => (
+          <div key={item.label} className="flex items-center justify-between gap-4">
+            <span>{item.label}</span>
+            <span className="font-semibold text-yellow-400">{money(item.amount)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function InstallerJobDetailsPage() {
   const params = useParams();
   const router = useRouter();
@@ -769,8 +1075,8 @@ export default function InstallerJobDetailsPage() {
       loadedJob.homeowner_signed_completion_required === true
         ? "yes"
         : loadedJob.homeowner_signed_completion_required === false
-          ? "no"
-          : ""
+        ? "no"
+        : ""
     );
 
     if (loadedJob.job_group_id) {
@@ -793,8 +1099,6 @@ export default function InstallerJobDetailsPage() {
     setLoading(false);
   }
 
-  const normalizedInstallerName = normalizeText(installerName);
-
   const currentJobAvailable = useMemo(() => {
     if (!job) return false;
     return isAvailableJob(job);
@@ -805,12 +1109,18 @@ export default function InstallerJobDetailsPage() {
     return isAssignedToInstaller(job, installerName);
   }, [job, installerName]);
 
+  const pricing = useMemo(() => {
+    return job ? calculateInstallerPricing(job) : null;
+  }, [job]);
+
   const availableJobsInGroup = useMemo(() => {
     return groupJobs.filter((item) => isAvailableJob(item));
   }, [groupJobs]);
 
   const totalAvailableGroupPay = useMemo(() => {
-    return availableJobsInGroup.reduce((sum, item) => sum + Number(item.installer_pay || 0), 0);
+    return availableJobsInGroup.reduce((sum, item) => {
+      return sum + calculateInstallerPricing(item).totalPay;
+    }, 0);
   }, [availableJobsInGroup]);
 
   const hoursUntilJob = useMemo(() => {
@@ -821,10 +1131,6 @@ export default function InstallerJobDetailsPage() {
     return hoursUntilJob !== null && hoursUntilJob < 48;
   }, [hoursUntilJob]);
 
-  const payoutLines = useMemo(() => {
-    return job ? getPayoutLines(job) : [];
-  }, [job]);
-
   const addOnServices = useMemo(() => {
     return toArray(job?.add_on_services);
   }, [job]);
@@ -832,6 +1138,8 @@ export default function InstallerJobDetailsPage() {
   const justServices = useMemo(() => {
     return toArray(job?.just_services);
   }, [job]);
+
+  const canSeeFullAddresses = currentJobAssignedToMe;
 
   async function acceptThisJob() {
     if (!job) return;
@@ -1284,8 +1592,7 @@ export default function InstallerJobDetailsPage() {
           <div>
             <h1 className="text-3xl font-bold text-yellow-500">Job Details</h1>
             <p className="mt-2 text-gray-400">
-              Review full job details, payout breakdown, and manage acceptance,
-              incomplete status, cancellation request, or completion.
+              Installer view only shows installer payout and city-only addresses before acceptance.
             </p>
           </div>
 
@@ -1299,7 +1606,7 @@ export default function InstallerJobDetailsPage() {
         </div>
       </div>
 
-      {loading || !job ? (
+      {loading || !job || !pricing ? (
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6 text-gray-300">
           Loading job details...
         </div>
@@ -1326,41 +1633,32 @@ export default function InstallerJobDetailsPage() {
                   job.job_size !== null && job.job_size !== undefined
                     ? `${job.job_size} sqft`
                     : job.sqft !== null && job.sqft !== undefined
-                      ? `${job.sqft} sqft`
-                      : "-"
+                    ? `${job.sqft} sqft`
+                    : "-"
                 }
               />
               <Info label="Date" value={job.scheduled_date} />
               <Info label="Pickup Window" value={getPickupWindow(job)} />
-              <Info label="Pick Up" value={job.pickup_address} />
-              <Info label="Drop Off" value={job.dropoff_address} />
+              <Info
+                label="Pick Up Area"
+                value={getVisibleAddress(job.pickup_address, canSeeFullAddresses)}
+              />
+              <Info
+                label="Drop Off Area"
+                value={getVisibleAddress(job.dropoff_address, canSeeFullAddresses)}
+              />
               <Info label="Status" value={job.status} />
-              <Info label="Installer Payout" value={money(job.installer_pay)} highlight />
               <Info label="Installer Pay Status" value={job.installer_pay_status} />
-              <Info
-                label="Customer Rate"
-                value={
-                  Number(job.customer_sqft_rate || 0) > 0
-                    ? `${money(job.customer_sqft_rate)}/sqft`
-                    : "-"
-                }
-              />
-              <Info label="Service Price" value={money(job.service_price)} />
-              <Info label="Installer Subtotal" value={money(job.installer_subtotal_pay)} />
-              <Info label="Installer HST" value={money(job.installer_hst_pay)} />
-              <Info
-                label="Mileage Fee"
-                value={money(
-                  job.installer_mileage_pay && Number(job.installer_mileage_pay) > 0
-                    ? job.installer_mileage_pay
-                    : job.mileage_fee
-                )}
-              />
-              <Info
-                label="Customer Return Fee"
-                value={money(job.return_fee_charged || job.return_fee)}
-              />
-              <Info label="Installer Return Pay" value={money(job.return_fee_installer_pay)} />
+              <Info label="Installer Base Pay" value={money(pricing.basePay)} />
+              <Info label="Installer Add-On Pay" value={money(pricing.addonPay)} />
+              <Info label="Installer Cut / Polish Pay" value={money(pricing.cutPolishPay)} />
+              <Info label="Installer Sink Pay" value={money(pricing.sinkPay)} />
+              <Info label="Installer Other Pay" value={money(pricing.otherPay)} />
+              <Info label="Installer Mileage Pay" value={money(pricing.mileagePay)} />
+              <Info label="Installer Subtotal" value={money(pricing.subtotalPay)} />
+              <Info label="Installer HST" value={money(pricing.hstPay)} />
+              <Info label="Installer Return Pay" value={money(pricing.returnPay)} />
+              <Info label="Total Installer Payout" value={money(pricing.totalPay)} highlight />
               <Info label="Incomplete Reason" value={job.incomplete_reason} />
               <Info label="Incomplete Note" value={job.incomplete_note || job.incomplete_notes} />
               <Info
@@ -1389,16 +1687,32 @@ export default function InstallerJobDetailsPage() {
                   job.homeowner_signed_completion_required === true
                     ? "Yes"
                     : job.homeowner_signed_completion_required === false
-                      ? "No"
-                      : "-"
+                    ? "No"
+                    : "-"
                 }
               />
             </div>
 
             <div className="mt-6 grid gap-4 md:grid-cols-2">
-              <ServiceBox title="Add-On Services" items={addOnServices} />
-              <ServiceBox title="Just Services" items={justServices} />
+              <InstallerAmountBox
+                title="Installer Add-On Payouts"
+                items={pricing.parsedAddons}
+              />
+              <InstallerAmountBox
+                title="Installer Just-Service Payouts"
+                items={pricing.parsedJustServices}
+              />
             </div>
+
+            {(addOnServices.length > 0 || justServices.length > 0) && (
+              <div className="mt-6 rounded-2xl border border-zinc-800 bg-black p-5">
+                <h3 className="text-xl font-semibold text-yellow-400">Installer Service List</h3>
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <ServiceBox title="Add-On Services" items={addOnServices} />
+                  <ServiceBox title="Just Services" items={justServices} />
+                </div>
+              </div>
+            )}
 
             {job.side_note ? (
               <div className="mt-6 rounded-2xl border border-zinc-800 bg-black p-5">
@@ -1408,79 +1722,48 @@ export default function InstallerJobDetailsPage() {
             ) : null}
 
             <div className="mt-6 rounded-2xl border border-zinc-800 bg-black p-5">
-              <h3 className="text-xl font-semibold text-yellow-400">Payout Breakdown</h3>
+              <h3 className="text-xl font-semibold text-yellow-400">Installer Payout Breakdown</h3>
 
-              {payoutLines.length > 0 ? (
-                <div className="mt-4 space-y-3 text-sm text-gray-300">
-                  {payoutLines.map((line) => (
-                    <div
-                      key={line.label}
-                      className="flex items-center justify-between border-b border-zinc-800 pb-3"
-                    >
-                      <span>{line.label}</span>
-                      <span>{money(line.amount)}</span>
-                    </div>
-                  ))}
-
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <span>Subtotal Pay</span>
-                    <span>{money(job.installer_subtotal_pay)}</span>
+              <div className="mt-4 space-y-3 text-sm text-gray-300">
+                {pricing.payoutLines.map((line) => (
+                  <div
+                    key={line.label}
+                    className="flex items-center justify-between border-b border-zinc-800 pb-3"
+                  >
+                    <span>{line.label}</span>
+                    <span>{money(line.amount)}</span>
                   </div>
+                ))}
 
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <span>HST Pay</span>
-                    <span>{money(job.installer_hst_pay)}</span>
-                  </div>
-
-                  <div className="flex items-center justify-between border-t border-zinc-700 pt-4 text-base font-semibold text-yellow-400">
-                    <span>Total Payout</span>
-                    <span>{money(job.installer_pay)}</span>
-                  </div>
+                <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+                  <span>Subtotal Pay</span>
+                  <span>{money(pricing.subtotalPay)}</span>
                 </div>
-              ) : (
-                <div className="mt-4 space-y-3 text-sm text-gray-300">
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <span>Subtotal Pay</span>
-                    <span>{money(job.installer_subtotal_pay)}</span>
-                  </div>
 
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <span>HST Pay</span>
-                    <span>{money(job.installer_hst_pay)}</span>
-                  </div>
-
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <span>Total Job Payout</span>
-                    <span>{money(job.installer_pay)}</span>
-                  </div>
-
-                  {Number(job.mileage_fee || 0) > 0 ? (
-                    <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                      <span>Mileage Applies</span>
-                      <span>{money(job.mileage_fee)}</span>
-                    </div>
-                  ) : null}
-
-                  {Number(job.return_fee_charged || job.return_fee || 0) > 0 ? (
-                    <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                      <span>Customer Return Fee</span>
-                      <span>{money(job.return_fee_charged || job.return_fee)}</span>
-                    </div>
-                  ) : null}
-
-                  {Number(job.return_fee_installer_pay || 0) > 0 ? (
-                    <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                      <span>Installer Return Pay</span>
-                      <span>{money(job.return_fee_installer_pay)}</span>
-                    </div>
-                  ) : null}
-
-                  <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-xs text-gray-400">
-                    Detailed line-item payout fields will display here automatically when they are saved in the booking record.
-                  </div>
+                <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+                  <span>HST Pay</span>
+                  <span>{money(pricing.hstPay)}</span>
                 </div>
-              )}
+
+                {pricing.returnPay > 0 ? (
+                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+                    <span>Return Pay</span>
+                    <span>{money(pricing.returnPay)}</span>
+                  </div>
+                ) : null}
+
+                <div className="flex items-center justify-between border-t border-zinc-700 pt-4 text-base font-semibold text-yellow-400">
+                  <span>Total Installer Payout</span>
+                  <span>{money(pricing.totalPay)}</span>
+                </div>
+              </div>
             </div>
+
+            {!canSeeFullAddresses && (
+              <div className="mt-6 rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4 text-sm text-yellow-200">
+                Full pickup and drop-off addresses unlock after you accept the job.
+              </div>
+            )}
 
             {hoursUntilJob !== null ? (
               <div
@@ -1498,7 +1781,8 @@ export default function InstallerJobDetailsPage() {
                 </p>
                 {isLateCancel ? (
                   <p className="mt-1">
-                    This is a <strong>late cancellation request</strong> because it is under 48 hours.
+                    This is a <strong>late cancellation request</strong> because it is under 48
+                    hours.
                   </p>
                 ) : null}
               </div>
@@ -1573,9 +1857,7 @@ export default function InstallerJobDetailsPage() {
                       type="file"
                       accept="image/*"
                       multiple
-                      onChange={(e) =>
-                        setCompletionPhotos(Array.from(e.target.files || []))
-                      }
+                      onChange={(e) => setCompletionPhotos(Array.from(e.target.files || []))}
                       className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none file:mr-4 file:rounded-lg file:border-0 file:bg-yellow-500 file:px-4 file:py-2 file:font-semibold file:text-black"
                     />
                     <p className="mt-2 text-xs text-gray-400">
@@ -1606,9 +1888,7 @@ export default function InstallerJobDetailsPage() {
                       <input
                         type="file"
                         accept="image/*,.pdf"
-                        onChange={(e) =>
-                          setCompletionSignature(e.target.files?.[0] || null)
-                        }
+                        onChange={(e) => setCompletionSignature(e.target.files?.[0] || null)}
                         className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none file:mr-4 file:rounded-lg file:border-0 file:bg-yellow-500 file:px-4 file:py-2 file:font-semibold file:text-black"
                       />
                     </div>
@@ -1620,7 +1900,8 @@ export default function InstallerJobDetailsPage() {
                     At least one completion photo is <strong>required</strong>.
                   </p>
                   <p className="mt-1">
-                    Signed completion upload is only required if the customer provided a signing form.
+                    Signed completion upload is only required if the customer provided a signing
+                    form.
                   </p>
                   {completionPhotos.length > 0 ? (
                     <p className="mt-1">
@@ -1733,9 +2014,7 @@ export default function InstallerJobDetailsPage() {
                 <h3 className="text-xl font-semibold text-red-400">Request Job Cancellation</h3>
 
                 <div className="mt-4">
-                  <label className="mb-2 block text-sm text-gray-300">
-                    Cancellation Reason
-                  </label>
+                  <label className="mb-2 block text-sm text-gray-300">Cancellation Reason</label>
                   <textarea
                     value={cancelReason}
                     onChange={(e) => setCancelReason(e.target.value)}
@@ -1796,7 +2075,8 @@ export default function InstallerJobDetailsPage() {
                 <div>
                   <h2 className="text-2xl font-semibold text-yellow-500">Group Jobs</h2>
                   <p className="mt-1 text-sm text-gray-400">
-                    Each job keeps its own details and its own installer payout.
+                    Installer view shows only installer payout values. Full addresses show after
+                    acceptance.
                   </p>
                 </div>
 
@@ -1806,34 +2086,43 @@ export default function InstallerJobDetailsPage() {
               </div>
 
               <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
-                {groupJobs.map((item) => (
-                  <div
-                    key={item.id}
-                    className="rounded-xl border border-zinc-800 bg-black p-4"
-                  >
-                    <p className="text-lg font-semibold text-yellow-400">
-                      {item.job_number ? `Job ${item.job_number}` : "Grouped Job"}
-                    </p>
+                {groupJobs.map((item) => {
+                  const itemAssignedToMe = isAssignedToInstaller(item, installerName);
+                  const itemPricing = calculateInstallerPricing(item);
 
-                    <div className="mt-3 space-y-2 text-sm text-gray-300">
-                      <p>Job ID: {item.job_id || item.id}</p>
-                      <p>Customer: {item.customer_name || "-"}</p>
-                      <p>Company: {item.company_name || "-"}</p>
-                      <p>
-                        Service: {getServiceTypeLabel(item.service_type_label || item.service_type)}
+                  return (
+                    <div
+                      key={item.id}
+                      className="rounded-xl border border-zinc-800 bg-black p-4"
+                    >
+                      <p className="text-lg font-semibold text-yellow-400">
+                        {item.job_number ? `Job ${item.job_number}` : "Grouped Job"}
                       </p>
-                      <p>Date: {item.scheduled_date || "-"}</p>
-                      <p>Pickup Window: {getPickupWindow(item)}</p>
-                      <p>Pick Up: {item.pickup_address || "-"}</p>
-                      <p>Drop Off: {item.dropoff_address || "-"}</p>
-                      <p>Status: {item.status || "-"}</p>
-                      <p>Incomplete Reason: {item.incomplete_reason || "-"}</p>
-                      <p className="font-semibold text-yellow-400">
-                        Installer Payout: {money(item.installer_pay)}
-                      </p>
+
+                      <div className="mt-3 space-y-2 text-sm text-gray-300">
+                        <p>Job ID: {item.job_id || item.id}</p>
+                        <p>Customer: {item.customer_name || "-"}</p>
+                        <p>Company: {item.company_name || "-"}</p>
+                        <p>
+                          Service: {getServiceTypeLabel(item.service_type_label || item.service_type)}
+                        </p>
+                        <p>Date: {item.scheduled_date || "-"}</p>
+                        <p>Pickup Window: {getPickupWindow(item)}</p>
+                        <p>
+                          Pick Up Area: {getVisibleAddress(item.pickup_address, itemAssignedToMe)}
+                        </p>
+                        <p>
+                          Drop Off Area: {getVisibleAddress(item.dropoff_address, itemAssignedToMe)}
+                        </p>
+                        <p>Status: {item.status || "-"}</p>
+                        <p>Incomplete Reason: {item.incomplete_reason || "-"}</p>
+                        <p className="font-semibold text-yellow-400">
+                          Installer Payout: {money(itemPricing.totalPay)}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ) : null}
