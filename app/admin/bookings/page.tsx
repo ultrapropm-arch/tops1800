@@ -1,7 +1,29 @@
 "use client";
 
+export const dynamic = "force-dynamic";
+
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
+
+type BookingStatus =
+  | "new"
+  | "available"
+  | "pending"
+  | "accepted"
+  | "in_progress"
+  | "incomplete"
+  | "completed"
+  | "completed_pending_admin_review"
+  | "cancelled"
+  | "archived";
+
+type InstallerPayStatus =
+  | "unpaid"
+  | "pending"
+  | "pending_review"
+  | "hold"
+  | "ready"
+  | "paid";
 
 type Booking = {
   id: string;
@@ -19,7 +41,6 @@ type Booking = {
   pickup_address?: string | null;
   dropoff_address?: string | null;
 
-  timeline?: string | null;
   scheduled_date?: string | null;
   scheduled_time?: string | null;
   pickup_time_slot?: string | null;
@@ -30,54 +51,44 @@ type Booking = {
   service_type_label?: string | null;
   material_type?: string | null;
   material_size?: string | null;
-  job_size?: number | null;
-  sqft?: number | null;
+  timeline?: string | null;
 
-  payment_method?: string | null;
-  status?: string | null;
-  payment_status?: string | null;
+  sqft?: number | null;
+  job_size?: number | null;
 
   installer_name?: string | null;
   reassigned_installer_name?: string | null;
-  installer_pay?: number | null;
-  installer_pay_status?: string | null;
-  company_profit?: number | null;
 
-  notes?: string | null;
-  side_note?: string | null;
-
-  subtotal?: number | null;
-  hst?: number | null;
-  hst_amount?: number | null;
-  final_total?: number | null;
-
-  service_price?: number | null;
-  mileage_charge?: number | null;
-  customer_add_on_total?: number | null;
-  customer_just_service_total?: number | null;
-
+  status?: string | null;
+  is_archived?: boolean | null;
   job_group_id?: string | number | null;
   job_number?: number | null;
-  is_archived?: boolean | null;
 
-  incomplete_reason?: string | null;
-  incomplete_notes?: string | null;
-  incomplete_photo_url?: string | null;
+  payment_method?: string | null;
+  payment_status?: string | null;
 
-  return_fee?: number | null;
-  return_fee_charged?: number | null;
-  return_fee_installer_pay?: number | null;
+  customer_sqft_rate?: number | null;
+  service_price?: number | null;
+  final_total?: number | null;
+  company_profit?: number | null;
+
+  one_way_km?: number | null;
+  round_trip_km?: number | null;
+  chargeable_km?: number | null;
+  customer_mileage_charge?: number | null;
   mileage_fee?: number | null;
-  admin_fee_note?: string | null;
-  redo_requested?: boolean | null;
 
   add_on_services?: string[] | string | null;
   just_services?: string[] | string | null;
+  side_note?: string | null;
 
   waterfall_quantity?: number | null;
   outlet_plug_cutout_quantity?: number | null;
   disposal_responsibility?: string | null;
 
+  installer_pay?: number | null;
+  installer_total_pay?: number | null;
+  installer_pay_status?: string | null;
   installer_base_pay?: number | null;
   installer_mileage_pay?: number | null;
   installer_addon_pay?: number | null;
@@ -87,93 +98,57 @@ type Booking = {
   installer_subtotal_pay?: number | null;
   installer_hst_pay?: number | null;
 
-  completed_photo_url?: string | null;
-  completion_signature_url?: string | null;
-  has_signing_form?: boolean | null;
-
-  ai_distance_tier?: string | null;
-  ai_recommended_installer_type?: string | null;
-  ai_dispatch_score?: number | null;
-  ai_priority_score?: number | null;
-  ai_grouping_label?: string | null;
-  ai_route_hint?: string | null;
-  ai_urgency_label?: string | null;
-
   installer_payout_lines?:
     | {
         label?: string;
         amount?: number;
       }[]
     | null;
+
+  return_fee?: number | null;
+  return_fee_charged?: number | null;
+  return_fee_installer_pay?: number | null;
+
+  incomplete_reason?: string | null;
+  incomplete_note?: string | null;
+  incomplete_notes?: string | null;
+  redo_requested?: boolean | null;
+
+  completion_photo_url?: string | null;
+  completion_photo_path?: string | null;
+  completed_photo_url?: string | null;
+  completed_photo_path?: string | null;
+  completion_signature_url?: string | null;
+  completion_signature_path?: string | null;
+  incomplete_photo_url?: string | null;
+  incomplete_photo_path?: string | null;
+
+  payout_notes?: string | null;
+  payout_batch_id?: string | null;
+  payout_sent_at?: string | null;
+
+  ai_dispatch_score?: number | null;
+  ai_priority_score?: number | null;
+  ai_grouping_label?: string | null;
+  ai_distance_tier?: string | null;
+  ai_recommended_installer_type?: string | null;
+  ai_route_hint?: string | null;
 };
 
-type Installer = {
-  id: string;
-  installer_name?: string | null;
+type InstallerProfile = {
+  id?: string;
   full_name?: string | null;
-  name?: string | null;
-  business_name?: string | null;
-  company_name?: string | null;
-  phone_number?: string | null;
+  installer_name?: string | null;
   email?: string | null;
-  payout_method?: string | null;
-  etransfer_email?: string | null;
-  bank_name?: string | null;
-  account_holder_name?: string | null;
-  transit_number?: string | null;
-  institution_number?: string | null;
-  account_number?: string | null;
-  notes?: string | null;
-  status?: string | null;
+  is_active?: boolean | null;
   approval_status?: string | null;
-  rating?: number | null;
 };
 
-type DispatchInstaller = {
-  id: string;
-  name: string;
-  distanceKm?: number;
-  rating?: number;
-  activeJobs?: number;
+type BookingRow = Booking & {
+  _calc: PricingResult;
 };
 
-type DispatchRecommendation = {
-  recommended: {
-    id: string;
-    name: string;
-    distanceKm?: number;
-    rating?: number;
-    activeJobs?: number;
-    score: number;
-    scoreBreakdown: {
-      distanceScore: number;
-      ratingScore: number;
-      workloadScore: number;
-    };
-  } | null;
-  all: {
-    id: string;
-    name: string;
-    distanceKm?: number;
-    rating?: number;
-    activeJobs?: number;
-    score: number;
-    scoreBreakdown: {
-      distanceScore: number;
-      ratingScore: number;
-      workloadScore: number;
-    };
-  }[];
-};
-
-type GroupingRecommendation = {
-  groupingLabel: string;
-  groupingScore: number;
-  routeHint: string;
-  matchedJobIds: string[];
-};
-
-type StatusFilter =
+type FilterValue =
   | "all"
   | "new"
   | "available"
@@ -185,47 +160,113 @@ type StatusFilter =
   | "cancelled"
   | "archived";
 
-type GroupedBookingBucket = {
-  groupKey: string;
-  jobs: Booking[];
+const HST_RATE = 0.13;
+
+const PRICING = {
+  customer: {
+    installation_3cm: 10,
+    installation_2cm_standard: 9,
+    installation_2cm: 9,
+    full_height_backsplash: 10,
+  },
+  installer: {
+    installation_3cm: 7,
+    installation_2cm_standard: 6.5,
+    installation_2cm: 6.5,
+    full_height_backsplash: 7,
+  },
+  addons: {
+    customer: {
+      waterfall: 100,
+      outlet: 50,
+      extra_helper: 200,
+      difficult: 180,
+      sink_cutout_onsite: 180,
+      cooktop_cutout: 180,
+      plumbing_removal: 50,
+      sealing: 50,
+      onsite_cutting: 175,
+      onsite_polishing: 175,
+      remeasure_backsplash_fh: 180,
+      remeasure_backsplash_lh: 80,
+      condo_highrise: 80,
+    },
+    installer: {
+      waterfall: 60,
+      outlet: 25,
+      extra_helper: 110,
+      difficult: 100,
+      sink_cutout_onsite: 100,
+      cooktop_cutout: 100,
+      plumbing_removal: 25,
+      sealing: 25,
+      onsite_cutting: 100,
+      onsite_polishing: 90,
+      remeasure_backsplash_fh: 100,
+      remeasure_backsplash_lh: 50,
+      condo_highrise: 50,
+    },
+  },
+  mileage: {
+    customer: 1.4,
+    installer: 1.0,
+  },
+  returnVisit: {
+    customer: 200,
+    installer: 180,
+  },
+} as const;
+
+type PricingResult = {
+  serviceLabel: string;
+  normalizedStatus: BookingStatus;
+  customerSubtotal: number;
+  customerHst: number;
+  customerFinalTotal: number;
+  installerBasePay: number;
+  installerAddonPay: number;
+  installerOtherPay: number;
+  installerCutPolishPay: number;
+  installerSinkPay: number;
+  installerMileagePay: number;
+  installerSubtotalPay: number;
+  installerHstPay: number;
+  installerReturnPay: number;
+  installerTotalPay: number;
+  companyProfit: number;
+  payoutLines: { label: string; amount: number }[];
+  parsedAddons: { label: string; customerAmount: number; installerAmount: number }[];
+  parsedJustServices: { label: string; customerAmount: number; installerAmount: number }[];
 };
+
+function money(value?: number | null) {
+  return `$${Number(value || 0).toFixed(2)}`;
+}
 
 function safeText(value?: string | null) {
   return String(value || "").trim();
 }
 
-function normalizeText(value?: string | null) {
-  return safeText(value).toLowerCase();
+function num(value?: number | string | null) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function num(value: unknown) {
-  const n = Number(value || 0);
-  return Number.isFinite(n) ? n : 0;
+function getPickupWindow(job: Booking) {
+  if (safeText(job.pickup_time_slot)) return safeText(job.pickup_time_slot);
+
+  const from = safeText(job.pickup_time_from);
+  const to = safeText(job.pickup_time_to);
+
+  if (from || to) return [from, to].filter(Boolean).join(" - ");
+
+  return safeText(job.scheduled_time) || "-";
 }
 
-function money(value?: number | null) {
-  return "$" + num(value).toFixed(2);
-}
+function getServiceTypeLabel(job: Pick<Booking, "service_type" | "service_type_label">) {
+  if (safeText(job.service_type_label)) return safeText(job.service_type_label);
 
-function toArray(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.filter(Boolean).map(String);
-  }
-
-  if (typeof value === "string") {
-    return value
-      .split(" | ")
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-
-  return [];
-}
-
-function getServiceTypeLabel(booking: Booking) {
-  if (booking.service_type_label) return booking.service_type_label;
-
-  const value = booking.service_type;
+  const value = safeText(job.service_type);
   if (!value) return "-";
   if (value === "full_height_backsplash") return "Full Height Backsplash";
   if (value === "installation_3cm") return "3cm Installation";
@@ -236,2225 +277,1037 @@ function getServiceTypeLabel(booking: Booking) {
   return value;
 }
 
-function getDisposalResponsibilityLabel(value?: string | null) {
-  if (!value) return "-";
-  if (value === "customer") return "Customer / Shop Responsible";
-  if (value === "installer") return "Installer Responsible";
-  return value;
-}
-
-function getPickupWindow(booking: Booking) {
-  if (safeText(booking.pickup_time_slot)) return safeText(booking.pickup_time_slot);
-
-  const from = safeText(booking.pickup_time_from);
-  const to = safeText(booking.pickup_time_to);
-
-  if (from || to) {
-    return [from, to].filter(Boolean).join(" - ");
+function toArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter(Boolean).map(String);
+  if (typeof value === "string") {
+    return value
+      .split("|")
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
-
-  return safeText(booking.scheduled_time) || "-";
+  return [];
 }
 
-function formatDateTime(value?: string | null) {
-  if (!value) return "-";
+function normalizeStatus(status?: string | null, archived?: boolean | null): BookingStatus {
+  if (archived) return "archived";
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+  const value = safeText(status).toLowerCase();
 
-  return date.toLocaleString();
-}
-
-function getPayoutLines(booking: Booking) {
-  if (
-    Array.isArray(booking.installer_payout_lines) &&
-    booking.installer_payout_lines.length > 0
-  ) {
-    return booking.installer_payout_lines.map((line) => ({
-      label: line.label || "Payout Line",
-      amount: num(line.amount),
-    }));
-  }
-
-  const lines: { label: string; amount: number }[] = [];
-
-  if (num(booking.installer_base_pay) > 0) {
-    lines.push({
-      label: "Base Install Pay",
-      amount: num(booking.installer_base_pay),
-    });
-  }
-
-  if (num(booking.installer_mileage_pay) > 0) {
-    lines.push({
-      label: "Mileage Pay",
-      amount: num(booking.installer_mileage_pay),
-    });
-  }
-
-  if (num(booking.installer_addon_pay) > 0) {
-    lines.push({
-      label: "Add-On Pay",
-      amount: num(booking.installer_addon_pay),
-    });
-  }
-
-  if (num(booking.installer_cut_polish_pay) > 0) {
-    lines.push({
-      label: "Cut / Polish Pay",
-      amount: num(booking.installer_cut_polish_pay),
-    });
-  }
-
-  if (num(booking.installer_sink_pay) > 0) {
-    lines.push({
-      label: "Sink / Reattach Pay",
-      amount: num(booking.installer_sink_pay),
-    });
-  }
-
-  if (num(booking.installer_other_pay) > 0) {
-    lines.push({
-      label: "Other Service Pay",
-      amount: num(booking.installer_other_pay),
-    });
-  }
-
-  return lines;
-}
-
-function getDerivedInstallerPay(booking: Booking) {
-  if (num(booking.installer_pay) > 0) return num(booking.installer_pay);
-
-  const fromSubtotalAndHst =
-    num(booking.installer_subtotal_pay) + num(booking.installer_hst_pay);
-  if (fromSubtotalAndHst > 0) return fromSubtotalAndHst;
-
-  const fromLines = getPayoutLines(booking).reduce((sum, line) => sum + num(line.amount), 0);
-  if (fromLines > 0) return fromLines;
-
-  return 0;
-}
-
-function getDerivedSubtotal(booking: Booking) {
-  if (num(booking.subtotal) > 0) return num(booking.subtotal);
-
-  const derived =
-    num(booking.service_price) +
-    num(booking.mileage_charge) +
-    num(booking.customer_add_on_total) +
-    num(booking.customer_just_service_total) +
-    num(booking.return_fee_charged || booking.return_fee);
-
-  return derived > 0 ? derived : 0;
-}
-
-function getDerivedHst(booking: Booking) {
-  const hstValue = num(booking.hst ?? booking.hst_amount);
-  if (hstValue > 0) return hstValue;
-
-  const subtotal = getDerivedSubtotal(booking);
-  const finalTotal = num(booking.final_total);
-  if (finalTotal > subtotal && subtotal > 0) {
-    return finalTotal - subtotal;
-  }
-
-  return 0;
-}
-
-function getDerivedFinalTotal(booking: Booking) {
-  if (num(booking.final_total) > 0) return num(booking.final_total);
-
-  const subtotal = getDerivedSubtotal(booking);
-  const hst = getDerivedHst(booking);
-  return subtotal + hst;
-}
-
-function getDerivedCompanyProfit(booking: Booking) {
-  if (booking.company_profit !== null && booking.company_profit !== undefined) {
-    return num(booking.company_profit);
-  }
-
-  const finalTotal = getDerivedFinalTotal(booking);
-  const installerPay = getDerivedInstallerPay(booking);
-  return finalTotal - installerPay;
-}
-
-function getUrgencyLabel(booking: Booking) {
-  if (booking.ai_urgency_label) return booking.ai_urgency_label;
-
-  const text = [
-    booking.timeline || "",
-    booking.pickup_time_slot || "",
-    booking.scheduled_time || "",
-  ]
-    .join(" ")
-    .toLowerCase();
-
-  if (text.includes("same")) return "Same-Day Priority";
-  if (text.includes("next")) return "Next-Day Priority";
-
-  return "Open Scheduling";
-}
-
-function getUrgencyBadgeClass(label: string) {
-  if (label === "Same-Day Priority") {
-    return "border-red-500/30 bg-red-500/10 text-red-400";
-  }
-  if (label === "Next-Day Priority") {
-    return "border-yellow-500/30 bg-yellow-500/10 text-yellow-400";
-  }
-  return "border-zinc-700 bg-zinc-800/40 text-zinc-300";
-}
-
-function getGroupingBadgeClass(label?: string | null) {
-  if (label === "Strong Grouping") {
-    return "border-green-500/30 bg-green-500/10 text-green-400";
-  }
-  if (label === "Possible Group") {
-    return "border-blue-500/30 bg-blue-500/10 text-blue-300";
-  }
-  return "border-zinc-700 bg-zinc-800/40 text-zinc-300";
-}
-
-function getDispatchBadgeClass(score: number) {
-  if (score >= 85) return "border-purple-500/30 bg-purple-500/10 text-purple-300";
-  if (score >= 70) return "border-blue-500/30 bg-blue-500/10 text-blue-300";
-  if (score >= 55) return "border-yellow-500/30 bg-yellow-500/10 text-yellow-400";
-  return "border-zinc-700 bg-zinc-800/40 text-zinc-300";
-}
-
-function getProfitLabel(profit?: number | null) {
-  const value = num(profit);
-  if (value >= 300) return "High Profit";
-  if (value >= 100) return "Good Profit";
-  if (value > 0) return "Low Profit";
-  return "Negative / No Profit";
-}
-
-function getProfitBadgeClass(profit?: number | null) {
-  const value = num(profit);
-  if (value >= 300) return "border-green-500/30 bg-green-500/10 text-green-400";
-  if (value >= 100) return "border-yellow-500/30 bg-yellow-500/10 text-yellow-400";
-  if (value > 0) return "border-orange-500/30 bg-orange-500/10 text-orange-400";
-  return "border-red-500/30 bg-red-500/10 text-red-400";
-}
-
-function getProfitTextClass(profit?: number | null) {
-  const value = num(profit);
-  if (value >= 300) return "text-green-400";
-  if (value >= 100) return "text-yellow-400";
-  if (value > 0) return "text-orange-400";
-  return "text-red-400";
-}
-
-function getRouteClusterKey(address?: string | null) {
-  if (!address) return "";
-  return address
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .split(" ")
-    .slice(0, 4)
-    .join(" ");
-}
-
-function getGroupingLabel(booking: Booking, allBookings: Booking[]) {
-  if (booking.ai_grouping_label) return booking.ai_grouping_label;
-
-  const clusterKey = getRouteClusterKey(booking.dropoff_address || booking.pickup_address);
-  if (!clusterKey) return "Solo Route";
-
-  const nearbyCount = allBookings.filter((item) => {
-    if (item.id === booking.id) return false;
-    if (item.is_archived === true) return false;
-    if (safeText(item.scheduled_date) !== safeText(booking.scheduled_date)) return false;
-
-    const itemClusterKey = getRouteClusterKey(item.dropoff_address || item.pickup_address);
-    return itemClusterKey && itemClusterKey === clusterKey;
-  }).length;
-
-  if (nearbyCount >= 2) return "Strong Grouping";
-  if (nearbyCount === 1) return "Possible Group";
-  return "Solo Route";
-}
-
-function getAiScore(booking: Booking, allBookings: Booking[]) {
-  let score = num(booking.ai_dispatch_score || booking.ai_priority_score);
-
-  if (!score) {
-    score = 50;
-
-    if (getUrgencyLabel(booking) === "Same-Day Priority") score += 20;
-    if (getUrgencyLabel(booking) === "Next-Day Priority") score += 10;
-    if (getDerivedInstallerPay(booking) >= 500) score += 10;
-
-    const groupingLabel = getGroupingLabel(booking, allBookings);
-    if (groupingLabel === "Strong Grouping") score += 15;
-    if (groupingLabel === "Possible Group") score += 8;
-    if (num(booking.mileage_fee) > 0) score += 5;
-  }
-
-  return Math.max(0, Math.min(100, score));
-}
-
-function normalizeBookingStatus(booking: Booking): string {
-  const value = normalizeText(booking.status);
-
-  if (booking.is_archived === true) return "archived";
-  if (booking.completed_at) return "completed";
-  if (booking.incomplete_at || value === "incomplete") return "incomplete";
-
-  if (value === "completed_pending_admin_review") return "completed";
+  if (!value) return "new";
   if (value === "confirmed") return "pending";
   if (value === "assigned") return "accepted";
+  if (value === "accepted_by_installer") return "accepted";
   if (value === "in progress") return "in_progress";
   if (value === "canceled") return "cancelled";
+  if (value === "completed_pending_admin_review") return "completed_pending_admin_review";
 
-  if (!value) {
-    if (safeText(booking.installer_name) || safeText(booking.reassigned_installer_name)) {
-      return "accepted";
-    }
-    return "new";
+  return (value as BookingStatus) || "new";
+}
+
+function parseAddonLine(raw: string, job: Booking) {
+  const value = raw.toLowerCase();
+
+  if (value.includes("waterfall")) {
+    const qty = Math.max(1, num(job.waterfall_quantity));
+    return {
+      label: `Waterfall x${qty}`,
+      customerAmount: PRICING.addons.customer.waterfall * qty,
+      installerAmount: PRICING.addons.installer.waterfall * qty,
+      bucket: "addon" as const,
+    };
   }
 
-  return value;
-}
-
-function getAcceptedStateLabel(booking: Booking) {
-  const normalized = normalizeBookingStatus(booking);
-
-  if (normalized === "completed") return "Completed";
-  if (normalized === "incomplete") return "Incomplete";
-
-  if (safeText(booking.installer_name) || safeText(booking.reassigned_installer_name)) {
-    return "Accepted";
+  if (value.includes("outlet")) {
+    const qty = Math.max(1, num(job.outlet_plug_cutout_quantity));
+    return {
+      label: `Outlet Plug Cutout x${qty}`,
+      customerAmount: PRICING.addons.customer.outlet * qty,
+      installerAmount: PRICING.addons.installer.outlet * qty,
+      bucket: "addon" as const,
+    };
   }
-  if (normalized === "accepted" || normalized === "in_progress") return "Accepted";
-  return "Not Accepted";
-}
 
-function getAcceptedStateClass(booking: Booking) {
-  const accepted = getAcceptedStateLabel(booking);
-  if (accepted === "Completed") {
-    return "border-green-500/30 bg-green-500/10 text-green-400";
+  if (value.includes("extra helper")) {
+    return {
+      label: "Extra Helper",
+      customerAmount: PRICING.addons.customer.extra_helper,
+      installerAmount: PRICING.addons.installer.extra_helper,
+      bucket: "addon" as const,
+    };
   }
-  if (accepted === "Incomplete") {
-    return "border-red-500/30 bg-red-500/10 text-red-400";
+
+  if (value.includes("difficult") || value.includes("stairs") || value.includes("basement")) {
+    return {
+      label: "Difficult / Stairs / Basement",
+      customerAmount: PRICING.addons.customer.difficult,
+      installerAmount: PRICING.addons.installer.difficult,
+      bucket: "addon" as const,
+    };
   }
-  return accepted === "Accepted"
-    ? "border-green-500/30 bg-green-500/10 text-green-400"
-    : "border-zinc-700 bg-zinc-800/40 text-zinc-300";
+
+  if (value.includes("sink cutout")) {
+    return {
+      label: "Sink Cutout Onsite",
+      customerAmount: PRICING.addons.customer.sink_cutout_onsite,
+      installerAmount: PRICING.addons.installer.sink_cutout_onsite,
+      bucket: "sink" as const,
+    };
+  }
+
+  if (value.includes("cooktop")) {
+    return {
+      label: "Cooktop Cutout",
+      customerAmount: PRICING.addons.customer.cooktop_cutout,
+      installerAmount: PRICING.addons.installer.cooktop_cutout,
+      bucket: "other" as const,
+    };
+  }
+
+  if (value.includes("plumbing")) {
+    return {
+      label: "Plumbing Removal",
+      customerAmount: PRICING.addons.customer.plumbing_removal,
+      installerAmount: PRICING.addons.installer.plumbing_removal,
+      bucket: "other" as const,
+    };
+  }
+
+  if (value.includes("sealing")) {
+    return {
+      label: "Marble / Granite Sealing",
+      customerAmount: PRICING.addons.customer.sealing,
+      installerAmount: PRICING.addons.installer.sealing,
+      bucket: "other" as const,
+    };
+  }
+
+  if (value.includes("onsite cutting")) {
+    return {
+      label: "Onsite Cutting",
+      customerAmount: PRICING.addons.customer.onsite_cutting,
+      installerAmount: PRICING.addons.installer.onsite_cutting,
+      bucket: "cut_polish" as const,
+    };
+  }
+
+  if (value.includes("onsite polishing")) {
+    return {
+      label: "Onsite Polishing",
+      customerAmount: PRICING.addons.customer.onsite_polishing,
+      installerAmount: PRICING.addons.installer.onsite_polishing,
+      bucket: "cut_polish" as const,
+    };
+  }
+
+  if (value.includes("remeasure backsplash fh")) {
+    return {
+      label: "Remeasure Backsplash FH",
+      customerAmount: PRICING.addons.customer.remeasure_backsplash_fh,
+      installerAmount: PRICING.addons.installer.remeasure_backsplash_fh,
+      bucket: "other" as const,
+    };
+  }
+
+  if (value.includes("remeasure backsplash lh")) {
+    return {
+      label: "Remeasure Backsplash LH",
+      customerAmount: PRICING.addons.customer.remeasure_backsplash_lh,
+      installerAmount: PRICING.addons.installer.remeasure_backsplash_lh,
+      bucket: "other" as const,
+    };
+  }
+
+  if (value.includes("condo") || value.includes("high-rise") || value.includes("high rise")) {
+    return {
+      label: "Condo / High-Rise",
+      customerAmount: PRICING.addons.customer.condo_highrise,
+      installerAmount: PRICING.addons.installer.condo_highrise,
+      bucket: "other" as const,
+    };
+  }
+
+  return {
+    label: raw,
+    customerAmount: 0,
+    installerAmount: 0,
+    bucket: "other" as const,
+  };
 }
 
-function getPublicJobPhotoUrl(path?: string | null) {
-  if (!path) return "";
-  const supabase = createClient();
-  const { data } = supabase.storage.from("job-photos").getPublicUrl(path);
-  return data.publicUrl;
-}
+function calculatePricing(job: Booking): PricingResult {
+  const serviceType = safeText(job.service_type);
+  const sqft = num(job.sqft || job.job_size);
+  const normalizedStatus = normalizeStatus(job.status, job.is_archived);
+  const serviceLabel = getServiceTypeLabel(job);
 
-function matchesStatusFilter(booking: Booking, filter: StatusFilter): boolean {
-  if (filter === "all") return true;
-  const normalized = normalizeBookingStatus(booking);
-  return normalized === filter;
-}
+  const customerRate =
+    num(job.customer_sqft_rate) ||
+    (serviceType in PRICING.customer
+      ? PRICING.customer[serviceType as keyof typeof PRICING.customer]
+      : 0);
 
-function getInstallerDisplayName(installer: Installer) {
-  return (
-    safeText(installer.installer_name) ||
-    safeText(installer.full_name) ||
-    safeText(installer.name) ||
-    safeText(installer.business_name) ||
-    safeText(installer.company_name) ||
-    "Unnamed Installer"
+  const installerRate =
+    serviceType in PRICING.installer
+      ? PRICING.installer[serviceType as keyof typeof PRICING.installer]
+      : 0;
+
+  const customerBase = sqft * customerRate;
+  const installerBase = sqft * installerRate;
+
+  const parsedAddons = toArray(job.add_on_services).map((item) => parseAddonLine(item, job));
+  const parsedJustServices = toArray(job.just_services).map((item) => parseAddonLine(item, job));
+
+  let installerAddonPay = 0;
+  let installerOtherPay = 0;
+  let installerCutPolishPay = 0;
+  let installerSinkPay = 0;
+
+  const customerAddonTotal = [...parsedAddons, ...parsedJustServices].reduce(
+    (sum, item) => sum + item.customerAmount,
+    0
   );
+
+  [...parsedAddons, ...parsedJustServices].forEach((line) => {
+    if (line.bucket === "addon") installerAddonPay += line.installerAmount;
+    else if (line.bucket === "cut_polish") installerCutPolishPay += line.installerAmount;
+    else if (line.bucket === "sink") installerSinkPay += line.installerAmount;
+    else installerOtherPay += line.installerAmount;
+  });
+
+  const installerMileagePay =
+    num(job.installer_mileage_pay) > 0
+      ? num(job.installer_mileage_pay)
+      : num(job.chargeable_km) > 0
+      ? num(job.chargeable_km) * PRICING.mileage.installer
+      : 0;
+
+  const customerMileage =
+    num(job.customer_mileage_charge) > 0
+      ? num(job.customer_mileage_charge)
+      : num(job.chargeable_km) > 0
+      ? num(job.chargeable_km) * PRICING.mileage.customer
+      : 0;
+
+  const installerReturnPay =
+    num(job.return_fee_installer_pay) > 0
+      ? num(job.return_fee_installer_pay)
+      : num(job.return_fee_charged || job.return_fee) > 0
+      ? PRICING.returnVisit.installer
+      : 0;
+
+  const customerReturnFee =
+    num(job.return_fee_charged || job.return_fee) > 0
+      ? num(job.return_fee_charged || job.return_fee)
+      : 0;
+
+  const computedInstallerSubtotal =
+    installerBase +
+    installerAddonPay +
+    installerOtherPay +
+    installerCutPolishPay +
+    installerSinkPay +
+    installerMileagePay;
+
+  const installerSubtotalPay =
+    num(job.installer_subtotal_pay) > 0
+      ? num(job.installer_subtotal_pay)
+      : computedInstallerSubtotal;
+
+  const installerHstPay =
+    num(job.installer_hst_pay) > 0
+      ? num(job.installer_hst_pay)
+      : installerSubtotalPay * HST_RATE;
+
+  const installerTotalPay =
+    num(job.installer_total_pay) > 0
+      ? num(job.installer_total_pay)
+      : num(job.installer_pay) > 0
+      ? num(job.installer_pay)
+      : installerSubtotalPay + installerHstPay + installerReturnPay;
+
+  const customerSubtotal =
+    num(job.service_price) > 0
+      ? num(job.service_price)
+      : customerBase + customerAddonTotal + customerMileage + customerReturnFee;
+
+  const customerHst =
+    customerSubtotal > 0 ? customerSubtotal * HST_RATE : 0;
+
+  const customerFinalTotal =
+    num(job.final_total) > 0 ? num(job.final_total) : customerSubtotal + customerHst;
+
+  const companyProfit =
+    num(job.company_profit) !== 0
+      ? num(job.company_profit)
+      : customerFinalTotal - installerTotalPay;
+
+  const payoutLines =
+    Array.isArray(job.installer_payout_lines) && job.installer_payout_lines.length > 0
+      ? job.installer_payout_lines.map((line) => ({
+          label: safeText(line.label) || "Payout Line",
+          amount: num(line.amount),
+        }))
+      : [
+          { label: "Base Install Pay", amount: installerBase },
+          { label: "Add-On Pay", amount: installerAddonPay },
+          { label: "Other Service Pay", amount: installerOtherPay },
+          { label: "Cut / Polish Pay", amount: installerCutPolishPay },
+          { label: "Sink / Reattach Pay", amount: installerSinkPay },
+          { label: "Mileage Pay", amount: installerMileagePay },
+        ].filter((line) => line.amount > 0);
+
+  return {
+    serviceLabel,
+    normalizedStatus,
+    customerSubtotal,
+    customerHst,
+    customerFinalTotal,
+    installerBasePay: installerBase,
+    installerAddonPay,
+    installerOtherPay,
+    installerCutPolishPay,
+    installerSinkPay,
+    installerMileagePay,
+    installerSubtotalPay,
+    installerHstPay,
+    installerReturnPay,
+    installerTotalPay,
+    companyProfit,
+    payoutLines,
+    parsedAddons: parsedAddons.map((x) => ({
+      label: x.label,
+      customerAmount: x.customerAmount,
+      installerAmount: x.installerAmount,
+    })),
+    parsedJustServices: parsedJustServices.map((x) => ({
+      label: x.label,
+      customerAmount: x.customerAmount,
+      installerAmount: x.installerAmount,
+    })),
+  };
+}
+
+function pillClass(status: string) {
+  const value = status.toLowerCase();
+  if (value.includes("completed")) return "border-green-500/30 bg-green-500/10 text-green-300";
+  if (value.includes("incomplete")) return "border-red-500/30 bg-red-500/10 text-red-300";
+  if (value.includes("accepted") || value.includes("progress")) {
+    return "border-blue-500/30 bg-blue-500/10 text-blue-300";
+  }
+  if (value.includes("pending") || value.includes("available") || value.includes("new")) {
+    return "border-yellow-500/30 bg-yellow-500/10 text-yellow-300";
+  }
+  if (value.includes("cancel")) return "border-zinc-600 bg-zinc-800/50 text-zinc-300";
+  return "border-zinc-700 bg-zinc-800/40 text-zinc-300";
 }
 
 function Badge({
   label,
+  value,
   className,
 }: {
   label: string;
-  className: string;
+  value: string;
+  className?: string;
 }) {
   return (
-    <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${className}`}>
-      {label}
-    </span>
+    <div className={`rounded-xl border px-3 py-2 text-xs font-semibold ${className || pillClass(value)}`}>
+      <span className="text-zinc-400">{label}: </span>
+      <span>{value}</span>
+    </div>
   );
 }
 
 function StatCard({
   label,
   value,
-  sublabel,
+  className,
 }: {
   label: string;
   value: string;
-  sublabel?: string;
+  className?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
+    <div className={`rounded-xl border border-zinc-800 bg-black p-4 ${className || ""}`}>
       <p className="text-sm text-gray-400">{label}</p>
-      <p className="mt-2 text-3xl font-bold text-yellow-500">{value}</p>
-      {sublabel ? <p className="mt-2 text-sm text-gray-400">{sublabel}</p> : null}
-    </div>
-  );
-}
-
-function SectionHeader({
-  title,
-  subtitle,
-}: {
-  title: string;
-  subtitle: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-      <h2 className="text-2xl font-bold text-yellow-500">{title}</h2>
-      <p className="mt-1 text-sm text-gray-400">{subtitle}</p>
-    </div>
-  );
-}
-
-function ProofLink({
-  label,
-  path,
-}: {
-  label: string;
-  path?: string | null;
-}) {
-  if (!path) {
-    return <p>{label}: -</p>;
-  }
-
-  const publicUrl = getPublicJobPhotoUrl(path);
-
-  return (
-    <p>
-      {label}:{" "}
-      <a
-        href={publicUrl}
-        target="_blank"
-        rel="noreferrer"
-        className="text-yellow-400 underline"
-      >
-        Open
-      </a>
-    </p>
-  );
-}
-
-function ServiceBox({
-  title,
-  items,
-}: {
-  title: string;
-  items: string[];
-}) {
-  if (items.length === 0) return null;
-
-  return (
-    <div className="rounded-xl border border-zinc-800 bg-black p-4">
-      <p className="mb-2 text-sm font-semibold text-yellow-400">{title}</p>
-      <div className="space-y-1 text-sm text-gray-300">
-        {items.map((item) => (
-          <p key={item}>• {item}</p>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function GroupSummaryCard({
-  group,
-  allBookings,
-}: {
-  group: GroupedBookingBucket;
-  allBookings: Booking[];
-}) {
-  const totalPay = group.jobs.reduce((sum, job) => sum + getDerivedInstallerPay(job), 0);
-  const totalProfit = group.jobs.reduce((sum, job) => sum + getDerivedCompanyProfit(job), 0);
-  const maxAi = Math.max(...group.jobs.map((job) => getAiScore(job, allBookings)));
-  const sameDay = group.jobs.some((job) => getUrgencyLabel(job) === "Same-Day Priority");
-  const nextDay = group.jobs.some((job) => getUrgencyLabel(job) === "Next-Day Priority");
-  const groupingLabel = group.jobs.some(
-    (job) => getGroupingLabel(job, allBookings) === "Strong Grouping"
-  )
-    ? "Strong Grouping"
-    : group.jobs.some((job) => getGroupingLabel(job, allBookings) === "Possible Group")
-      ? "Possible Group"
-      : "Solo Route";
-
-  return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5">
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="text-lg font-semibold text-yellow-400">Group {group.groupKey}</p>
-        <Badge
-          label={`${group.jobs.length} jobs`}
-          className="border-zinc-700 bg-zinc-800/40 text-zinc-300"
-        />
-        <Badge
-          label={groupingLabel}
-          className={getGroupingBadgeClass(groupingLabel)}
-        />
-        <Badge
-          label={`Best AI ${maxAi}/100`}
-          className={getDispatchBadgeClass(maxAi)}
-        />
-        {sameDay ? (
-          <Badge
-            label="Same-Day Jobs"
-            className="border-red-500/30 bg-red-500/10 text-red-400"
-          />
-        ) : null}
-        {!sameDay && nextDay ? (
-          <Badge
-            label="Next-Day Jobs"
-            className="border-yellow-500/30 bg-yellow-500/10 text-yellow-400"
-          />
-        ) : null}
-      </div>
-
-      <div className="mt-4 grid gap-3 md:grid-cols-4">
-        <div className="rounded-xl border border-zinc-800 bg-black p-3">
-          <p className="text-[11px] uppercase tracking-wide text-zinc-500">Jobs</p>
-          <p className="mt-1 text-sm font-semibold text-white">{group.jobs.length}</p>
-        </div>
-        <div className="rounded-xl border border-zinc-800 bg-black p-3">
-          <p className="text-[11px] uppercase tracking-wide text-zinc-500">Group Pay</p>
-          <p className="mt-1 text-sm font-semibold text-white">{money(totalPay)}</p>
-        </div>
-        <div className="rounded-xl border border-zinc-800 bg-black p-3">
-          <p className="text-[11px] uppercase tracking-wide text-zinc-500">Group Profit</p>
-          <p className={`mt-1 text-sm font-semibold ${getProfitTextClass(totalProfit)}`}>
-            {money(totalProfit)}
-          </p>
-        </div>
-        <div className="rounded-xl border border-zinc-800 bg-black p-3">
-          <p className="text-[11px] uppercase tracking-wide text-zinc-500">Dates</p>
-          <p className="mt-1 text-sm font-semibold text-white">
-            {group.jobs
-              .map((job) => safeText(job.scheduled_date) || "-")
-              .filter(Boolean)
-              .join(", ")}
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function BookingCard({
-  booking,
-  allBookings,
-  installers,
-  expanded,
-  onToggle,
-  onUpdate,
-  onDelete,
-  savingId,
-  dispatchRecommendation,
-  dispatchLoadingId,
-  onRunDispatch,
-  onAssignRecommendedInstaller,
-  groupingRecommendation,
-  groupingLoadingId,
-  onRunGrouping,
-  onSaveGrouping,
-}: {
-  booking: Booking;
-  allBookings: Booking[];
-  installers: Installer[];
-  expanded: boolean;
-  onToggle: () => void;
-  onUpdate: (
-    id: string,
-    field: keyof Booking,
-    value: string | number | boolean | null
-  ) => void;
-  onDelete: (booking: Booking) => void;
-  savingId: string;
-  dispatchRecommendation?: DispatchRecommendation;
-  dispatchLoadingId: string;
-  onRunDispatch: (booking: Booking) => void;
-  onAssignRecommendedInstaller: (booking: Booking) => void;
-  groupingRecommendation?: GroupingRecommendation;
-  groupingLoadingId: string;
-  onRunGrouping: (booking: Booking) => void;
-  onSaveGrouping: (booking: Booking) => void;
-}) {
-  const addOnServices = toArray(booking.add_on_services);
-  const justServices = toArray(booking.just_services);
-  const payoutLines = getPayoutLines(booking);
-  const urgencyLabel = getUrgencyLabel(booking);
-  const aiScore = getAiScore(booking, allBookings);
-  const acceptedState = getAcceptedStateLabel(booking);
-  const normalizedStatus = normalizeBookingStatus(booking);
-  const recommendedInstaller = dispatchRecommendation?.recommended || null;
-
-  const derivedInstallerPay = getDerivedInstallerPay(booking);
-  const derivedCompanyProfit = getDerivedCompanyProfit(booking);
-  const derivedSubtotal = getDerivedSubtotal(booking);
-  const derivedHst = getDerivedHst(booking);
-  const derivedFinalTotal = getDerivedFinalTotal(booking);
-
-  return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
-      <div className="mb-5 flex flex-col gap-4 border-b border-zinc-800 pb-5 xl:flex-row xl:items-start xl:justify-between">
-        <div className="flex-1">
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <h3 className="text-2xl font-semibold text-yellow-500">
-              {booking.company_name || booking.customer_name || "Booking"}
-            </h3>
-
-            <Badge
-              label={normalizedStatus || "new"}
-              className="border-zinc-700 bg-zinc-800/40 text-zinc-300"
-            />
-
-            <Badge
-              label={urgencyLabel}
-              className={getUrgencyBadgeClass(urgencyLabel)}
-            />
-
-            <Badge
-              label={getGroupingLabel(booking, allBookings)}
-              className={getGroupingBadgeClass(getGroupingLabel(booking, allBookings))}
-            />
-
-            <Badge
-              label={`Dispatch ${aiScore}/100`}
-              className={getDispatchBadgeClass(aiScore)}
-            />
-
-            <Badge
-              label={getProfitLabel(derivedCompanyProfit)}
-              className={getProfitBadgeClass(derivedCompanyProfit)}
-            />
-
-            <Badge
-              label={acceptedState}
-              className={getAcceptedStateClass(booking)}
-            />
-
-            {booking.is_archived === true ? (
-              <Badge
-                label="Archived"
-                className="border-zinc-600 bg-zinc-700/30 text-zinc-300"
-              />
-            ) : null}
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-            <div className="rounded-xl border border-zinc-800 bg-black p-3">
-              <p className="text-[11px] uppercase tracking-wide text-zinc-500">Job</p>
-              <p className="mt-1 text-sm font-semibold text-white">
-                {booking.job_id || booking.id}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-zinc-800 bg-black p-3">
-              <p className="text-[11px] uppercase tracking-wide text-zinc-500">Date</p>
-              <p className="mt-1 text-sm font-semibold text-white">
-                {booking.scheduled_date || "-"}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-zinc-800 bg-black p-3">
-              <p className="text-[11px] uppercase tracking-wide text-zinc-500">
-                Pickup Window
-              </p>
-              <p className="mt-1 text-sm font-semibold text-white">
-                {getPickupWindow(booking)}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-zinc-800 bg-black p-3">
-              <p className="text-[11px] uppercase tracking-wide text-zinc-500">Service</p>
-              <p className="mt-1 text-sm font-semibold text-white">
-                {getServiceTypeLabel(booking)}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-zinc-800 bg-black p-3">
-              <p className="text-[11px] uppercase tracking-wide text-zinc-500">Installer</p>
-              <p className="mt-1 text-sm font-semibold text-white">
-                {booking.reassigned_installer_name ||
-                  booking.installer_name ||
-                  "Unassigned"}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-zinc-800 bg-black p-3">
-              <p className="text-[11px] uppercase tracking-wide text-zinc-500">Status</p>
-              <p className="mt-1 text-sm font-semibold text-white">
-                {normalizedStatus || "new"}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-zinc-800 bg-black p-3">
-              <p className="text-[11px] uppercase tracking-wide text-zinc-500">
-                Accepted Time
-              </p>
-              <p className="mt-1 text-sm font-semibold text-white">
-                {formatDateTime(booking.accepted_at)}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-zinc-800 bg-black p-3">
-              <p className="text-[11px] uppercase tracking-wide text-zinc-500">
-                Installer Pay
-              </p>
-              <p className="mt-1 text-sm font-semibold text-white">
-                {money(derivedInstallerPay)}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-zinc-800 bg-black p-3">
-              <p className="text-[11px] uppercase tracking-wide text-zinc-500">
-                Company Profit
-              </p>
-              <p
-                className={`mt-1 text-sm font-semibold ${getProfitTextClass(
-                  derivedCompanyProfit
-                )}`}
-              >
-                {money(derivedCompanyProfit)}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-zinc-800 bg-black p-3">
-              <p className="text-[11px] uppercase tracking-wide text-zinc-500">
-                Payout Status
-              </p>
-              <p className="mt-1 text-sm font-semibold text-white">
-                {booking.installer_pay_status || "-"}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
-              <p className="text-sm font-semibold text-yellow-400">
-                AI Suggested Installer Type
-              </p>
-              <p className="mt-1 text-sm text-gray-300">
-                {booking.ai_recommended_installer_type || "Standard Installer"}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3">
-              <p className="text-sm font-semibold text-yellow-400">AI Route Hint</p>
-              <p className="mt-1 text-sm text-gray-300">
-                {booking.ai_route_hint || "No route hint yet."}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-3 rounded-xl border border-purple-500/20 bg-purple-500/5 p-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <p className="text-sm font-semibold text-purple-300">
-                  AI Dispatch Recommendation
-                </p>
-
-                {dispatchLoadingId === booking.id ? (
-                  <p className="mt-1 text-sm text-gray-300">
-                    Calculating best installer...
-                  </p>
-                ) : recommendedInstaller ? (
-                  <div className="mt-1 space-y-1 text-sm text-gray-300">
-                    <p>
-                      Recommended:{" "}
-                      <span className="font-semibold text-white">
-                        {recommendedInstaller.name}
-                      </span>
-                    </p>
-                    <p>
-                      Score:{" "}
-                      <span className="font-semibold text-purple-300">
-                        {recommendedInstaller.score}
-                      </span>
-                    </p>
-                    <p className="text-xs text-zinc-400">
-                      Distance {recommendedInstaller.scoreBreakdown.distanceScore} •
-                      Rating {recommendedInstaller.scoreBreakdown.ratingScore} •
-                      Workload {recommendedInstaller.scoreBreakdown.workloadScore}
-                    </p>
-                  </div>
-                ) : (
-                  <p className="mt-1 text-sm text-gray-300">
-                    No recommendation yet.
-                  </p>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-2 md:items-end">
-                <button
-                  type="button"
-                  onClick={() => onRunDispatch(booking)}
-                  className="rounded-xl border border-purple-500/30 bg-purple-500/10 px-4 py-2 text-sm font-semibold text-purple-300 hover:bg-purple-500/20"
-                >
-                  {dispatchLoadingId === booking.id ? "Running..." : "Run AI Dispatch"}
-                </button>
-
-                {recommendedInstaller ? (
-                  <button
-                    type="button"
-                    onClick={() => onAssignRecommendedInstaller(booking)}
-                    disabled={savingId === booking.id}
-                    className="rounded-xl bg-purple-600 px-4 py-2 text-sm font-bold text-white hover:bg-purple-500 disabled:opacity-60"
-                  >
-                    {savingId === booking.id ? "Saving..." : "Assign Recommended"}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <p className="text-sm font-semibold text-blue-300">
-                  AI Grouping Recommendation
-                </p>
-
-                {groupingLoadingId === booking.id ? (
-                  <p className="mt-1 text-sm text-gray-300">
-                    Checking best grouped route...
-                  </p>
-                ) : groupingRecommendation ? (
-                  <div className="mt-1 space-y-1 text-sm text-gray-300">
-                    <p>
-                      Label:{" "}
-                      <span className="font-semibold text-white">
-                        {groupingRecommendation.groupingLabel}
-                      </span>
-                    </p>
-                    <p>
-                      Grouping Score:{" "}
-                      <span className="font-semibold text-blue-300">
-                        {groupingRecommendation.groupingScore}
-                      </span>
-                    </p>
-                    <p>{groupingRecommendation.routeHint}</p>
-                    {groupingRecommendation.matchedJobIds.length > 0 ? (
-                      <p className="text-xs text-zinc-400">
-                        Matches: {groupingRecommendation.matchedJobIds.join(", ")}
-                      </p>
-                    ) : null}
-                  </div>
-                ) : (
-                  <p className="mt-1 text-sm text-gray-300">
-                    No grouping recommendation yet.
-                  </p>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-2 md:items-end">
-                <button
-                  type="button"
-                  onClick={() => onRunGrouping(booking)}
-                  className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-300 hover:bg-blue-500/20"
-                >
-                  {groupingLoadingId === booking.id ? "Running..." : "Run AI Grouping"}
-                </button>
-
-                {groupingRecommendation ? (
-                  <button
-                    type="button"
-                    onClick={() => onSaveGrouping(booking)}
-                    disabled={savingId === booking.id}
-                    className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-500 disabled:opacity-60"
-                  >
-                    {savingId === booking.id ? "Saving..." : "Save Grouping"}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex w-full flex-col gap-3 xl:w-[260px]">
-          <button
-            type="button"
-            onClick={onToggle}
-            className="rounded-xl border border-zinc-700 px-4 py-3 text-sm font-semibold text-white transition hover:border-yellow-500 hover:text-yellow-400"
-          >
-            {expanded ? "Hide Details" : "View Full Details"}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onUpdate(booking.id, "status", "available")}
-            disabled={savingId === booking.id}
-            className="rounded-xl bg-yellow-500 px-4 py-3 text-sm font-bold text-black transition hover:bg-yellow-400 disabled:opacity-60"
-          >
-            {savingId === booking.id ? "Saving..." : "Set Live / Available"}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onUpdate(booking.id, "status", "in_progress")}
-            disabled={savingId === booking.id}
-            className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-sm font-bold text-cyan-300 transition hover:bg-cyan-500/20 disabled:opacity-60"
-          >
-            {savingId === booking.id ? "Saving..." : "Set In Progress"}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onUpdate(booking.id, "status", "completed")}
-            disabled={savingId === booking.id}
-            className="rounded-xl bg-green-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-green-500 disabled:opacity-60"
-          >
-            {savingId === booking.id ? "Saving..." : "Mark Completed"}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onUpdate(booking.id, "status", "incomplete")}
-            disabled={savingId === booking.id}
-            className="rounded-xl bg-red-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-red-500 disabled:opacity-60"
-          >
-            {savingId === booking.id ? "Saving..." : "Mark Incomplete"}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onUpdate(booking.id, "installer_pay_status", "ready")}
-            disabled={savingId === booking.id}
-            className="rounded-xl border border-zinc-700 bg-black px-4 py-3 text-sm font-bold text-white transition hover:border-yellow-500 disabled:opacity-60"
-          >
-            {savingId === booking.id ? "Saving..." : "Set Ready Payout"}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onUpdate(booking.id, "is_archived", booking.is_archived !== true)}
-            disabled={savingId === booking.id}
-            className="rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm font-bold text-zinc-200 transition hover:border-yellow-500 disabled:opacity-60"
-          >
-            {savingId === booking.id
-              ? "Saving..."
-              : booking.is_archived === true
-                ? "Unarchive Job"
-                : "Archive Job"}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onDelete(booking)}
-            disabled={savingId === booking.id}
-            className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-300 transition hover:bg-red-500/20 disabled:opacity-60"
-          >
-            {savingId === booking.id ? "Deleting..." : "Delete Job"}
-          </button>
-        </div>
-      </div>
-
-      {expanded ? (
-        <div className="flex flex-col gap-8 xl:flex-row xl:items-start xl:justify-between">
-          <div className="flex-1 space-y-6">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="rounded-xl border border-zinc-800 bg-black p-4">
-                <p className="mb-3 text-sm font-semibold text-yellow-400">
-                  Customer / Job Info
-                </p>
-                <div className="space-y-2 text-sm text-gray-300">
-                  <p>Job ID: {booking.job_id || booking.id}</p>
-                  <p>Booking Row ID: {booking.id}</p>
-                  {booking.job_group_id ? (
-                    <p>
-                      Group ID: {String(booking.job_group_id)}
-                      {booking.job_number ? ` • Job ${booking.job_number}` : ""}
-                    </p>
-                  ) : null}
-                  <p>Customer: {booking.customer_name || "-"}</p>
-                  <p>Email: {booking.customer_email || "-"}</p>
-                  <p>Phone: {booking.phone_number || "-"}</p>
-                  <p>Company: {booking.company_name || "-"}</p>
-                  <p>Material Type: {booking.material_type || "-"}</p>
-                  <p>Material Size: {booking.material_size || "-"}</p>
-                  <p>Sqft: {num(booking.sqft || booking.job_size) || "-"}</p>
-                  <p>Payment Method: {booking.payment_method || "-"}</p>
-                  <p>Timeline: {booking.timeline || "-"}</p>
-                  <p>Created: {formatDateTime(booking.created_at)}</p>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-zinc-800 bg-black p-4">
-                <p className="mb-3 text-sm font-semibold text-yellow-400">
-                  Route / Schedule
-                </p>
-                <div className="space-y-2 text-sm text-gray-300">
-                  <p>Scheduled Date: {booking.scheduled_date || "-"}</p>
-                  <p>Scheduled Time: {booking.scheduled_time || "-"}</p>
-                  <p>Pickup Window: {getPickupWindow(booking)}</p>
-                  <p>Pick Up: {booking.pickup_address || "-"}</p>
-                  <p>Drop Off: {booking.dropoff_address || "-"}</p>
-                  <p>Distance Tier: {booking.ai_distance_tier || "-"}</p>
-                  <p>Accepted At: {formatDateTime(booking.accepted_at)}</p>
-                  <p>Completed At: {formatDateTime(booking.completed_at)}</p>
-                  <p>Incomplete At: {formatDateTime(booking.incomplete_at)}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <ServiceBox title="Add-On Services" items={addOnServices} />
-              <ServiceBox title="Just Services" items={justServices} />
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="rounded-xl border border-zinc-800 bg-black p-4">
-                <p className="mb-3 text-sm font-semibold text-yellow-400">
-                  Incomplete / Return / Redo
-                </p>
-                <div className="space-y-2 text-sm text-gray-300">
-                  <p>Incomplete Reason: {booking.incomplete_reason || "-"}</p>
-                  <p>Incomplete Notes: {booking.incomplete_notes || "-"}</p>
-                  <p>
-                    Customer Return Fee:{" "}
-                    {money(booking.return_fee_charged || booking.return_fee)}
-                  </p>
-                  <p>
-                    Installer Return Pay: {money(booking.return_fee_installer_pay)}
-                  </p>
-                  <p>Mileage Fee: {money(booking.mileage_fee)}</p>
-                  <p>Admin Fee Note: {booking.admin_fee_note || "-"}</p>
-                  <p>Redo Requested: {booking.redo_requested ? "Yes" : "No"}</p>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-zinc-800 bg-black p-4">
-                <p className="mb-3 text-sm font-semibold text-yellow-400">
-                  Extra Details / Proof
-                </p>
-                <div className="space-y-2 text-sm text-gray-300">
-                  <p>Waterfall Quantity: {booking.waterfall_quantity || "-"}</p>
-                  <p>
-                    Outlet Plug Cutout Quantity:{" "}
-                    {booking.outlet_plug_cutout_quantity || "-"}
-                  </p>
-                  <p>
-                    Disposal Responsibility:{" "}
-                    {getDisposalResponsibilityLabel(booking.disposal_responsibility)}
-                  </p>
-                  <p>
-                    Customer Provided Signing Form:{" "}
-                    {booking.has_signing_form === true
-                      ? "Yes"
-                      : booking.has_signing_form === false
-                        ? "No"
-                        : "-"}
-                  </p>
-                  <ProofLink
-                    label="Completed Photo Proof"
-                    path={booking.completed_photo_url}
-                  />
-                  <ProofLink
-                    label="Completion Signature"
-                    path={booking.completion_signature_url}
-                  />
-                  <ProofLink
-                    label="Incomplete Photo Proof"
-                    path={booking.incomplete_photo_url}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-zinc-800 bg-black p-4">
-              <p className="mb-3 text-sm font-semibold text-yellow-400">
-                Pricing / Payout Breakdown
-              </p>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2 text-sm text-gray-300">
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                    <span>Subtotal</span>
-                    <span>{money(derivedSubtotal)}</span>
-                  </div>
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                    <span>HST</span>
-                    <span>{money(derivedHst)}</span>
-                  </div>
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                    <span>Final Total</span>
-                    <span>{money(derivedFinalTotal)}</span>
-                  </div>
-                  <div className="flex items-center justify-between pt-2 font-semibold text-yellow-400">
-                    <span>Company Profit</span>
-                    <span>{money(derivedCompanyProfit)}</span>
-                  </div>
-                </div>
-
-                <div className="space-y-2 text-sm text-gray-300">
-                  {payoutLines.length > 0 ? (
-                    <>
-                      {payoutLines.map((line) => (
-                        <div
-                          key={line.label}
-                          className="flex items-center justify-between border-b border-zinc-800 pb-2"
-                        >
-                          <span>{line.label}</span>
-                          <span>{money(line.amount)}</span>
-                        </div>
-                      ))}
-                    </>
-                  ) : null}
-
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                    <span>Subtotal Pay</span>
-                    <span>{money(booking.installer_subtotal_pay)}</span>
-                  </div>
-
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                    <span>HST Pay</span>
-                    <span>{money(booking.installer_hst_pay)}</span>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-2 font-semibold text-yellow-400">
-                    <span>Total Installer Pay</span>
-                    <span>{money(derivedInstallerPay)}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-zinc-800 bg-black p-4">
-              <p className="mb-3 text-sm font-semibold text-yellow-400">
-                Notes / Totals
-              </p>
-              <div className="space-y-2 text-sm text-gray-300">
-                <p>Notes: {booking.notes || "-"}</p>
-                <p>Side Note: {booking.side_note || "-"}</p>
-                <p>Subtotal: {money(derivedSubtotal)}</p>
-                <p>HST: {money(derivedHst)}</p>
-                <p className="font-semibold text-yellow-400">
-                  Total: {money(derivedFinalTotal)}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="w-full xl:w-[460px]">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-sm text-gray-400">
-                  Booking Status
-                </label>
-                <select
-                  value={booking.status || ""}
-                  onChange={(e) => onUpdate(booking.id, "status", e.target.value)}
-                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                >
-                  <option value="">Select Status</option>
-                  <option value="new">New</option>
-                  <option value="available">Available</option>
-                  <option value="pending">Pending</option>
-                  <option value="confirmed">Confirmed</option>
-                  <option value="accepted">Accepted</option>
-                  <option value="assigned">Assigned</option>
-                  <option value="in_progress">In Progress</option>
-                  <option value="incomplete">Incomplete</option>
-                  <option value="completed_pending_admin_review">
-                    Completed Pending Admin Review
-                  </option>
-                  <option value="completed">Completed</option>
-                  <option value="cancelled">Cancelled</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm text-gray-400">
-                  Customer Payment Status
-                </label>
-                <select
-                  value={booking.payment_status || ""}
-                  onChange={(e) =>
-                    onUpdate(booking.id, "payment_status", e.target.value)
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                >
-                  <option value="">Select Payment Status</option>
-                  <option value="unpaid">Unpaid</option>
-                  <option value="pending">Pending</option>
-                  <option value="paid">Paid</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm text-gray-400">
-                  Installer
-                </label>
-                <select
-                  value={booking.installer_name || ""}
-                  onChange={(e) =>
-                    onUpdate(booking.id, "installer_name", e.target.value)
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                >
-                  <option value="">Select Installer</option>
-                  {installers
-                    .filter((installer) => normalizeText(installer.status) !== "inactive")
-                    .map((installer) => {
-                      const installerDisplayName = getInstallerDisplayName(installer);
-
-                      return (
-                        <option key={installer.id} value={installerDisplayName}>
-                          {installerDisplayName}
-                        </option>
-                      );
-                    })}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm text-gray-400">
-                  Installer Pay
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  defaultValue={derivedInstallerPay}
-                  onBlur={(e) =>
-                    onUpdate(booking.id, "installer_pay", Number(e.target.value || 0))
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm text-gray-400">
-                  Installer Payout Status
-                </label>
-                <select
-                  value={booking.installer_pay_status || ""}
-                  onChange={(e) =>
-                    onUpdate(booking.id, "installer_pay_status", e.target.value)
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                >
-                  <option value="">Select Payout Status</option>
-                  <option value="unpaid">Unpaid</option>
-                  <option value="pending">Pending</option>
-                  <option value="pending_review">Pending Review</option>
-                  <option value="hold">Hold</option>
-                  <option value="ready">Ready</option>
-                  <option value="paid">Paid</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm text-gray-400">
-                  Company Profit
-                </label>
-                <input
-                  type="text"
-                  value={money(derivedCompanyProfit)}
-                  readOnly
-                  className="w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm text-gray-400">
-                  Customer Return Fee
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  defaultValue={num(booking.return_fee_charged || booking.return_fee)}
-                  onBlur={(e) =>
-                    onUpdate(
-                      booking.id,
-                      "return_fee_charged",
-                      Number(e.target.value || 0)
-                    )
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm text-gray-400">
-                  Installer Return Pay
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  defaultValue={num(booking.return_fee_installer_pay)}
-                  onBlur={(e) =>
-                    onUpdate(
-                      booking.id,
-                      "return_fee_installer_pay",
-                      Number(e.target.value || 0)
-                    )
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm text-gray-400">
-                  Installer Subtotal Pay
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  defaultValue={num(booking.installer_subtotal_pay)}
-                  onBlur={(e) =>
-                    onUpdate(
-                      booking.id,
-                      "installer_subtotal_pay",
-                      Number(e.target.value || 0)
-                    )
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm text-gray-400">
-                  Installer HST Pay
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  defaultValue={num(booking.installer_hst_pay)}
-                  onBlur={(e) =>
-                    onUpdate(
-                      booking.id,
-                      "installer_hst_pay",
-                      Number(e.target.value || 0)
-                    )
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm text-gray-400">
-                  Mileage Fee
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  defaultValue={num(booking.mileage_fee)}
-                  onBlur={(e) =>
-                    onUpdate(booking.id, "mileage_fee", Number(e.target.value || 0))
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <label className="mb-1 block text-sm text-gray-400">
-                  Incomplete Reason
-                </label>
-                <input
-                  type="text"
-                  defaultValue={booking.incomplete_reason || ""}
-                  onBlur={(e) =>
-                    onUpdate(booking.id, "incomplete_reason", e.target.value)
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <label className="mb-1 block text-sm text-gray-400">
-                  Incomplete Notes
-                </label>
-                <input
-                  type="text"
-                  defaultValue={booking.incomplete_notes || ""}
-                  onBlur={(e) =>
-                    onUpdate(booking.id, "incomplete_notes", e.target.value)
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <label className="mb-1 block text-sm text-gray-400">
-                  Admin Fee Note
-                </label>
-                <input
-                  type="text"
-                  defaultValue={booking.admin_fee_note || ""}
-                  onBlur={(e) =>
-                    onUpdate(booking.id, "admin_fee_note", e.target.value)
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <label className="mb-1 block text-sm text-gray-400">
-                  Admin Notes
-                </label>
-                <input
-                  type="text"
-                  defaultValue={booking.notes || ""}
-                  onBlur={(e) => onUpdate(booking.id, "notes", e.target.value)}
-                  className="w-full rounded-xl border border-zinc-700 bg-black p-3 text-white"
-                />
-              </div>
-            </div>
-
-            <div className="mt-4 rounded-xl border border-zinc-700 p-4 text-sm text-gray-300">
-              <p className="mb-1">
-                Jobs in <span className="text-yellow-400">Available</span> or{" "}
-                <span className="text-yellow-400">Pending</span> are live for installer
-                acceptance.
-              </p>
-              <p className="mb-1">
-                Incomplete jobs can carry customer return fees, installer return pay,
-                mileage fees, payout hold, and redo request tracking.
-              </p>
-              <p className="mb-1">
-                Completed jobs can include photo proof and optional signed completion
-                forms.
-              </p>
-              <p>
-                When a job is marked completed and installer pay is set, payout status can
-                move to <span className="text-yellow-400">Ready</span>.
-              </p>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <p className="mt-2 text-lg font-semibold text-white">{value}</p>
     </div>
   );
 }
 
 export default function AdminBookingsPage() {
   const supabase = useMemo(() => createClient(), []);
-  const [bookings, setBookings] = useState<Booking[]>([]);
-  const [installers, setInstallers] = useState<Installer[]>([]);
+
+  const [rows, setRows] = useState<BookingRow[]>([]);
+  const [installers, setInstallers] = useState<InstallerProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState("");
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
-  const [dispatchMap, setDispatchMap] = useState<Record<string, DispatchRecommendation>>({});
-  const [dispatchLoadingId, setDispatchLoadingId] = useState("");
-  const [groupingMap, setGroupingMap] = useState<Record<string, GroupingRecommendation>>({});
-  const [groupingLoadingId, setGroupingLoadingId] = useState("");
+  const [filter, setFilter] = useState<FilterValue>("all");
+  const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    void loadAllData();
+    void loadData();
   }, []);
 
-  async function loadAllData() {
+  async function loadData() {
     setLoading(true);
-    await Promise.all([loadBookings(), loadInstallers()]);
+
+    const [bookingsRes, installersRes] = await Promise.all([
+      supabase.from("bookings").select("*").order("created_at", { ascending: false }),
+      supabase.from("installer_profiles").select("*").order("full_name", { ascending: true }),
+    ]);
+
+    if (bookingsRes.error) {
+      console.error("BOOKINGS LOAD ERROR:", bookingsRes.error);
+      alert(bookingsRes.error.message || "Failed to load bookings.");
+      setLoading(false);
+      return;
+    }
+
+    if (installersRes.error) {
+      console.error("INSTALLERS LOAD ERROR:", installersRes.error);
+    }
+
+    const bookingRows = ((bookingsRes.data as Booking[]) || []).map((job) => ({
+      ...job,
+      _calc: calculatePricing(job),
+    }));
+
+    setRows(bookingRows);
+    setInstallers((installersRes.data as InstallerProfile[]) || []);
     setLoading(false);
   }
 
-  async function loadBookings() {
-    const { data, error } = await supabase
-      .from("bookings")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.error("Error loading bookings:", error);
-      alert("Could not load bookings.");
-      return;
-    }
-
-    const safeData: Booking[] = ((data as Booking[]) || []).map((booking) => {
-      const installerPay = getDerivedInstallerPay(booking);
-      const finalTotal = getDerivedFinalTotal(booking);
-      const subtotal = getDerivedSubtotal(booking);
-      const hst = getDerivedHst(booking);
-      const companyProfit = getDerivedCompanyProfit({
-        ...booking,
-        installer_pay: installerPay,
-        final_total: finalTotal,
-        subtotal,
-        hst_amount: hst,
-      });
-
-      return {
-        ...booking,
-        installer_pay: installerPay,
-        company_profit: companyProfit,
-        final_total: finalTotal,
-        subtotal,
-        hst,
-        hst_amount: hst,
-        sqft: num(booking.sqft || booking.job_size),
-        installer_subtotal_pay: num(booking.installer_subtotal_pay),
-        installer_hst_pay: num(booking.installer_hst_pay),
-        mileage_fee: num(booking.mileage_fee),
-        return_fee: num(booking.return_fee),
-        return_fee_charged: num(booking.return_fee_charged),
-        return_fee_installer_pay: num(booking.return_fee_installer_pay),
-        service_price: num(booking.service_price),
-        mileage_charge: num(booking.mileage_charge),
-        customer_add_on_total: num(booking.customer_add_on_total),
-        customer_just_service_total: num(booking.customer_just_service_total),
-      };
-    });
-
-    setBookings(safeData);
-  }
-
-  async function loadInstallers() {
-    const { data, error } = await supabase
-      .from("installer_profiles")
-      .select("*")
-      .order("full_name", { ascending: true });
-
-    if (error) {
-      console.error("Error loading installers:", error);
-      return;
-    }
-
-    setInstallers((data as Installer[]) || []);
-  }
-
-  function buildDispatchInstallers(currentBooking: Booking): DispatchInstaller[] {
-    const acceptedCountByName = bookings.reduce<Record<string, number>>((acc, item) => {
-      const normalized = normalizeBookingStatus(item);
-      const assignedName = safeText(item.reassigned_installer_name || item.installer_name);
-
-      if (
-        assignedName &&
-        item.is_archived !== true &&
-        (normalized === "accepted" || normalized === "in_progress")
-      ) {
-        acc[assignedName] = (acc[assignedName] || 0) + 1;
-      }
-
-      return acc;
-    }, {});
-
-    return installers
-      .filter((installer) => normalizeText(installer.status) !== "inactive")
-      .map((installer) => {
-        const name = getInstallerDisplayName(installer);
-        const activeJobs = acceptedCountByName[name] || 0;
-
-        let distanceKm = 15;
-
-        const routeText = `${safeText(currentBooking.pickup_address)} ${safeText(
-          currentBooking.dropoff_address
-        )}`.toLowerCase();
-
-        if (routeText.includes("toronto")) distanceKm = 10;
-        if (routeText.includes("mississauga")) distanceKm = 18;
-        if (routeText.includes("brampton")) distanceKm = 22;
-        if (routeText.includes("vaughan")) distanceKm = 16;
-        if (routeText.includes("scarborough")) distanceKm = 20;
-        if (routeText.includes("markham")) distanceKm = 19;
-        if (routeText.includes("north york")) distanceKm = 12;
-        if (routeText.includes("etobicoke")) distanceKm = 14;
-
-        return {
-          id: installer.id,
-          name,
-          distanceKm,
-          rating: num(installer.rating) || 4.5,
-          activeJobs,
-        };
-      });
-  }
-
-  function getOpenBookingsForGrouping(currentBooking: Booking) {
-    return bookings.filter((item) => {
-      if (item.id === currentBooking.id) return false;
-      if (item.is_archived === true) return false;
-      const s = normalizeBookingStatus(item);
-      return s === "available" || s === "pending" || s === "new";
-    });
-  }
-
-  async function runDispatchForBooking(booking: Booking) {
-    try {
-      setDispatchLoadingId(booking.id);
-
-      const dispatchInstallers = buildDispatchInstallers(booking);
-
-      const res = await fetch("/api/ai/dispatch", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          bookingId: booking.id,
-          jobId: booking.job_id,
-          installers: dispatchInstallers,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data?.error || "Failed to run AI dispatch");
-      }
-
-      setDispatchMap((prev) => ({
-        ...prev,
-        [booking.id]: data.result,
-      }));
-    } catch (error) {
-      console.error("Dispatch recommendation failed:", error);
-      alert("Could not run AI dispatch.");
-    } finally {
-      setDispatchLoadingId("");
-    }
-  }
-
-  async function runGroupingForBooking(booking: Booking) {
-    try {
-      setGroupingLoadingId(booking.id);
-
-      const openBookings = getOpenBookingsForGrouping(booking);
-
-      const res = await fetch("/api/ai/grouping", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          currentBooking: booking,
-          openBookings,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data?.error || "Failed to run AI grouping");
-      }
-
-      setGroupingMap((prev) => ({
-        ...prev,
-        [booking.id]: data.result,
-      }));
-    } catch (error) {
-      console.error("Grouping recommendation failed:", error);
-      alert("Could not run AI grouping.");
-    } finally {
-      setGroupingLoadingId("");
-    }
-  }
-
-  async function saveGroupingForBooking(booking: Booking) {
-    const grouping = groupingMap[booking.id];
-    if (!grouping) return;
-
-    setSavingId(booking.id);
-
-    const { error } = await supabase
-      .from("bookings")
-      .update({
-        ai_grouping_label: grouping.groupingLabel,
-        ai_route_hint: grouping.routeHint,
-        ai_priority_score: grouping.groupingScore,
-      })
-      .eq("id", booking.id);
-
-    if (error) {
-      console.error("Error saving grouping:", error);
-      alert("Could not save grouping.");
-      setSavingId("");
-      return;
-    }
-
-    await loadBookings();
-    setSavingId("");
-  }
-
-  async function assignRecommendedInstaller(booking: Booking) {
-    const recommendedInstaller = dispatchMap[booking.id]?.recommended;
-    if (!recommendedInstaller) return;
-
-    await updateBookingField(booking.id, "installer_name", recommendedInstaller.name);
-  }
-
-  async function deleteBooking(booking: Booking) {
-    const label = booking.job_id || booking.id;
-    const confirmed = window.confirm(
-      `Delete job ${label}?\n\nThis removes the booking from the system.`
-    );
-
-    if (!confirmed) return;
-
-    setSavingId(booking.id);
-
-    const { error } = await supabase.from("bookings").delete().eq("id", booking.id);
-
-    if (error) {
-      console.error("Error deleting booking:", error);
-      alert("Could not delete booking.");
-      setSavingId("");
-      return;
-    }
-
-    await loadBookings();
-    setSavingId("");
-  }
-
-  async function updateBookingField(
-    id: string,
-    field: keyof Booking,
-    value: string | number | boolean | null
-  ) {
-    const currentBooking = bookings.find((item) => item.id === id);
-    if (!currentBooking) return;
-
-    setSavingId(id);
-
-    const updateData: Record<string, string | number | boolean | null> = {
-      [field]: value,
+  function refreshRow(job: Booking) {
+    return {
+      ...job,
+      _calc: calculatePricing(job),
     };
-
-    const currentFinalTotal = getDerivedFinalTotal(currentBooking);
-    const currentInstallerPay = getDerivedInstallerPay(currentBooking);
-
-    if (field === "installer_pay") {
-      const installerPay = num(value);
-      updateData.company_profit = currentFinalTotal - installerPay;
-    }
-
-    if (field === "final_total") {
-      const finalTotal = num(value);
-      updateData.company_profit = finalTotal - currentInstallerPay;
-    }
-
-    if (field === "installer_subtotal_pay" || field === "installer_hst_pay") {
-      const subtotalPay =
-        field === "installer_subtotal_pay"
-          ? num(value)
-          : num(currentBooking.installer_subtotal_pay);
-      const hstPay =
-        field === "installer_hst_pay"
-          ? num(value)
-          : num(currentBooking.installer_hst_pay);
-
-      const totalInstallerPay = subtotalPay + hstPay;
-      updateData.installer_pay = totalInstallerPay;
-      updateData.company_profit = currentFinalTotal - totalInstallerPay;
-    }
-
-    if (
-      field === "return_fee_charged" ||
-      field === "return_fee" ||
-      field === "mileage_fee"
-    ) {
-      const finalTotal = getDerivedFinalTotal({
-        ...currentBooking,
-        return_fee_charged:
-          field === "return_fee_charged" ? num(value) : currentBooking.return_fee_charged,
-        return_fee: field === "return_fee" ? num(value) : currentBooking.return_fee,
-        mileage_fee: field === "mileage_fee" ? num(value) : currentBooking.mileage_fee,
-      });
-
-      updateData.final_total = finalTotal;
-      updateData.company_profit = finalTotal - currentInstallerPay;
-    }
-
-    if (field === "status" && value === "completed_pending_admin_review") {
-      updateData.installer_pay_status = "pending_review";
-      updateData.completed_at = new Date().toISOString();
-      updateData.incomplete_at = null;
-    }
-
-    if (field === "status" && value === "completed") {
-      updateData.completed_at = new Date().toISOString();
-      updateData.incomplete_at = null;
-
-      if (
-        currentBooking.installer_name &&
-        getDerivedInstallerPay(currentBooking) > 0 &&
-        (
-          normalizeText(currentBooking.installer_pay_status || "unpaid") === "unpaid" ||
-          normalizeText(currentBooking.installer_pay_status) === "pending_review"
-        )
-      ) {
-        updateData.installer_pay_status = "ready";
-      }
-    }
-
-    if (field === "status" && value === "incomplete") {
-      updateData.incomplete_at = new Date().toISOString();
-      updateData.completed_at = null;
-
-      const reason =
-        safeText(currentBooking.incomplete_reason) ||
-        window.prompt(
-          "Enter incomplete reason (customer, shop, installer, access issue, damage, other):",
-          ""
-        ) ||
-        "";
-
-      const notes =
-        safeText(currentBooking.incomplete_notes) ||
-        window.prompt("Add incomplete notes for admin:", "") ||
-        "";
-
-      updateData.incomplete_reason = reason;
-      updateData.incomplete_notes = notes;
-
-      const normalizedReason = reason.toLowerCase();
-
-      if (
-        normalizedReason.includes("customer") ||
-        normalizedReason.includes("shop") ||
-        normalizedReason.includes("homeowner")
-      ) {
-        if (!num(currentBooking.return_fee_charged || currentBooking.return_fee)) {
-          updateData.return_fee_charged = 200;
-        }
-        if (!num(currentBooking.return_fee_installer_pay)) {
-          updateData.return_fee_installer_pay = 180;
-        }
-      }
-
-      if (
-        normalizedReason.includes("installer") ||
-        normalizeText(currentBooking.installer_pay_status) === "ready"
-      ) {
-        updateData.installer_pay_status = "hold";
-      }
-    }
-
-    if (
-      field === "status" &&
-      value !== "completed" &&
-      value !== "completed_pending_admin_review" &&
-      value !== "incomplete"
-    ) {
-      updateData.completed_at = null;
-      updateData.incomplete_at = null;
-
-      if (
-        normalizeText(currentBooking.installer_pay_status) === "ready" ||
-        normalizeText(currentBooking.installer_pay_status) === "pending_review"
-      ) {
-        updateData.installer_pay_status = "unpaid";
-      }
-    }
-
-    if (field === "status" && value === "accepted") {
-      updateData.accepted_at = new Date().toISOString();
-    }
-
-    if (
-      field === "status" &&
-      (value === "available" || value === "pending" || value === "new")
-    ) {
-      updateData.installer_name = null;
-      updateData.reassigned_installer_name = null;
-      updateData.accepted_at = null;
-      updateData.completed_at = null;
-      updateData.incomplete_at = null;
-    }
-
-    if (field === "installer_name" && value) {
-      updateData.reassigned_installer_name = null;
-
-      if (
-        ["available", "confirmed", "assigned", "new", "pending"].includes(
-          normalizeText(currentBooking.status)
-        )
-      ) {
-        updateData.status = "accepted";
-        updateData.accepted_at = new Date().toISOString();
-      }
-    }
-
-    if (field === "installer_name" && !value) {
-      updateData.reassigned_installer_name = null;
-
-      if (
-        normalizeText(currentBooking.status) === "accepted" ||
-        normalizeText(currentBooking.status) === "assigned" ||
-        normalizeText(currentBooking.status) === "confirmed"
-      ) {
-        updateData.status = "available";
-      }
-    }
-
-    const { error } = await supabase
-      .from("bookings")
-      .update(updateData)
-      .eq("id", id);
-
-    if (error) {
-      console.error("Error updating booking:", error);
-      alert("Could not update booking.");
-      setSavingId("");
-      return;
-    }
-
-    await loadBookings();
-    setSavingId("");
   }
 
   function toggleExpanded(id: string) {
-    setExpandedRows((prev) => ({
-      ...prev,
-      [id]: !prev[id],
-    }));
+    setExpandedIds((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
-  const filteredBookings = useMemo(() => {
+  async function updateBooking(id: string, updates: Partial<Booking>) {
+    setSavingId(id);
+
+    const { error } = await supabase.from("bookings").update(updates).eq("id", id);
+
+    if (error) {
+      console.error("UPDATE BOOKING ERROR:", error);
+      alert(error.message || "Failed to save booking.");
+      setSavingId("");
+      return false;
+    }
+
+    setRows((prev) =>
+      prev.map((item) => (item.id === id ? refreshRow({ ...item, ...updates }) : item))
+    );
+
+    setSavingId("");
+    return true;
+  }
+
+  async function saveComputedPricing(row: BookingRow) {
+    const c = row._calc;
+
+    await updateBooking(row.id, {
+      installer_base_pay: c.installerBasePay,
+      installer_addon_pay: c.installerAddonPay,
+      installer_other_pay: c.installerOtherPay,
+      installer_cut_polish_pay: c.installerCutPolishPay,
+      installer_sink_pay: c.installerSinkPay,
+      installer_mileage_pay: c.installerMileagePay,
+      installer_subtotal_pay: c.installerSubtotalPay,
+      installer_hst_pay: c.installerHstPay,
+      installer_pay: c.installerTotalPay,
+      installer_total_pay: c.installerTotalPay,
+      return_fee_installer_pay: c.installerReturnPay,
+      company_profit: c.companyProfit,
+      service_price: c.customerSubtotal,
+      final_total: c.customerFinalTotal,
+      installer_payout_lines: c.payoutLines,
+    });
+  }
+
+  function updateLocalRow(id: string, patch: Partial<Booking>) {
+    setRows((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        return refreshRow({ ...item, ...patch });
+      })
+    );
+  }
+
+  const filteredRows = useMemo(() => {
     const term = search.trim().toLowerCase();
 
-    return bookings
-      .filter((booking) => matchesStatusFilter(booking, statusFilter))
-      .filter((booking) => {
-        if (!term) return true;
+    return rows.filter((row) => {
+      if (filter !== "all") {
+        const status = normalizeStatus(row.status, row.is_archived);
+        if (status !== filter) return false;
+      }
 
-        return (
-          safeText(booking.job_id).toLowerCase().includes(term) ||
-          safeText(booking.id).toLowerCase().includes(term) ||
-          safeText(booking.customer_name).toLowerCase().includes(term) ||
-          safeText(booking.customer_email).toLowerCase().includes(term) ||
-          safeText(booking.company_name).toLowerCase().includes(term) ||
-          safeText(booking.phone_number).toLowerCase().includes(term) ||
-          safeText(booking.pickup_address).toLowerCase().includes(term) ||
-          safeText(booking.dropoff_address).toLowerCase().includes(term) ||
-          safeText(booking.timeline).toLowerCase().includes(term) ||
-          safeText(booking.scheduled_date).toLowerCase().includes(term) ||
-          safeText(booking.scheduled_time).toLowerCase().includes(term) ||
-          safeText(booking.pickup_time_slot).toLowerCase().includes(term) ||
-          safeText(booking.service_type).toLowerCase().includes(term) ||
-          safeText(booking.service_type_label).toLowerCase().includes(term) ||
-          safeText(booking.payment_method).toLowerCase().includes(term) ||
-          safeText(normalizeBookingStatus(booking)).toLowerCase().includes(term) ||
-          safeText(booking.payment_status).toLowerCase().includes(term) ||
-          safeText(booking.installer_name).toLowerCase().includes(term) ||
-          safeText(booking.reassigned_installer_name).toLowerCase().includes(term) ||
-          safeText(booking.installer_pay_status).toLowerCase().includes(term) ||
-          safeText(booking.notes).toLowerCase().includes(term) ||
-          safeText(booking.incomplete_reason).toLowerCase().includes(term) ||
-          safeText(booking.incomplete_notes).toLowerCase().includes(term) ||
-          safeText(booking.admin_fee_note).toLowerCase().includes(term) ||
-          safeText(booking.ai_grouping_label).toLowerCase().includes(term) ||
-          safeText(booking.ai_recommended_installer_type).toLowerCase().includes(term) ||
-          safeText(booking.ai_urgency_label).toLowerCase().includes(term)
-        );
-      });
-  }, [bookings, search, statusFilter]);
+      if (!term) return true;
 
-  const visibleNonArchived = useMemo(
-    () => filteredBookings.filter((item) => item.is_archived !== true),
-    [filteredBookings]
-  );
-
-  const groupedBuckets = useMemo(() => {
-    const map = new Map<string, Booking[]>();
-
-    visibleNonArchived.forEach((booking) => {
-      const key = String(booking.job_group_id || booking.id);
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(booking);
+      return (
+        safeText(row.job_id).toLowerCase().includes(term) ||
+        safeText(row.customer_name).toLowerCase().includes(term) ||
+        safeText(row.company_name).toLowerCase().includes(term) ||
+        safeText(row.installer_name).toLowerCase().includes(term) ||
+        safeText(row.reassigned_installer_name).toLowerCase().includes(term) ||
+        safeText(row.status).toLowerCase().includes(term) ||
+        safeText(row.pickup_address).toLowerCase().includes(term) ||
+        safeText(row.dropoff_address).toLowerCase().includes(term)
+      );
     });
-
-    return Array.from(map.entries())
-      .map(([groupKey, jobs]) => ({
-        groupKey,
-        jobs: [...jobs].sort(
-          (a, b) => num(a.job_number) - num(b.job_number)
-        ),
-      }))
-      .filter((group) => group.jobs.length > 1);
-  }, [visibleNonArchived]);
+  }, [rows, search, filter]);
 
   const summary = useMemo(() => {
-    const countBy = (filter: StatusFilter) =>
-      bookings.filter((item) => matchesStatusFilter(item, filter)).length;
-
-    const readyPayout = bookings.filter(
-      (item) => normalizeText(item.installer_pay_status) === "ready"
+    const totalInstallerPay = filteredRows.reduce((sum, item) => sum + item._calc.installerTotalPay, 0);
+    const totalProfit = filteredRows.reduce((sum, item) => sum + item._calc.companyProfit, 0);
+    const available = filteredRows.filter(
+      (item) => item._calc.normalizedStatus === "available" || item._calc.normalizedStatus === "pending"
     ).length;
-
-    const acceptedAssigned = bookings.filter(
-      (item) =>
-        item.is_archived !== true &&
-        (
-          normalizeBookingStatus(item) === "accepted" ||
-          safeText(item.installer_name).length > 0 ||
-          safeText(item.reassigned_installer_name).length > 0
-        )
+    const completed = filteredRows.filter((item) =>
+      ["completed", "completed_pending_admin_review"].includes(item._calc.normalizedStatus)
     ).length;
-
-    const totalProfit = bookings.reduce(
-      (sum, item) => sum + getDerivedCompanyProfit(item),
-      0
-    );
 
     return {
-      new: countBy("new"),
-      available: countBy("available"),
-      pending: countBy("pending"),
-      accepted: countBy("accepted"),
-      inProgress: countBy("in_progress"),
-      incomplete: countBy("incomplete"),
-      completed: countBy("completed"),
-      cancelled: countBy("cancelled"),
-      archived: countBy("archived"),
-      readyPayout,
-      acceptedAssigned,
-      total: bookings.length,
+      jobs: filteredRows.length,
+      available,
+      completed,
+      totalInstallerPay,
       totalProfit,
-      groupedRuns: groupedBuckets.length,
     };
-  }, [bookings, groupedBuckets]);
-
-  const availableJobs = useMemo(
-    () =>
-      visibleNonArchived.filter((item) => {
-        const s = normalizeBookingStatus(item);
-        return s === "available" || s === "pending" || s === "new";
-      }),
-    [visibleNonArchived]
-  );
-
-  const acceptedJobs = useMemo(
-    () =>
-      visibleNonArchived.filter((item) => {
-        const s = normalizeBookingStatus(item);
-        return s === "accepted";
-      }),
-    [visibleNonArchived]
-  );
-
-  const inProgressJobs = useMemo(
-    () =>
-      visibleNonArchived.filter((item) => {
-        const s = normalizeBookingStatus(item);
-        return s === "in_progress";
-      }),
-    [visibleNonArchived]
-  );
-
-  const incompleteJobs = useMemo(
-    () =>
-      visibleNonArchived.filter((item) => {
-        const s = normalizeBookingStatus(item);
-        return s === "incomplete";
-      }),
-    [visibleNonArchived]
-  );
-
-  const completedJobs = useMemo(
-    () =>
-      visibleNonArchived.filter((item) => {
-        const s = normalizeBookingStatus(item);
-        return s === "completed";
-      }),
-    [visibleNonArchived]
-  );
-
-  const archivedJobs = useMemo(
-    () => filteredBookings.filter((item) => item.is_archived === true),
-    [filteredBookings]
-  );
-
-  const otherJobs = useMemo(
-    () =>
-      visibleNonArchived.filter((item) => {
-        const s = normalizeBookingStatus(item);
-        return ![
-          "available",
-          "pending",
-          "new",
-          "accepted",
-          "in_progress",
-          "incomplete",
-          "completed",
-        ].includes(s);
-      }),
-    [visibleNonArchived]
-  );
-
-  function renderSection(
-    title: string,
-    subtitle: string,
-    items: Booking[]
-  ) {
-    if (items.length === 0) return null;
-
-    return (
-      <section className="space-y-4">
-        <SectionHeader title={title} subtitle={subtitle} />
-        {items.map((booking) => (
-          <BookingCard
-            key={booking.id}
-            booking={booking}
-            allBookings={bookings}
-            installers={installers}
-            expanded={Boolean(expandedRows[booking.id])}
-            onToggle={() => toggleExpanded(booking.id)}
-            onUpdate={updateBookingField}
-            onDelete={deleteBooking}
-            savingId={savingId}
-            dispatchRecommendation={dispatchMap[booking.id]}
-            dispatchLoadingId={dispatchLoadingId}
-            onRunDispatch={runDispatchForBooking}
-            onAssignRecommendedInstaller={assignRecommendedInstaller}
-            groupingRecommendation={groupingMap[booking.id]}
-            groupingLoadingId={groupingLoadingId}
-            onRunGrouping={runGroupingForBooking}
-            onSaveGrouping={saveGroupingForBooking}
-          />
-        ))}
-      </section>
-    );
-  }
+  }, [filteredRows]);
 
   return (
-    <main className="min-h-screen bg-black px-6 py-10 text-white">
-      <div className="mx-auto max-w-7xl">
-        <h1 className="mb-2 text-4xl font-bold text-yellow-500">Admin Bookings</h1>
+    <main className="min-h-screen bg-black p-6 text-white">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+          <h1 className="text-4xl font-bold text-yellow-500">Admin Bookings</h1>
+          <p className="mt-2 text-gray-400">
+            Live booking control, installer payout calculation, customer totals, and company profit.
+          </p>
+        </div>
 
-        <p className="mb-6 text-gray-300">
-          Manage all bookings, push jobs live, dispatch installers, review incomplete
-          jobs, track AI priority, monitor profit, control payout readiness, and run
-          grouped route suggestions.
-        </p>
-
-        <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-          <StatCard label="All Jobs" value={String(summary.total)} />
-          <StatCard
-            label="Available / Live"
-            value={String(summary.available + summary.pending + summary.new)}
-          />
-          <StatCard label="Accepted" value={String(summary.accepted)} />
-          <StatCard label="In Progress" value={String(summary.inProgress)} />
-          <StatCard label="Incomplete" value={String(summary.incomplete)} />
+        <div className="grid gap-4 md:grid-cols-5">
+          <StatCard label="Jobs" value={String(summary.jobs)} />
+          <StatCard label="Available / Live" value={String(summary.available)} />
           <StatCard label="Completed" value={String(summary.completed)} />
+          <StatCard label="Total Installer Pay" value={money(summary.totalInstallerPay)} />
+          <StatCard label="Company Profit" value={money(summary.totalProfit)} />
         </div>
 
-        <div className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <StatCard label="Ready Payout" value={String(summary.readyPayout)} />
-          <StatCard
-            label="Accepted / Assigned"
-            value={String(summary.acceptedAssigned)}
-          />
-          <StatCard label="Grouped Runs" value={String(summary.groupedRuns)} />
-          <StatCard label="Archived" value={String(summary.archived)} />
-          <StatCard label="Total Profit" value={money(summary.totalProfit)} />
-        </div>
-
-        <div className="mb-4">
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search job ID, customer, company, installer, status, address..."
-            className="w-full rounded-xl border border-zinc-700 bg-zinc-900 p-4 text-white outline-none"
+            className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
           />
-        </div>
 
-        <div className="mb-8 flex flex-wrap gap-3">
-          {(
-            [
-              ["all", "All"],
-              ["new", "New"],
-              ["available", "Available"],
-              ["pending", "Pending"],
-              ["accepted", "Accepted"],
-              ["in_progress", "In Progress"],
-              ["incomplete", "Incomplete"],
-              ["completed", "Completed"],
-              ["cancelled", "Cancelled"],
-              ["archived", "Archived"],
-            ] as [StatusFilter, string][]
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setStatusFilter(value)}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold ${
-                statusFilter === value
-                  ? "bg-yellow-500 text-black"
-                  : "border border-zinc-700 bg-zinc-900 text-white hover:border-yellow-500 hover:text-yellow-400"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+          <div className="mt-4 flex flex-wrap gap-2">
+            {(
+              [
+                "all",
+                "new",
+                "available",
+                "pending",
+                "accepted",
+                "in_progress",
+                "incomplete",
+                "completed",
+                "cancelled",
+                "archived",
+              ] as FilterValue[]
+            ).map((value) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setFilter(value)}
+                className={`rounded-xl border px-4 py-2 text-sm font-semibold ${
+                  filter === value
+                    ? "border-yellow-400 bg-yellow-500 text-black"
+                    : "border-zinc-700 bg-black text-white hover:border-yellow-500 hover:text-yellow-400"
+                }`}
+              >
+                {value.replaceAll("_", " ")}
+              </button>
+            ))}
+          </div>
         </div>
 
         {loading ? (
-          <div className="text-gray-300">Loading bookings...</div>
-        ) : filteredBookings.length === 0 ? (
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6 text-gray-300">
+            Loading bookings...
+          </div>
+        ) : filteredRows.length === 0 ? (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6 text-gray-300">
             No bookings found.
           </div>
         ) : (
-          <div className="space-y-8">
-            {groupedBuckets.length > 0 && statusFilter !== "archived" ? (
-              <section className="space-y-4">
-                <SectionHeader
-                  title="Grouped Job Runs"
-                  subtitle="Admin visibility for grouped jobs on the same run."
-                />
-                {groupedBuckets.map((group) => (
-                  <GroupSummaryCard
-                    key={group.groupKey}
-                    group={group}
-                    allBookings={bookings}
-                  />
-                ))}
-              </section>
-            ) : null}
+          <div className="space-y-5">
+            {filteredRows.map((row) => {
+              const calc = row._calc;
+              const expanded = Boolean(expandedIds[row.id]);
+              const activeInstaller =
+                safeText(row.reassigned_installer_name) ||
+                safeText(row.installer_name) ||
+                "Unassigned";
 
-            {renderSection(
-              "Available / Live Jobs",
-              "These jobs are visible for installer acceptance or ready to go live.",
-              availableJobs
-            )}
+              return (
+                <div key={row.id} className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+                  <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="flex-1">
+                      <div className="mb-4 flex flex-wrap items-center gap-2">
+                        <p className="text-3xl font-bold text-yellow-500">
+                          {row.company_name || row.customer_name || "Job"}
+                        </p>
+                        <Badge label="Status" value={calc.normalizedStatus.replaceAll("_", " ")} />
+                        <Badge label="Payout" value={safeText(row.installer_pay_status) || "unpaid"} />
+                        <Badge
+                          label="Profit"
+                          value={
+                            calc.companyProfit < 0
+                              ? "Negative / No Profit"
+                              : calc.companyProfit > 0
+                              ? "Positive Profit"
+                              : "No Profit"
+                          }
+                          className={
+                            calc.companyProfit < 0
+                              ? "border-red-500/30 bg-red-500/10 text-red-300"
+                              : calc.companyProfit > 0
+                              ? "border-green-500/30 bg-green-500/10 text-green-300"
+                              : "border-zinc-700 bg-zinc-800/40 text-zinc-300"
+                          }
+                        />
+                      </div>
 
-            {renderSection(
-              "Accepted Jobs",
-              "These jobs have been accepted and are now assigned.",
-              acceptedJobs
-            )}
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                        <StatCard label="Job" value={row.job_id || row.id} />
+                        <StatCard label="Date" value={row.scheduled_date || "-"} />
+                        <StatCard label="Pickup Window" value={getPickupWindow(row)} />
+                        <StatCard label="Service" value={calc.serviceLabel} />
+                        <StatCard label="Installer" value={activeInstaller} />
+                        <StatCard label="Status" value={calc.normalizedStatus.replaceAll("_", " ")} />
+                        <StatCard label="Accepted Time" value={row.accepted_at || "-"} />
+                        <StatCard label="Installer Pay" value={money(calc.installerTotalPay)} />
+                        <StatCard
+                          label="Company Profit"
+                          value={money(calc.companyProfit)}
+                          className={calc.companyProfit < 0 ? "border-red-500/30" : ""}
+                        />
+                        <StatCard label="Payout Status" value={safeText(row.installer_pay_status) || "unpaid"} />
+                      </div>
+                    </div>
 
-            {renderSection(
-              "In Progress Jobs",
-              "These jobs are underway and should be monitored closely.",
-              inProgressJobs
-            )}
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => toggleExpanded(row.id)}
+                        className="rounded-xl border border-zinc-700 px-4 py-3 font-semibold text-white hover:border-yellow-500 hover:text-yellow-400"
+                      >
+                        {expanded ? "Hide Details" : "View Full Details"}
+                      </button>
 
-            {renderSection(
-              "Incomplete Jobs",
-              "These jobs need follow-up, fees review, redo planning, or payout hold.",
-              incompleteJobs
-            )}
+                      <button
+                        type="button"
+                        onClick={() => void saveComputedPricing(row)}
+                        disabled={savingId === row.id}
+                        className="rounded-xl bg-yellow-500 px-4 py-3 font-semibold text-black hover:bg-yellow-400 disabled:opacity-60"
+                      >
+                        {savingId === row.id ? "Saving..." : "Recalculate Pricing"}
+                      </button>
+                    </div>
+                  </div>
 
-            {renderSection(
-              "Completed Jobs",
-              "Finished jobs with payout readiness and proof review.",
-              completedJobs
-            )}
+                  {expanded ? (
+                    <div className="mt-6 space-y-6 border-t border-zinc-800 pt-6">
+                      <div className="grid gap-4 xl:grid-cols-[1.2fr_1.2fr_1fr]">
+                        <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                          <p className="mb-3 text-lg font-semibold text-yellow-400">Customer / Job Info</p>
+                          <div className="space-y-2 text-sm text-gray-300">
+                            <p>Job ID: {row.job_id || row.id}</p>
+                            <p>Booking Row ID: {row.id}</p>
+                            <p>Customer: {row.customer_name || "-"}</p>
+                            <p>Email: {row.customer_email || "-"}</p>
+                            <p>Phone: {row.phone_number || "-"}</p>
+                            <p>Company: {row.company_name || "-"}</p>
+                            <p>Material Type: {row.material_type || "-"}</p>
+                            <p>Material Size: {row.material_size || "-"}</p>
+                            <p>Sqft: {num(row.sqft || row.job_size)}</p>
+                            <p>Payment Method: {row.payment_method || "-"}</p>
+                            <p>Created: {row.created_at || "-"}</p>
+                          </div>
+                        </div>
 
-            {renderSection(
-              "Archived Jobs",
-              "Completed or older jobs removed from the main active workflow.",
-              archivedJobs
-            )}
+                        <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                          <p className="mb-3 text-lg font-semibold text-yellow-400">Route / Schedule</p>
+                          <div className="space-y-2 text-sm text-gray-300">
+                            <p>Scheduled Date: {row.scheduled_date || "-"}</p>
+                            <p>Scheduled Time: {row.scheduled_time || "-"}</p>
+                            <p>Pickup Window: {getPickupWindow(row)}</p>
+                            <p>Pick Up: {row.pickup_address || "-"}</p>
+                            <p>Drop Off: {row.dropoff_address || "-"}</p>
+                            <p>Distance Tier: {row.ai_distance_tier || "-"}</p>
+                            <p>Accepted At: {row.accepted_at || "-"}</p>
+                            <p>Completed At: {row.completed_at || "-"}</p>
+                            <p>Incomplete At: {row.incomplete_at || "-"}</p>
+                          </div>
+                        </div>
 
-            {renderSection(
-              "Other Jobs",
-              "Cancelled or uncategorized statuses.",
-              otherJobs
-            )}
+                        <div className="space-y-4">
+                          <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                            <label className="mb-2 block text-sm text-gray-400">Booking Status</label>
+                            <select
+                              value={calc.normalizedStatus}
+                              onChange={(e) => {
+                                const value = e.target.value as BookingStatus;
+                                updateLocalRow(row.id, {
+                                  status: value === "archived" ? row.status : value,
+                                  is_archived: value === "archived",
+                                });
+                              }}
+                              onBlur={() => {
+                                const current = rows.find((x) => x.id === row.id);
+                                if (!current) return;
+                                void updateBooking(row.id, {
+                                  status:
+                                    current._calc.normalizedStatus === "archived"
+                                      ? current.status
+                                      : current._calc.normalizedStatus,
+                                  is_archived: current._calc.normalizedStatus === "archived",
+                                });
+                              }}
+                              className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-white"
+                            >
+                              {[
+                                "new",
+                                "available",
+                                "pending",
+                                "accepted",
+                                "in_progress",
+                                "incomplete",
+                                "completed",
+                                "completed_pending_admin_review",
+                                "cancelled",
+                                "archived",
+                              ].map((option) => (
+                                <option key={option} value={option}>
+                                  {option.replaceAll("_", " ")}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                            <label className="mb-2 block text-sm text-gray-400">Installer</label>
+                            <select
+                              value={safeText(row.reassigned_installer_name) || safeText(row.installer_name)}
+                              onChange={(e) => updateLocalRow(row.id, { installer_name: e.target.value })}
+                              onBlur={() => {
+                                const current = rows.find((x) => x.id === row.id);
+                                if (!current) return;
+                                void updateBooking(row.id, {
+                                  installer_name: safeText(current.installer_name) || null,
+                                });
+                              }}
+                              className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-white"
+                            >
+                              <option value="">Select Installer</option>
+                              {installers.map((installer) => {
+                                const name =
+                                  safeText(installer.full_name) ||
+                                  safeText(installer.installer_name) ||
+                                  safeText(installer.email);
+                                if (!name) return null;
+
+                                return (
+                                  <option key={`${installer.id}-${name}`} value={name}>
+                                    {name}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+
+                          <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                            <label className="mb-2 block text-sm text-gray-400">Installer Payout Status</label>
+                            <select
+                              value={safeText(row.installer_pay_status) || "unpaid"}
+                              onChange={(e) =>
+                                updateLocalRow(row.id, {
+                                  installer_pay_status: e.target.value as InstallerPayStatus,
+                                })
+                              }
+                              onBlur={() => {
+                                const current = rows.find((x) => x.id === row.id);
+                                if (!current) return;
+                                void updateBooking(row.id, {
+                                  installer_pay_status: current.installer_pay_status || "unpaid",
+                                });
+                              }}
+                              className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-white"
+                            >
+                              {["unpaid", "pending", "pending_review", "hold", "ready", "paid"].map((option) => (
+                                <option key={option} value={option}>
+                                  {option.replaceAll("_", " ")}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-4 xl:grid-cols-3">
+                        <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                          <p className="mb-3 text-lg font-semibold text-yellow-400">Add-On Services</p>
+                          {calc.parsedAddons.length === 0 ? (
+                            <p className="text-sm text-gray-400">-</p>
+                          ) : (
+                            <div className="space-y-2 text-sm text-gray-300">
+                              {calc.parsedAddons.map((item) => (
+                                <div key={item.label} className="flex items-center justify-between gap-4">
+                                  <span>{item.label}</span>
+                                  <div className="text-right">
+                                    <p className="text-zinc-400">Customer {money(item.customerAmount)}</p>
+                                    <p className="text-yellow-400">Installer {money(item.installerAmount)}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                          <p className="mb-3 text-lg font-semibold text-yellow-400">Incomplete / Return / Redo</p>
+                          <div className="space-y-2 text-sm text-gray-300">
+                            <p>Incomplete Reason: {row.incomplete_reason || "-"}</p>
+                            <p>Incomplete Notes: {row.incomplete_notes || row.incomplete_note || "-"}</p>
+                            <p>Customer Return Fee: {money(row.return_fee_charged || row.return_fee)}</p>
+                            <p>Installer Return Pay: {money(calc.installerReturnPay)}</p>
+                            <p>Mileage Fee: {money(row.mileage_fee || row.customer_mileage_charge)}</p>
+                            <p>Redo Requested: {row.redo_requested ? "Yes" : "No"}</p>
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                          <p className="mb-3 text-lg font-semibold text-yellow-400">Extra Details / Proof</p>
+                          <div className="space-y-2 text-sm text-gray-300">
+                            <p>Waterfall Quantity: {num(row.waterfall_quantity) || "-"}</p>
+                            <p>Outlet Plug Cutout Quantity: {num(row.outlet_plug_cutout_quantity) || "-"}</p>
+                            <p>Disposal Responsibility: {row.disposal_responsibility || "-"}</p>
+                            <p>
+                              Customer Provided Signing Form:{" "}
+                              {row.completion_signature_url ? "Yes" : "No"}
+                            </p>
+                            <p>
+                              Completed Photo Proof:{" "}
+                              {row.completion_photo_url || row.completed_photo_url ? (
+                                <a
+                                  href={row.completion_photo_url || row.completed_photo_url || "#"}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-yellow-400 underline"
+                                >
+                                  Open
+                                </a>
+                              ) : (
+                                "-"
+                              )}
+                            </p>
+                            <p>
+                              Completion Signature:{" "}
+                              {row.completion_signature_url ? (
+                                <a
+                                  href={row.completion_signature_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-yellow-400 underline"
+                                >
+                                  Open
+                                </a>
+                              ) : (
+                                "-"
+                              )}
+                            </p>
+                            <p>
+                              Incomplete Photo Proof:{" "}
+                              {row.incomplete_photo_url ? (
+                                <a
+                                  href={row.incomplete_photo_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-yellow-400 underline"
+                                >
+                                  Open
+                                </a>
+                              ) : (
+                                "-"
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                        <p className="mb-4 text-lg font-semibold text-yellow-400">Pricing / Payout Breakdown</p>
+
+                        <div className="grid gap-6 xl:grid-cols-2">
+                          <div className="space-y-3 text-sm text-gray-300">
+                            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                              <span>Customer Subtotal</span>
+                              <span>{money(calc.customerSubtotal)}</span>
+                            </div>
+                            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                              <span>Customer HST</span>
+                              <span>{money(calc.customerHst)}</span>
+                            </div>
+                            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                              <span>Customer Final Total</span>
+                              <span>{money(calc.customerFinalTotal)}</span>
+                            </div>
+                            <div className="flex items-center justify-between pt-2 font-semibold text-yellow-400">
+                              <span>Company Profit</span>
+                              <span>{money(calc.companyProfit)}</span>
+                            </div>
+                          </div>
+
+                          <div className="space-y-3 text-sm text-gray-300">
+                            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                              <span>Base Install Pay</span>
+                              <span>{money(calc.installerBasePay)}</span>
+                            </div>
+                            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                              <span>Add-On Pay</span>
+                              <span>{money(calc.installerAddonPay)}</span>
+                            </div>
+                            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                              <span>Other Service Pay</span>
+                              <span>{money(calc.installerOtherPay)}</span>
+                            </div>
+                            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                              <span>Cut / Polish Pay</span>
+                              <span>{money(calc.installerCutPolishPay)}</span>
+                            </div>
+                            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                              <span>Sink / Reattach Pay</span>
+                              <span>{money(calc.installerSinkPay)}</span>
+                            </div>
+                            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                              <span>Mileage Pay</span>
+                              <span>{money(calc.installerMileagePay)}</span>
+                            </div>
+                            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                              <span>Subtotal Pay</span>
+                              <span>{money(calc.installerSubtotalPay)}</span>
+                            </div>
+                            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                              <span>HST Pay</span>
+                              <span>{money(calc.installerHstPay)}</span>
+                            </div>
+                            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                              <span>Return Pay</span>
+                              <span>{money(calc.installerReturnPay)}</span>
+                            </div>
+                            <div className="flex items-center justify-between pt-2 font-semibold text-yellow-400">
+                              <span>Total Installer Pay</span>
+                              <span>{money(calc.installerTotalPay)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-4 xl:grid-cols-3">
+                        <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                          <label className="mb-2 block text-sm text-gray-400">Admin Notes</label>
+                          <textarea
+                            value={row.side_note || ""}
+                            onChange={(e) => updateLocalRow(row.id, { side_note: e.target.value })}
+                            onBlur={() => {
+                              const current = rows.find((x) => x.id === row.id);
+                              if (!current) return;
+                              void updateBooking(row.id, { side_note: current.side_note || "" });
+                            }}
+                            className="min-h-[120px] w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-white outline-none"
+                          />
+                        </div>
+
+                        <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                          <label className="mb-2 block text-sm text-gray-400">Payout Notes</label>
+                          <textarea
+                            value={row.payout_notes || ""}
+                            onChange={(e) => updateLocalRow(row.id, { payout_notes: e.target.value })}
+                            onBlur={() => {
+                              const current = rows.find((x) => x.id === row.id);
+                              if (!current) return;
+                              void updateBooking(row.id, { payout_notes: current.payout_notes || "" });
+                            }}
+                            className="min-h-[120px] w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-white outline-none"
+                          />
+                        </div>
+
+                        <div className="rounded-xl border border-zinc-800 bg-black p-4">
+                          <p className="mb-3 text-lg font-semibold text-yellow-400">Quick Actions</p>
+                          <div className="space-y-3">
+                            <button
+                              type="button"
+                              onClick={() => void updateBooking(row.id, { status: "available", is_archived: false })}
+                              className="w-full rounded-xl bg-yellow-500 px-4 py-3 font-semibold text-black hover:bg-yellow-400"
+                            >
+                              Set Live / Available
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void updateBooking(row.id, { status: "in_progress" })}
+                              className="w-full rounded-xl bg-cyan-600 px-4 py-3 font-semibold text-white hover:bg-cyan-500"
+                            >
+                              Set In Progress
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void updateBooking(row.id, {
+                                  status: "completed",
+                                  completed_at: new Date().toISOString(),
+                                })
+                              }
+                              className="w-full rounded-xl bg-green-600 px-4 py-3 font-semibold text-white hover:bg-green-500"
+                            >
+                              Mark Completed
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void updateBooking(row.id, { installer_pay_status: "ready" })}
+                              className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 font-semibold text-white hover:border-yellow-500 hover:text-yellow-400"
+                            >
+                              Set Ready Payout
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void updateBooking(row.id, { is_archived: true })}
+                              className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 font-semibold text-white hover:border-zinc-400"
+                            >
+                              Archive Job
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {savingId === row.id ? (
+                        <p className="text-sm text-yellow-400">Saving updates...</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
