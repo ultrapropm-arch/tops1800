@@ -33,15 +33,19 @@ type Booking = {
   pickup_time_from?: string | null;
   pickup_time_to?: string | null;
   installer_name?: string | null;
+  reassigned_installer_name?: string | null;
   installer_pay?: number | null;
   installer_pay_status?: string | null;
   status?: string | null;
   job_group_id?: string | number | null;
   job_number?: number | null;
   accepted_at?: string | null;
+  completed_at?: string | null;
+  incomplete_at?: string | null;
 
   incomplete_reason?: string | null;
   incomplete_note?: string | null;
+  incomplete_notes?: string | null;
   incomplete_photo_url?: string | null;
   incomplete_photo_path?: string | null;
   incomplete_reported_at?: string | null;
@@ -92,20 +96,25 @@ type Booking = {
 };
 
 function money(value?: number | null) {
-  return "$" + Number(value || 0).toFixed(2);
+  const n = Number(value || 0);
+  return "$" + n.toFixed(2);
+}
+
+function safeText(value?: string | null) {
+  return String(value || "").trim();
+}
+
+function normalizeText(value?: string | null) {
+  return safeText(value).toLowerCase();
 }
 
 function getPickupWindow(job: Booking) {
-  if (job.pickup_time_slot) {
-    return job.pickup_time_slot;
-  }
+  if (job.pickup_time_slot) return job.pickup_time_slot;
 
   const from = job.pickup_time_from || "";
   const to = job.pickup_time_to || "";
 
-  if (from || to) {
-    return [from, to].filter(Boolean).join(" - ");
-  }
+  if (from || to) return [from, to].filter(Boolean).join(" - ");
 
   return job.scheduled_time || "-";
 }
@@ -124,6 +133,7 @@ function getServiceTypeLabel(value?: string | null) {
   if (value === "full_height_backsplash") return "Full Height Backsplash";
   if (value === "installation_3cm") return "3cm Installation";
   if (value === "installation_2cm_standard") return "2cm Standard Installation";
+  if (value === "installation_2cm") return "2cm Installation";
   if (value === "backsplash_tiling") return "Backsplash Tiling";
   if (value === "justServices") return "Just Services";
   return value;
@@ -151,13 +161,22 @@ function toArray(value: unknown): string[] {
   return [];
 }
 
+function joinPipe(values: string[]) {
+  return values.filter(Boolean).join(" | ");
+}
+
+function splitPipe(value?: string | null) {
+  if (!value) return [];
+  return value
+    .split(" | ")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function getPayoutLines(job: Booking) {
   const lines: { label: string; amount: number }[] = [];
 
-  if (
-    Array.isArray(job.installer_payout_lines) &&
-    job.installer_payout_lines.length > 0
-  ) {
+  if (Array.isArray(job.installer_payout_lines) && job.installer_payout_lines.length > 0) {
     return job.installer_payout_lines.map((line) => ({
       label: line.label || "Payout Line",
       amount: Number(line.amount || 0),
@@ -211,7 +230,8 @@ function getPayoutLines(job: Booking) {
 
 function getDiscountedIncompleteMileage(job: Booking) {
   const chargeableKm = Number(job.chargeable_km || 0);
-  const discountedMileage = chargeableKm * BASE_MILEAGE_RATE * REBOOK_CUSTOMER_MILEAGE_PERCENT;
+  const discountedMileage =
+    chargeableKm * BASE_MILEAGE_RATE * REBOOK_CUSTOMER_MILEAGE_PERCENT;
   return Number(discountedMileage.toFixed(2));
 }
 
@@ -224,6 +244,39 @@ function getRebookUrl(job: Booking) {
   return `https://www.1800tops.com/rebook/${job.id}`;
 }
 
+function normalizeStatus(status?: string | null) {
+  const value = normalizeText(status);
+
+  if (!value) return "new";
+  if (value === "confirmed") return "pending";
+  if (value === "assigned") return "accepted";
+  if (value === "accepted_by_installer") return "accepted";
+  if (value === "in progress") return "in_progress";
+  if (value === "completed_pending_admin_review") return "completed_pending_admin_review";
+  if (value === "canceled") return "cancelled";
+
+  return value;
+}
+
+function isAvailableJob(job: Booking) {
+  const status = normalizeStatus(job.status);
+  const hasInstaller =
+    safeText(job.installer_name).length > 0 ||
+    safeText(job.reassigned_installer_name).length > 0;
+
+  return !hasInstaller && (status === "available" || status === "pending" || status === "new");
+}
+
+function isAssignedToInstaller(job: Booking, installerName: string) {
+  const current = normalizeText(installerName);
+  if (!current) return false;
+
+  return (
+    normalizeText(job.installer_name) === current ||
+    normalizeText(job.reassigned_installer_name) === current
+  );
+}
+
 async function sendCustomerEmail(params: {
   to: string;
   subject: string;
@@ -232,13 +285,11 @@ async function sendCustomerEmail(params: {
 }) {
   const response = await fetch("/api/send-email", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
   });
 
-  const result = await response.json();
+  const result = await response.json().catch(() => null);
 
   if (!response.ok) {
     throw new Error(result?.error || "Failed to send email");
@@ -254,9 +305,7 @@ async function sendAdminEmail(params: {
 }) {
   const response = await fetch("/api/send-email", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       to: ADMIN_EMAIL,
       subject: params.subject,
@@ -265,7 +314,7 @@ async function sendAdminEmail(params: {
     }),
   });
 
-  const result = await response.json();
+  const result = await response.json().catch(() => null);
 
   if (!response.ok) {
     throw new Error(result?.error || "Failed to send admin email");
@@ -283,11 +332,9 @@ async function uploadJobFile(
   const safeFileName = file.name.replace(/\s+/g, "-");
   const filePath = `${folder}/${jobId}-${Date.now()}-${safeFileName}`;
 
-  const { error } = await supabase.storage
-    .from("job-photos")
-    .upload(filePath, file, {
-      upsert: true,
-    });
+  const { error } = await supabase.storage.from("job-photos").upload(filePath, file, {
+    upsert: true,
+  });
 
   if (error) {
     throw new Error(error.message || "Failed to upload file.");
@@ -299,6 +346,38 @@ async function uploadJobFile(
     filePath,
     publicUrl: data.publicUrl,
   };
+}
+
+async function uploadManyJobFiles(
+  files: File[],
+  folder: "completed-jobs" | "completion-signatures" | "incomplete-jobs",
+  jobId: string
+) {
+  const uploads: { filePath: string; publicUrl: string }[] = [];
+
+  for (const file of files) {
+    const result = await uploadJobFile(file, folder, jobId);
+    uploads.push(result);
+  }
+
+  return uploads;
+}
+
+function buildLinksHtml(title: string, urls: string[]) {
+  if (!urls.length) return "";
+  return `
+    <div style="margin-top: 12px;">
+      <p><strong>${title}:</strong></p>
+      <ul>
+        ${urls
+          .map(
+            (url, index) =>
+              `<li><a href="${url}">Open ${title} ${index + 1}</a></li>`
+          )
+          .join("")}
+      </ul>
+    </div>
+  `;
 }
 
 function assignmentEmailHtml(job: Booking, installerName?: string) {
@@ -325,7 +404,7 @@ function assignmentEmailHtml(job: Booking, installerName?: string) {
 
 function completionEmailHtml(
   job: Booking,
-  completedPhotoUrl: string,
+  completionPhotoUrls: string[],
   signatureUrl?: string
 ) {
   return `
@@ -343,7 +422,7 @@ function completionEmailHtml(
         <p><strong>Pickup Window:</strong> ${getPickupWindow(job)}</p>
         <p><strong>Pick Up:</strong> ${job.pickup_address || "-"}</p>
         <p><strong>Drop Off:</strong> ${job.dropoff_address || "-"}</p>
-        <p><strong>Completion Photo:</strong> <a href="${completedPhotoUrl}">View Photo</a></p>
+        ${buildLinksHtml("Completion Photo", completionPhotoUrls)}
         ${
           signatureUrl
             ? `<p><strong>Signed Completion:</strong> <a href="${signatureUrl}">View Signed Form</a></p>`
@@ -478,7 +557,7 @@ function adminAcceptedEmailHtml(job: Booking, installerName: string) {
 function adminCompletionEmailHtml(
   job: Booking,
   installerName: string,
-  completedPhotoUrl: string,
+  completionPhotoUrls: string[],
   hasSigningForm: boolean,
   signatureUrl?: string
 ) {
@@ -495,16 +574,14 @@ function adminCompletionEmailHtml(
       <p><strong>Pickup Window:</strong> ${getPickupWindow(job)}</p>
       <p><strong>Pick Up:</strong> ${job.pickup_address || "-"}</p>
       <p><strong>Drop Off:</strong> ${job.dropoff_address || "-"}</p>
-      <p><strong>Completion Photo:</strong> <a href="${completedPhotoUrl}">View Photo</a></p>
-      <p><strong>Customer Provided Signing Form:</strong> ${
-        hasSigningForm ? "Yes" : "No"
-      }</p>
+      ${buildLinksHtml("Completion Photo", completionPhotoUrls)}
+      <p><strong>Customer Provided Signing Form:</strong> ${hasSigningForm ? "Yes" : "No"}</p>
       ${
         signatureUrl
           ? `<p><strong>Signed Completion:</strong> <a href="${signatureUrl}">View Signed Form</a></p>`
           : ""
       }
-      <p><strong>Status:</strong> completed</p>
+      <p><strong>Status:</strong> completed_pending_admin_review</p>
     </div>
   `;
 }
@@ -605,13 +682,7 @@ function Info({
   return (
     <div className="rounded-xl border border-zinc-800 bg-black p-4">
       <p className="text-sm text-gray-400">{label}</p>
-      <p
-        className={
-          highlight
-            ? "mt-1 font-semibold text-yellow-400"
-            : "mt-1 text-white"
-        }
-      >
+      <p className={highlight ? "mt-1 font-semibold text-yellow-400" : "mt-1 text-white"}>
         {value || "-"}
       </p>
     </div>
@@ -642,6 +713,7 @@ function ServiceBox({
 export default function InstallerJobDetailsPage() {
   const params = useParams();
   const router = useRouter();
+  const supabase = useMemo(() => createClient(), []);
 
   const jobId = String(params?.id || "");
 
@@ -657,11 +729,9 @@ export default function InstallerJobDetailsPage() {
   const [incompletePhoto, setIncompletePhoto] = useState<File | null>(null);
 
   const [showCompleteBox, setShowCompleteBox] = useState(false);
-  const [completionPhoto, setCompletionPhoto] = useState<File | null>(null);
+  const [completionPhotos, setCompletionPhotos] = useState<File[]>([]);
   const [hasSigningForm, setHasSigningForm] = useState("");
-  const [completionSignature, setCompletionSignature] = useState<File | null>(
-    null
-  );
+  const [completionSignature, setCompletionSignature] = useState<File | null>(null);
 
   const [showCancelBox, setShowCancelBox] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
@@ -678,13 +748,11 @@ export default function InstallerJobDetailsPage() {
   async function loadJobDetails() {
     setLoading(true);
 
-    const supabase = createClient();
-
     const { data, error } = await supabase
       .from("bookings")
       .select("*")
       .eq("id", jobId)
-      .maybeSingle<Booking>();
+      .maybeSingle();
 
     if (error || !data) {
       console.error("Error loading job:", error);
@@ -693,71 +761,56 @@ export default function InstallerJobDetailsPage() {
       return;
     }
 
-    setJob(data);
-    setIncompleteReason(data.incomplete_reason || "");
-    setIncompleteNote(data.incomplete_note || "");
+    const loadedJob = data as Booking;
+    setJob(loadedJob);
+    setIncompleteReason(loadedJob.incomplete_reason || "");
+    setIncompleteNote(loadedJob.incomplete_note || loadedJob.incomplete_notes || "");
     setHasSigningForm(
-      data.homeowner_signed_completion_required === true
+      loadedJob.homeowner_signed_completion_required === true
         ? "yes"
-        : data.homeowner_signed_completion_required === false
+        : loadedJob.homeowner_signed_completion_required === false
           ? "no"
           : ""
     );
 
-    if (data.job_group_id) {
+    if (loadedJob.job_group_id) {
       const { data: groupData, error: groupError } = await supabase
         .from("bookings")
         .select("*")
-        .eq("job_group_id", data.job_group_id)
+        .eq("job_group_id", loadedJob.job_group_id)
         .order("job_number", { ascending: true });
 
       if (groupError) {
         console.error("Error loading grouped jobs:", groupError);
-        setGroupJobs([data]);
+        setGroupJobs([loadedJob]);
       } else {
-        setGroupJobs((groupData as Booking[]) || [data]);
+        setGroupJobs(((groupData as Booking[]) || [loadedJob]).map((item) => item as Booking));
       }
     } else {
-      setGroupJobs([data]);
+      setGroupJobs([loadedJob]);
     }
 
     setLoading(false);
   }
 
-  const normalizedInstallerName = installerName.trim().toLowerCase();
+  const normalizedInstallerName = normalizeText(installerName);
 
   const currentJobAvailable = useMemo(() => {
     if (!job) return false;
-
-    return (
-      (job.status || "").toLowerCase() === "available" &&
-      (!job.installer_name || job.installer_name.trim() === "")
-    );
+    return isAvailableJob(job);
   }, [job]);
 
   const currentJobAssignedToMe = useMemo(() => {
     if (!job) return false;
-
-    return (
-      normalizedInstallerName !== "" &&
-      (job.installer_name || "").trim().toLowerCase() === normalizedInstallerName
-    );
-  }, [job, normalizedInstallerName]);
+    return isAssignedToInstaller(job, installerName);
+  }, [job, installerName]);
 
   const availableJobsInGroup = useMemo(() => {
-    return groupJobs.filter((item) => {
-      return (
-        (item.status || "").toLowerCase() === "available" &&
-        (!item.installer_name || item.installer_name.trim() === "")
-      );
-    });
+    return groupJobs.filter((item) => isAvailableJob(item));
   }, [groupJobs]);
 
   const totalAvailableGroupPay = useMemo(() => {
-    return availableJobsInGroup.reduce(
-      (sum, item) => sum + Number(item.installer_pay || 0),
-      0
-    );
+    return availableJobsInGroup.reduce((sum, item) => sum + Number(item.installer_pay || 0), 0);
   }, [availableJobsInGroup]);
 
   const hoursUntilJob = useMemo(() => {
@@ -790,50 +843,66 @@ export default function InstallerJobDetailsPage() {
 
     setActionLoading("accept-one");
 
-    const supabase = createClient();
-
-    const { error } = await supabase
-      .from("bookings")
-      .update({
-        installer_name: installerName.trim(),
-        status: "accepted",
-        accepted_at: new Date().toISOString(),
-      })
-      .eq("id", job.id);
-
-    if (error) {
-      console.error(error);
-      alert("Failed to accept job.");
-      setActionLoading("");
-      return;
-    }
-
     try {
-      if (job.customer_email) {
-        await sendCustomerEmail({
-          to: job.customer_email,
-          subject: "Your Installer Has Been Assigned",
-          type: "assignment",
-          html: assignmentEmailHtml(job, installerName.trim()),
-        });
+      const { data: freshData, error: freshError } = await supabase
+        .from("bookings")
+        .select("*")
+        .eq("id", job.id)
+        .maybeSingle();
+
+      if (freshError || !freshData) {
+        throw new Error("Could not re-check job.");
       }
-    } catch (emailError) {
-      console.error("Assignment email error:", emailError);
-    }
 
-    try {
-      await sendAdminEmail({
-        subject: `Installer Accepted Job - ${job.job_id || job.id}`,
-        type: "installer_accepted",
-        html: adminAcceptedEmailHtml(job, installerName.trim()),
-      });
-    } catch (emailError) {
-      console.error("Admin accepted email error:", emailError);
-    }
+      const freshJob = freshData as Booking;
 
-    setActionLoading("");
-    alert("Job accepted ✅");
-    await loadJobDetails();
+      if (!isAvailableJob(freshJob)) {
+        throw new Error("This job is no longer available.");
+      }
+
+      const { error } = await supabase
+        .from("bookings")
+        .update({
+          installer_name: installerName.trim(),
+          reassigned_installer_name: null,
+          status: "accepted",
+          accepted_at: new Date().toISOString(),
+        })
+        .eq("id", job.id);
+
+      if (error) throw new Error(error.message || "Failed to accept job.");
+
+      try {
+        if (freshJob.customer_email) {
+          await sendCustomerEmail({
+            to: freshJob.customer_email,
+            subject: "Your Installer Has Been Assigned",
+            type: "assignment",
+            html: assignmentEmailHtml(freshJob, installerName.trim()),
+          });
+        }
+      } catch (emailError) {
+        console.error("Assignment email error:", emailError);
+      }
+
+      try {
+        await sendAdminEmail({
+          subject: `Installer Accepted Job - ${freshJob.job_id || freshJob.id}`,
+          type: "installer_accepted",
+          html: adminAcceptedEmailHtml(freshJob, installerName.trim()),
+        });
+      } catch (emailError) {
+        console.error("Admin accepted email error:", emailError);
+      }
+
+      alert("Job accepted ✅");
+      await loadJobDetails();
+    } catch (error) {
+      console.error(error);
+      alert(error instanceof Error ? error.message : "Failed to accept job.");
+    } finally {
+      setActionLoading("");
+    }
   }
 
   async function acceptAllAvailableJobs() {
@@ -849,53 +918,73 @@ export default function InstallerJobDetailsPage() {
 
     setActionLoading("accept-all");
 
-    const supabase = createClient();
-    const jobIds = availableJobsInGroup.map((item) => item.id);
+    try {
+      const jobIds = availableJobsInGroup.map((item) => item.id);
 
-    const { error } = await supabase
-      .from("bookings")
-      .update({
-        installer_name: installerName.trim(),
-        status: "accepted",
-        accepted_at: new Date().toISOString(),
-      })
-      .in("id", jobIds);
+      const { data: freshGroupData, error: freshGroupError } = await supabase
+        .from("bookings")
+        .select("*")
+        .in("id", jobIds);
 
-    if (error) {
-      console.error(error);
-      alert("Failed to accept available jobs in this group.");
-      setActionLoading("");
-      return;
-    }
+      if (freshGroupError) {
+        throw new Error(freshGroupError.message || "Failed to re-check grouped jobs.");
+      }
 
-    for (const item of availableJobsInGroup) {
-      try {
-        if (item.customer_email) {
-          await sendCustomerEmail({
-            to: item.customer_email,
-            subject: "Your Installer Has Been Assigned",
-            type: "assignment",
-            html: assignmentEmailHtml(item, installerName.trim()),
-          });
+      const freshJobs = ((freshGroupData as Booking[]) || []).filter((item) => isAvailableJob(item));
+
+      if (freshJobs.length !== jobIds.length) {
+        throw new Error("One or more jobs in this group are no longer available.");
+      }
+
+      const { error } = await supabase
+        .from("bookings")
+        .update({
+          installer_name: installerName.trim(),
+          reassigned_installer_name: null,
+          status: "accepted",
+          accepted_at: new Date().toISOString(),
+        })
+        .in("id", jobIds);
+
+      if (error) throw new Error(error.message || "Failed to accept available jobs in this group.");
+
+      for (const item of freshJobs) {
+        try {
+          if (item.customer_email) {
+            await sendCustomerEmail({
+              to: item.customer_email,
+              subject: "Your Installer Has Been Assigned",
+              type: "assignment",
+              html: assignmentEmailHtml(item, installerName.trim()),
+            });
+          }
+        } catch (emailError) {
+          console.error("Assignment email error:", emailError);
         }
-      } catch (emailError) {
-        console.error("Assignment email error:", emailError);
+
+        try {
+          await sendAdminEmail({
+            subject: `Installer Accepted Job - ${item.job_id || item.id}`,
+            type: "installer_accepted",
+            html: adminAcceptedEmailHtml(item, installerName.trim()),
+          });
+        } catch (emailError) {
+          console.error("Admin accepted email error:", emailError);
+        }
       }
 
-      try {
-        await sendAdminEmail({
-          subject: `Installer Accepted Job - ${item.job_id || item.id}`,
-          type: "installer_accepted",
-          html: adminAcceptedEmailHtml(item, installerName.trim()),
-        });
-      } catch (emailError) {
-        console.error("Admin accepted email error:", emailError);
-      }
+      alert("Available group jobs accepted ✅");
+      await loadJobDetails();
+    } catch (error) {
+      console.error(error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to accept available jobs in this group."
+      );
+    } finally {
+      setActionLoading("");
     }
-
-    setActionLoading("");
-    alert("Available group jobs accepted ✅");
-    await loadJobDetails();
   }
 
   async function completeJob() {
@@ -906,8 +995,8 @@ export default function InstallerJobDetailsPage() {
       return;
     }
 
-    if (!completionPhoto) {
-      alert("Please upload a completion photo before completing the job.");
+    if (completionPhotos.length === 0) {
+      alert("Please upload at least one completion photo before completing the job.");
       return;
     }
 
@@ -924,11 +1013,7 @@ export default function InstallerJobDetailsPage() {
     setActionLoading("complete");
 
     try {
-      const completedPhotoUpload = await uploadJobFile(
-        completionPhoto,
-        "completed-jobs",
-        job.id
-      );
+      const photoUploads = await uploadManyJobFiles(completionPhotos, "completed-jobs", job.id);
 
       let signatureUpload:
         | {
@@ -947,27 +1032,27 @@ export default function InstallerJobDetailsPage() {
         );
       }
 
-      const supabase = createClient();
+      const photoUrls = photoUploads.map((item) => item.publicUrl);
+      const photoPaths = photoUploads.map((item) => item.filePath);
 
       const { error } = await supabase
         .from("bookings")
         .update({
           status: "completed_pending_admin_review",
           installer_pay_status: "pending_review",
-          completion_photo_url: completedPhotoUpload.publicUrl,
-          completion_photo_path: completedPhotoUpload.filePath,
+          completion_photo_url: joinPipe(photoUrls),
+          completion_photo_path: joinPipe(photoPaths),
           homeowner_signed_completion_required: signingFormProvided,
           homeowner_signed_completion_url: signatureUpload?.publicUrl || null,
           homeowner_signed_completion_path: signatureUpload?.filePath || null,
           completion_marked_at: new Date().toISOString(),
+          completed_at: new Date().toISOString(),
         })
         .eq("id", job.id);
 
       if (error) {
         console.error("COMPLETE JOB DB ERROR:", error);
-        alert(error.message || "Failed to complete job.");
-        setActionLoading("");
-        return;
+        throw new Error(error.message || "Failed to complete job.");
       }
 
       try {
@@ -976,11 +1061,7 @@ export default function InstallerJobDetailsPage() {
             to: job.customer_email,
             subject: "Your Job Has Been Completed",
             type: "completion",
-            html: completionEmailHtml(
-              job,
-              completedPhotoUpload.publicUrl,
-              signatureUpload?.publicUrl
-            ),
+            html: completionEmailHtml(job, photoUrls, signatureUpload?.publicUrl),
           });
         }
       } catch (emailError) {
@@ -994,7 +1075,7 @@ export default function InstallerJobDetailsPage() {
           html: adminCompletionEmailHtml(
             job,
             installerName.trim(),
-            completedPhotoUpload.publicUrl,
+            photoUrls,
             signingFormProvided,
             signatureUpload?.publicUrl
           ),
@@ -1003,17 +1084,17 @@ export default function InstallerJobDetailsPage() {
         console.error("Admin completion email error:", emailError);
       }
 
-      setCompletionPhoto(null);
+      setCompletionPhotos([]);
       setCompletionSignature(null);
       setHasSigningForm("");
       setShowCompleteBox(false);
 
-      setActionLoading("");
       alert("Job marked complete ✅");
       await loadJobDetails();
-    } catch (error: any) {
+    } catch (error) {
       console.error("COMPLETE JOB ERROR:", error);
-      alert(error?.message || "Failed to complete job.");
+      alert(error instanceof Error ? error.message : "Failed to complete job.");
+    } finally {
       setActionLoading("");
     }
   }
@@ -1045,19 +1126,13 @@ export default function InstallerJobDetailsPage() {
         job.id
       );
 
-      const supabase = createClient();
-
       const normalizedReason = incompleteReason.trim().toLowerCase();
       const isCustomerOrShop =
         normalizedReason === "customer" || normalizedReason === "shop";
 
       const returnFeeCharged = isCustomerOrShop ? RETURN_FEE_CUSTOMER : 0;
-      const returnFeeInstallerPay = isCustomerOrShop
-        ? RETURN_FEE_INSTALLER_PAY
-        : 0;
-
-      const installerPayStatus =
-        normalizedReason === "installer" ? "hold" : "pending";
+      const returnFeeInstallerPay = isCustomerOrShop ? RETURN_FEE_INSTALLER_PAY : 0;
+      const installerPayStatus = normalizedReason === "installer" ? "hold" : "pending";
 
       const { error } = await supabase
         .from("bookings")
@@ -1065,9 +1140,11 @@ export default function InstallerJobDetailsPage() {
           status: "incomplete",
           incomplete_reason: normalizedReason,
           incomplete_note: incompleteNote.trim(),
+          incomplete_notes: incompleteNote.trim(),
           incomplete_photo_url: incompletePhotoUpload.publicUrl,
           incomplete_photo_path: incompletePhotoUpload.filePath,
           incomplete_reported_at: new Date().toISOString(),
+          incomplete_at: new Date().toISOString(),
           return_fee: returnFeeCharged,
           return_fee_charged: returnFeeCharged,
           return_fee_installer_pay: returnFeeInstallerPay,
@@ -1077,9 +1154,7 @@ export default function InstallerJobDetailsPage() {
 
       if (error) {
         console.error("MARK INCOMPLETE DB ERROR:", error);
-        alert(error.message || "Failed to mark job incomplete.");
-        setActionLoading("");
-        return;
+        throw new Error(error.message || "Failed to mark job incomplete.");
       }
 
       try {
@@ -1122,12 +1197,12 @@ export default function InstallerJobDetailsPage() {
       setIncompletePhoto(null);
       setShowIncompleteBox(false);
 
-      setActionLoading("");
       alert("Job marked incomplete ⚠️");
       await loadJobDetails();
-    } catch (error: any) {
+    } catch (error) {
       console.error("INCOMPLETE JOB ERROR:", error);
-      alert(error?.message || "Failed to mark job incomplete.");
+      alert(error instanceof Error ? error.message : "Failed to mark job incomplete.");
+    } finally {
       setActionLoading("");
     }
   }
@@ -1147,58 +1222,59 @@ export default function InstallerJobDetailsPage() {
 
     setActionLoading("cancel-request");
 
-    const supabase = createClient();
-
-    const noticeText =
-      hoursUntilJob === null
-        ? "Notice hours unknown"
-        : `${hoursUntilJob.toFixed(1)} hours notice`;
-
-    const policyText =
-      hoursUntilJob !== null && hoursUntilJob < 48
-        ? "Late cancellation request - under 48 hours notice."
-        : "Within cancellation policy - 48+ hours notice.";
-
-    const cancelNote = `Installer cancel request: ${cancelReason.trim()} | ${noticeText} | ${policyText}`;
-
-    const { error } = await supabase
-      .from("bookings")
-      .update({
-        status: "pending",
-        installer_name: "",
-        accepted_at: null,
-        installer_pay_status: "unpaid",
-        incomplete_reason: "installer_cancel_request",
-        incomplete_note: cancelNote,
-      })
-      .eq("id", job.id);
-
-    if (error) {
-      console.error(error);
-      alert("Failed to request cancellation.");
-      setActionLoading("");
-      return;
-    }
-
     try {
-      await sendAdminEmail({
-        subject: `Installer Cancel Request - ${job.job_id || job.id}`,
-        type: "incomplete",
-        html: adminCancelRequestEmailHtml(
-          job,
-          installerName.trim(),
-          cancelReason.trim(),
-          hoursUntilJob
-        ),
-      });
-    } catch (emailError) {
-      console.error("Admin cancel request email error:", emailError);
-    }
+      const noticeText =
+        hoursUntilJob === null
+          ? "Notice hours unknown"
+          : `${hoursUntilJob.toFixed(1)} hours notice`;
 
-    setActionLoading("");
-    setShowCancelBox(false);
-    alert("Cancellation request sent to admin ✅");
-    await loadJobDetails();
+      const policyText =
+        hoursUntilJob !== null && hoursUntilJob < 48
+          ? "Late cancellation request - under 48 hours notice."
+          : "Within cancellation policy - 48+ hours notice.";
+
+      const cancelNote = `Installer cancel request: ${cancelReason.trim()} | ${noticeText} | ${policyText}`;
+
+      const { error } = await supabase
+        .from("bookings")
+        .update({
+          status: "pending",
+          installer_name: "",
+          reassigned_installer_name: "",
+          accepted_at: null,
+          installer_pay_status: "unpaid",
+          incomplete_reason: "installer_cancel_request",
+          incomplete_note: cancelNote,
+          incomplete_notes: cancelNote,
+        })
+        .eq("id", job.id);
+
+      if (error) throw new Error(error.message || "Failed to request cancellation.");
+
+      try {
+        await sendAdminEmail({
+          subject: `Installer Cancel Request - ${job.job_id || job.id}`,
+          type: "incomplete",
+          html: adminCancelRequestEmailHtml(
+            job,
+            installerName.trim(),
+            cancelReason.trim(),
+            hoursUntilJob
+          ),
+        });
+      } catch (emailError) {
+        console.error("Admin cancel request email error:", emailError);
+      }
+
+      setShowCancelBox(false);
+      alert("Cancellation request sent to admin ✅");
+      await loadJobDetails();
+    } catch (error) {
+      console.error(error);
+      alert(error instanceof Error ? error.message : "Failed to request cancellation.");
+    } finally {
+      setActionLoading("");
+    }
   }
 
   return (
@@ -1240,9 +1316,7 @@ export default function InstallerJobDetailsPage() {
               <Info label="Phone" value={job.phone_number} />
               <Info
                 label="Service Type"
-                value={getServiceTypeLabel(
-                  job.service_type_label || job.service_type
-                )}
+                value={getServiceTypeLabel(job.service_type_label || job.service_type)}
               />
               <Info label="Material Type" value={job.material_type} />
               <Info label="Material Size" value={job.material_size} />
@@ -1261,15 +1335,8 @@ export default function InstallerJobDetailsPage() {
               <Info label="Pick Up" value={job.pickup_address} />
               <Info label="Drop Off" value={job.dropoff_address} />
               <Info label="Status" value={job.status} />
-              <Info
-                label="Installer Payout"
-                value={money(job.installer_pay)}
-                highlight
-              />
-              <Info
-                label="Installer Pay Status"
-                value={job.installer_pay_status}
-              />
+              <Info label="Installer Payout" value={money(job.installer_pay)} highlight />
+              <Info label="Installer Pay Status" value={job.installer_pay_status} />
               <Info
                 label="Customer Rate"
                 value={
@@ -1279,19 +1346,12 @@ export default function InstallerJobDetailsPage() {
                 }
               />
               <Info label="Service Price" value={money(job.service_price)} />
-              <Info
-                label="Installer Subtotal"
-                value={money(job.installer_subtotal_pay)}
-              />
-              <Info
-                label="Installer HST"
-                value={money(job.installer_hst_pay)}
-              />
+              <Info label="Installer Subtotal" value={money(job.installer_subtotal_pay)} />
+              <Info label="Installer HST" value={money(job.installer_hst_pay)} />
               <Info
                 label="Mileage Fee"
                 value={money(
-                  job.installer_mileage_pay &&
-                    Number(job.installer_mileage_pay) > 0
+                  job.installer_mileage_pay && Number(job.installer_mileage_pay) > 0
                     ? job.installer_mileage_pay
                     : job.mileage_fee
                 )}
@@ -1300,12 +1360,9 @@ export default function InstallerJobDetailsPage() {
                 label="Customer Return Fee"
                 value={money(job.return_fee_charged || job.return_fee)}
               />
-              <Info
-                label="Installer Return Pay"
-                value={money(job.return_fee_installer_pay)}
-              />
+              <Info label="Installer Return Pay" value={money(job.return_fee_installer_pay)} />
               <Info label="Incomplete Reason" value={job.incomplete_reason} />
-              <Info label="Incomplete Note" value={job.incomplete_note} />
+              <Info label="Incomplete Note" value={job.incomplete_note || job.incomplete_notes} />
               <Info
                 label="Waterfall Quantity"
                 value={
@@ -1324,9 +1381,7 @@ export default function InstallerJobDetailsPage() {
               />
               <Info
                 label="Disposal Responsibility"
-                value={getDisposalResponsibilityLabel(
-                  job.disposal_responsibility
-                )}
+                value={getDisposalResponsibilityLabel(job.disposal_responsibility)}
               />
               <Info
                 label="Customer Provided Signing Form"
@@ -1347,17 +1402,13 @@ export default function InstallerJobDetailsPage() {
 
             {job.side_note ? (
               <div className="mt-6 rounded-2xl border border-zinc-800 bg-black p-5">
-                <h3 className="text-xl font-semibold text-yellow-400">
-                  Side Note
-                </h3>
+                <h3 className="text-xl font-semibold text-yellow-400">Side Note</h3>
                 <p className="mt-3 text-sm text-gray-300">{job.side_note}</p>
               </div>
             ) : null}
 
             <div className="mt-6 rounded-2xl border border-zinc-800 bg-black p-5">
-              <h3 className="text-xl font-semibold text-yellow-400">
-                Payout Breakdown
-              </h3>
+              <h3 className="text-xl font-semibold text-yellow-400">Payout Breakdown</h3>
 
               {payoutLines.length > 0 ? (
                 <div className="mt-4 space-y-3 text-sm text-gray-300">
@@ -1425,8 +1476,7 @@ export default function InstallerJobDetailsPage() {
                   ) : null}
 
                   <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-xs text-gray-400">
-                    Detailed line-item payout fields will display here
-                    automatically when they are saved in the booking record.
+                    Detailed line-item payout fields will display here automatically when they are saved in the booking record.
                   </div>
                 </div>
               )}
@@ -1441,17 +1491,14 @@ export default function InstallerJobDetailsPage() {
                 }`}
               >
                 <p>
-                  Time until scheduled job:{" "}
-                  <strong>{hoursUntilJob.toFixed(1)} hours</strong>
+                  Time until scheduled job: <strong>{hoursUntilJob.toFixed(1)} hours</strong>
                 </p>
                 <p className="mt-1">
-                  Installer cancellation policy:{" "}
-                  <strong>48 hours notice</strong>.
+                  Installer cancellation policy: <strong>48 hours notice</strong>.
                 </p>
                 {isLateCancel ? (
                   <p className="mt-1">
-                    This is a <strong>late cancellation request</strong>{" "}
-                    because it is under 48 hours.
+                    This is a <strong>late cancellation request</strong> because it is under 48 hours.
                   </p>
                 ) : null}
               </div>
@@ -1465,9 +1512,7 @@ export default function InstallerJobDetailsPage() {
                   disabled={actionLoading === "accept-one"}
                   className="rounded-xl bg-yellow-500 px-5 py-3 font-semibold text-black hover:bg-yellow-400 disabled:opacity-60"
                 >
-                  {actionLoading === "accept-one"
-                    ? "Accepting..."
-                    : "Accept This Job"}
+                  {actionLoading === "accept-one" ? "Accepting..." : "Accept This Job"}
                 </button>
               ) : null}
 
@@ -1485,9 +1530,8 @@ export default function InstallerJobDetailsPage() {
               ) : null}
 
               {currentJobAssignedToMe &&
-              (job.status || "").toLowerCase() !== "completed" &&
-              (job.status || "").toLowerCase() !==
-                "completed_pending_admin_review" ? (
+              normalizeStatus(job.status) !== "completed" &&
+              normalizeStatus(job.status) !== "completed_pending_admin_review" ? (
                 <>
                   <button
                     type="button"
@@ -1510,9 +1554,7 @@ export default function InstallerJobDetailsPage() {
                     onClick={() => setShowCancelBox((prev) => !prev)}
                     className="rounded-xl border border-red-500 px-5 py-3 font-semibold text-red-400 hover:bg-red-500 hover:text-white"
                   >
-                    {showCancelBox
-                      ? "Close Cancel Request"
-                      : "Request Cancel Job"}
+                    {showCancelBox ? "Close Cancel Request" : "Request Cancel Job"}
                   </button>
                 </>
               ) : null}
@@ -1520,29 +1562,30 @@ export default function InstallerJobDetailsPage() {
 
             {showCompleteBox ? (
               <div className="mt-6 rounded-2xl border border-green-500 bg-black p-5">
-                <h3 className="text-xl font-semibold text-green-400">
-                  Complete Job
-                </h3>
+                <h3 className="text-xl font-semibold text-green-400">Complete Job</h3>
 
                 <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div>
                     <label className="mb-2 block text-sm text-gray-300">
-                      Completion Photo <span className="text-red-400">*</span>
+                      Completion Photos <span className="text-red-400">*</span>
                     </label>
                     <input
                       type="file"
                       accept="image/*"
+                      multiple
                       onChange={(e) =>
-                        setCompletionPhoto(e.target.files?.[0] || null)
+                        setCompletionPhotos(Array.from(e.target.files || []))
                       }
                       className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none file:mr-4 file:rounded-lg file:border-0 file:bg-yellow-500 file:px-4 file:py-2 file:font-semibold file:text-black"
                     />
+                    <p className="mt-2 text-xs text-gray-400">
+                      Upload one or more completion images.
+                    </p>
                   </div>
 
                   <div>
                     <label className="mb-2 block text-sm text-gray-300">
-                      Did customer provide a signing form?{" "}
-                      <span className="text-red-400">*</span>
+                      Did customer provide a signing form? <span className="text-red-400">*</span>
                     </label>
                     <select
                       value={hasSigningForm}
@@ -1558,8 +1601,7 @@ export default function InstallerJobDetailsPage() {
                   {hasSigningForm === "yes" ? (
                     <div className="md:col-span-2">
                       <label className="mb-2 block text-sm text-gray-300">
-                        Upload Signed Completion Form{" "}
-                        <span className="text-red-400">*</span>
+                        Upload Signed Completion Form <span className="text-red-400">*</span>
                       </label>
                       <input
                         type="file"
@@ -1575,12 +1617,16 @@ export default function InstallerJobDetailsPage() {
 
                 <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-sm text-gray-300">
                   <p>
-                    Completion photo is <strong>required</strong>.
+                    At least one completion photo is <strong>required</strong>.
                   </p>
                   <p className="mt-1">
-                    Signed completion upload is only required if the customer
-                    provided a signing form.
+                    Signed completion upload is only required if the customer provided a signing form.
                   </p>
+                  {completionPhotos.length > 0 ? (
+                    <p className="mt-1">
+                      Files selected: <strong>{completionPhotos.length}</strong>
+                    </p>
+                  ) : null}
                 </div>
 
                 <div className="mt-4 flex flex-wrap gap-3">
@@ -1590,9 +1636,7 @@ export default function InstallerJobDetailsPage() {
                     disabled={actionLoading === "complete"}
                     className="rounded-xl bg-green-600 px-5 py-3 font-semibold text-white hover:bg-green-500 disabled:opacity-60"
                   >
-                    {actionLoading === "complete"
-                      ? "Completing..."
-                      : "Confirm Complete"}
+                    {actionLoading === "complete" ? "Completing..." : "Confirm Complete"}
                   </button>
 
                   <button
@@ -1608,9 +1652,7 @@ export default function InstallerJobDetailsPage() {
 
             {showIncompleteBox ? (
               <div className="mt-6 rounded-2xl border border-red-500 bg-black p-5">
-                <h3 className="text-xl font-semibold text-red-400">
-                  Mark Job Incomplete
-                </h3>
+                <h3 className="text-xl font-semibold text-red-400">Mark Job Incomplete</h3>
 
                 <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div>
@@ -1623,9 +1665,7 @@ export default function InstallerJobDetailsPage() {
                       className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
                     >
                       <option value="">Select reason</option>
-                      <option value="customer">
-                        Customer / Homeowner Issue
-                      </option>
+                      <option value="customer">Customer / Homeowner Issue</option>
                       <option value="shop">Shop Issue</option>
                       <option value="installer">Installer Issue</option>
                       <option value="other">Other</option>
@@ -1639,17 +1679,13 @@ export default function InstallerJobDetailsPage() {
                     <input
                       type="file"
                       accept="image/*"
-                      onChange={(e) =>
-                        setIncompletePhoto(e.target.files?.[0] || null)
-                      }
+                      onChange={(e) => setIncompletePhoto(e.target.files?.[0] || null)}
                       className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none file:mr-4 file:rounded-lg file:border-0 file:bg-yellow-500 file:px-4 file:py-2 file:font-semibold file:text-black"
                     />
                   </div>
 
                   <div className="md:col-span-2">
-                    <label className="mb-2 block text-sm text-gray-300">
-                      Notes
-                    </label>
+                    <label className="mb-2 block text-sm text-gray-300">Notes</label>
                     <textarea
                       value={incompleteNote}
                       onChange={(e) => setIncompleteNote(e.target.value)}
@@ -1662,13 +1698,12 @@ export default function InstallerJobDetailsPage() {
 
                 <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-sm text-gray-300">
                   <p>
-                    If reason is <strong>customer</strong> or{" "}
-                    <strong>shop</strong>, a
+                    If reason is <strong>customer</strong> or <strong>shop</strong>, a
                     <strong> return fee will be applied</strong>.
                   </p>
                   <p className="mt-1">
-                    If reason is <strong>installer</strong>, installer payout
-                    will be <strong>held until completion</strong>.
+                    If reason is <strong>installer</strong>, installer payout will be
+                    <strong> held until completion</strong>.
                   </p>
                 </div>
 
@@ -1679,9 +1714,7 @@ export default function InstallerJobDetailsPage() {
                     disabled={actionLoading === "incomplete"}
                     className="rounded-xl bg-red-500 px-5 py-3 font-semibold text-white hover:bg-red-400 disabled:opacity-60"
                   >
-                    {actionLoading === "incomplete"
-                      ? "Saving..."
-                      : "Confirm Incomplete"}
+                    {actionLoading === "incomplete" ? "Saving..." : "Confirm Incomplete"}
                   </button>
 
                   <button
@@ -1697,9 +1730,7 @@ export default function InstallerJobDetailsPage() {
 
             {showCancelBox ? (
               <div className="mt-6 rounded-2xl border border-red-500 bg-black p-5">
-                <h3 className="text-xl font-semibold text-red-400">
-                  Request Job Cancellation
-                </h3>
+                <h3 className="text-xl font-semibold text-red-400">Request Job Cancellation</h3>
 
                 <div className="mt-4">
                   <label className="mb-2 block text-sm text-gray-300">
@@ -1722,15 +1753,12 @@ export default function InstallerJobDetailsPage() {
                   }`}
                 >
                   <p>
-                    Installer cancellation policy requires{" "}
-                    <strong>48 hours notice</strong>.
+                    Installer cancellation policy requires <strong>48 hours notice</strong>.
                   </p>
                   <p className="mt-1">
                     Current notice:{" "}
                     <strong>
-                      {hoursUntilJob === null
-                        ? "-"
-                        : `${hoursUntilJob.toFixed(1)} hours`}
+                      {hoursUntilJob === null ? "-" : `${hoursUntilJob.toFixed(1)} hours`}
                     </strong>
                   </p>
                   <p className="mt-1">
@@ -1747,9 +1775,7 @@ export default function InstallerJobDetailsPage() {
                     disabled={actionLoading === "cancel-request"}
                     className="rounded-xl bg-red-500 px-5 py-3 font-semibold text-white hover:bg-red-400 disabled:opacity-60"
                   >
-                    {actionLoading === "cancel-request"
-                      ? "Sending..."
-                      : "Send Cancel Request"}
+                    {actionLoading === "cancel-request" ? "Sending..." : "Send Cancel Request"}
                   </button>
 
                   <button
@@ -1768,9 +1794,7 @@ export default function InstallerJobDetailsPage() {
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h2 className="text-2xl font-semibold text-yellow-500">
-                    Group Jobs
-                  </h2>
+                  <h2 className="text-2xl font-semibold text-yellow-500">Group Jobs</h2>
                   <p className="mt-1 text-sm text-gray-400">
                     Each job keeps its own details and its own installer payout.
                   </p>
@@ -1796,10 +1820,7 @@ export default function InstallerJobDetailsPage() {
                       <p>Customer: {item.customer_name || "-"}</p>
                       <p>Company: {item.company_name || "-"}</p>
                       <p>
-                        Service:{" "}
-                        {getServiceTypeLabel(
-                          item.service_type_label || item.service_type
-                        )}
+                        Service: {getServiceTypeLabel(item.service_type_label || item.service_type)}
                       </p>
                       <p>Date: {item.scheduled_date || "-"}</p>
                       <p>Pickup Window: {getPickupWindow(item)}</p>

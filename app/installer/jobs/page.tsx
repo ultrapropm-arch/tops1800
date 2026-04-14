@@ -50,6 +50,7 @@ type Booking = {
   chargeable_km?: number | null;
   customer_mileage_charge?: number | null;
   mileage_fee?: number | null;
+  mileage_charge?: number | null;
 
   add_on_services?: string[] | string | null;
   just_services?: string[] | string | null;
@@ -65,6 +66,8 @@ type Booking = {
   installer_other_pay?: number | null;
   installer_subtotal_pay?: number | null;
   installer_hst_pay?: number | null;
+  installer_cut_polish_pay?: number | null;
+  installer_sink_pay?: number | null;
   installer_payout_lines?:
     | {
         label?: string;
@@ -73,6 +76,8 @@ type Booking = {
     | null;
 
   final_total?: number | null;
+  subtotal?: number | null;
+  hst_amount?: number | null;
   is_archived?: boolean | null;
 
   ai_distance_tier?: string | null;
@@ -133,8 +138,13 @@ type FilterValue =
 
 type ViewMode = "available" | "myJobs";
 
+function num(value: unknown) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function money(value?: number | null) {
-  return "$" + Number(value || 0).toFixed(2);
+  return "$" + num(value).toFixed(2);
 }
 
 function safeText(value?: string | null) {
@@ -156,7 +166,7 @@ function getCityOnly(address?: string | null) {
 
     const countryPattern = /^(canada|usa|united states)$/i;
 
-    for (let i = parts.length - 1; i >= 0; i--) {
+    for (let i = parts.length - 1; i >= 0; i -= 1) {
       const part = parts[i];
       if (
         provincePattern.test(part) ||
@@ -193,16 +203,28 @@ function getNormalizedStatus(status?: string | null) {
   return safeText(status).toLowerCase();
 }
 
-function normalizeBookingStatus(status?: string | null) {
-  const value = getNormalizedStatus(status);
+function normalizeBookingStatus(job: Booking) {
+  const value = getNormalizedStatus(job.status);
 
-  if (!value) return "new";
+  if (job.is_archived === true) return "archived";
+  if (job.completed_at || value === "completed" || value === "completed_pending_admin_review") {
+    return "completed";
+  }
+  if (job.incomplete_at || value === "incomplete") {
+    return "incomplete";
+  }
+
+  if (!value) {
+    if (safeText(job.installer_name) || safeText(job.reassigned_installer_name)) {
+      return "accepted";
+    }
+    return "new";
+  }
+
   if (value === "confirmed") return "pending";
   if (value === "assigned") return "accepted";
   if (value === "accepted_by_installer") return "accepted";
-  if (value === "in progress") return "in_progress";
-  if (value === "in-progress") return "in_progress";
-  if (value === "completed_pending_admin_review") return "completed";
+  if (value === "in progress" || value === "in-progress") return "in_progress";
   if (value === "canceled") return "cancelled";
 
   return value;
@@ -216,13 +238,13 @@ function hasAssignedInstaller(job: Booking) {
 }
 
 function isJobAvailable(job: Booking) {
-  const status = normalizeBookingStatus(job.status);
-  const noInstaller = !hasAssignedInstaller(job);
-  const notArchived = job.is_archived !== true;
-
+  const status = normalizeBookingStatus(job);
   return (
-    notArchived &&
-    noInstaller &&
+    job.is_archived !== true &&
+    !hasAssignedInstaller(job) &&
+    status !== "completed" &&
+    status !== "incomplete" &&
+    status !== "cancelled" &&
     (status === "new" || status === "pending" || status === "available")
   );
 }
@@ -249,6 +271,7 @@ function getServiceTypeLabel(job: Booking) {
   if (value === "full_height_backsplash") return "Full Height Backsplash";
   if (value === "installation_3cm") return "3cm Installation";
   if (value === "installation_2cm_standard") return "2cm Standard Installation";
+  if (value === "installation_2cm") return "2cm Installation";
   if (value === "backsplash_tiling") return "Backsplash Tiling";
   if (value === "justServices") return "Just Services";
 
@@ -278,7 +301,7 @@ function getGroupingColor(label: string) {
   if (label === "Strong Grouping") {
     return "border-green-500/30 bg-green-500/10 text-green-400";
   }
-  if (label === "Possible Group") {
+  if (label === "Possible Grouping" || label === "Possible Group") {
     return "border-yellow-500/30 bg-yellow-500/10 text-yellow-400";
   }
   return "border-zinc-700 bg-zinc-800/40 text-zinc-300";
@@ -295,11 +318,7 @@ function isSameDayJob(job: Booking) {
     .join(" ")
     .toLowerCase();
 
-  return (
-    text.includes("same day") ||
-    text.includes("same-day") ||
-    job.ai_urgency_label === "Same-Day Priority"
-  );
+  return text.includes("same day") || text.includes("same-day") || job.ai_urgency_label === "Same-Day Priority";
 }
 
 function isNextDayJob(job: Booking) {
@@ -313,16 +332,65 @@ function isNextDayJob(job: Booking) {
     .join(" ")
     .toLowerCase();
 
-  return (
-    text.includes("next day") ||
-    text.includes("next-day") ||
-    job.ai_urgency_label === "Next-Day Priority"
-  );
+  return text.includes("next day") || text.includes("next-day") || job.ai_urgency_label === "Next-Day Priority";
+}
+
+function getDerivedInstallerPay(job: Booking) {
+  if (num(job.installer_pay) > 0) return num(job.installer_pay);
+
+  const subtotalAndHst = num(job.installer_subtotal_pay) + num(job.installer_hst_pay);
+  if (subtotalAndHst > 0) return subtotalAndHst;
+
+  if (Array.isArray(job.installer_payout_lines) && job.installer_payout_lines.length > 0) {
+    return job.installer_payout_lines.reduce((sum, line) => sum + num(line.amount), 0);
+  }
+
+  const fallback =
+    num(job.installer_base_pay) +
+    num(job.installer_mileage_pay) +
+    num(job.installer_addon_pay) +
+    num(job.installer_other_pay) +
+    num(job.installer_cut_polish_pay) +
+    num(job.installer_sink_pay);
+
+  return fallback;
+}
+
+function getPayoutLines(job: Booking) {
+  if (Array.isArray(job.installer_payout_lines) && job.installer_payout_lines.length > 0) {
+    return job.installer_payout_lines.map((line) => ({
+      label: line.label || "Payout Line",
+      amount: num(line.amount),
+    }));
+  }
+
+  const lines: { label: string; amount: number }[] = [];
+
+  if (num(job.installer_base_pay) > 0) {
+    lines.push({ label: "Base Pay", amount: num(job.installer_base_pay) });
+  }
+  if (num(job.installer_addon_pay) > 0) {
+    lines.push({ label: "Add-On Pay", amount: num(job.installer_addon_pay) });
+  }
+  if (num(job.installer_other_pay) > 0) {
+    lines.push({ label: "Other Service Pay", amount: num(job.installer_other_pay) });
+  }
+  if (num(job.installer_cut_polish_pay) > 0) {
+    lines.push({ label: "Cut / Polish Pay", amount: num(job.installer_cut_polish_pay) });
+  }
+  if (num(job.installer_sink_pay) > 0) {
+    lines.push({ label: "Sink / Reattach Pay", amount: num(job.installer_sink_pay) });
+  }
+  if (num(job.installer_mileage_pay) > 0) {
+    lines.push({ label: "Mileage Pay", amount: num(job.installer_mileage_pay) });
+  }
+
+  return lines;
 }
 
 function getAiInsight(job: Booking, allJobs: Booking[]): AiJobInsight {
-  const oneWayKm = Number(job.one_way_km || 0);
-  const sqft = Number(job.sqft || job.job_size || 0);
+  const oneWayKm = num(job.one_way_km);
+  const sqft = num(job.sqft || job.job_size);
   const addOnCount = toArray(job.add_on_services).length;
   const serviceType = (job.service_type || "").toLowerCase();
   const serviceText = [
@@ -335,7 +403,7 @@ function getAiInsight(job: Booking, allJobs: Booking[]): AiJobInsight {
     .join(" ")
     .toLowerCase();
 
-  const distanceTier = job.ai_distance_tier || "Standard Zone";
+  const distanceTier = job.ai_distance_tier || (oneWayKm > 120 ? "Long Distance" : oneWayKm > 70 ? "Extended Range" : "Standard Zone");
 
   let recommendedInstallerType =
     job.ai_recommended_installer_type || "Standard Installer";
@@ -366,20 +434,18 @@ function getAiInsight(job: Booking, allJobs: Booking[]): AiJobInsight {
 
   const nearbyCount = allJobs.filter((item) => {
     if (item.id === job.id) return false;
+    if (normalizeBookingStatus(item) === "completed" || normalizeBookingStatus(item) === "incomplete") return false;
     const sameDate = safeText(item.scheduled_date) === safeText(job.scheduled_date);
     if (!sameDate) return false;
 
-    const itemClusterKey = getRouteClusterKey(
-      item.dropoff_address || item.pickup_address
-    );
-
+    const itemClusterKey = getRouteClusterKey(item.dropoff_address || item.pickup_address);
     return clusterKey && itemClusterKey && clusterKey === itemClusterKey;
   }).length;
 
   let groupingLabel = job.ai_grouping_label || "Solo Route";
   if (!job.ai_grouping_label) {
     if (nearbyCount >= 2) groupingLabel = "Strong Grouping";
-    else if (nearbyCount === 1) groupingLabel = "Possible Group";
+    else if (nearbyCount === 1) groupingLabel = "Possible Grouping";
   }
 
   let routeHint = job.ai_route_hint || "No grouping suggestion yet.";
@@ -387,9 +453,10 @@ function getAiInsight(job: Booking, allJobs: Booking[]): AiJobInsight {
     if (nearbyCount >= 2) routeHint = "Bundle this with nearby same-date jobs.";
     else if (nearbyCount === 1) routeHint = "Possible nearby grouped run.";
     else if (oneWayKm > 120) routeHint = "Best for a dedicated long-distance installer.";
+    else routeHint = "Review route timing before accepting.";
   }
 
-  let dispatchScore = Number(job.ai_dispatch_score || 0);
+  let dispatchScore = num(job.ai_dispatch_score);
   if (!dispatchScore) {
     dispatchScore = 50;
     if (urgencyLabel === "Same-Day Priority") dispatchScore += 20;
@@ -397,17 +464,17 @@ function getAiInsight(job: Booking, allJobs: Booking[]): AiJobInsight {
     if (sqft >= 80) dispatchScore += 10;
     if (nearbyCount >= 1) dispatchScore += 10;
     if (oneWayKm > 120) dispatchScore += 5;
-    if (Number(job.installer_pay || 0) >= 500) dispatchScore += 10;
+    if (getDerivedInstallerPay(job) >= 500) dispatchScore += 10;
     dispatchScore = Math.max(0, Math.min(100, dispatchScore));
   }
 
-  let priorityScore = Number(job.ai_priority_score || 0);
+  let priorityScore = num(job.ai_priority_score);
   if (!priorityScore) {
     priorityScore = 40;
     if (urgencyLabel === "Same-Day Priority") priorityScore += 30;
     if (urgencyLabel === "Next-Day Priority") priorityScore += 15;
     if (sqft >= 80) priorityScore += 10;
-    if (Number(job.installer_pay || 0) >= 500) priorityScore += 10;
+    if (getDerivedInstallerPay(job) >= 500) priorityScore += 10;
     priorityScore = Math.max(0, Math.min(100, priorityScore));
   }
 
@@ -415,14 +482,14 @@ function getAiInsight(job: Booking, allJobs: Booking[]): AiJobInsight {
   if (recommendedInstallerType === "Long Distance Specialist") bestMatchScore += 15;
   if (recommendedInstallerType === "Large Project Specialist") bestMatchScore += 10;
   if (groupingLabel === "Strong Grouping") bestMatchScore += 15;
-  if (groupingLabel === "Possible Group") bestMatchScore += 8;
-  if (Number(job.installer_pay || 0) >= 500) bestMatchScore += 10;
+  if (groupingLabel === "Possible Grouping") bestMatchScore += 8;
+  if (getDerivedInstallerPay(job) >= 500) bestMatchScore += 10;
   if (urgencyLabel === "Same-Day Priority") bestMatchScore += 12;
   if (urgencyLabel === "Next-Day Priority") bestMatchScore += 6;
   bestMatchScore = Math.max(0, Math.min(100, bestMatchScore));
 
   let recommendedAction = "Review and accept if route works.";
-  if (urgencyLabel === "Same-Day Priority" && Number(job.installer_pay || 0) >= 500) {
+  if (urgencyLabel === "Same-Day Priority" && getDerivedInstallerPay(job) >= 500) {
     recommendedAction = "Top priority job. Accept quickly.";
   } else if (urgencyLabel === "Same-Day Priority") {
     recommendedAction = "Urgent same-day job. Review first.";
@@ -432,7 +499,7 @@ function getAiInsight(job: Booking, allJobs: Booking[]): AiJobInsight {
     recommendedAction = "Strong grouped run. High route efficiency.";
   } else if (oneWayKm > 120) {
     recommendedAction = "Best if you want a dedicated long-distance run.";
-  } else if (Number(job.installer_pay || 0) < 250) {
+  } else if (getDerivedInstallerPay(job) < 250) {
     recommendedAction = "Lower pay job. Best if nearby or combined.";
   }
 
@@ -506,7 +573,7 @@ async function sendAdminAcceptedEmail(job: Booking, installerName: string) {
       <p><strong>Pick Up:</strong> ${job.pickup_address || "-"}</p>
       <p><strong>Drop Off:</strong> ${job.dropoff_address || "-"}</p>
       <p><strong>Status:</strong> accepted</p>
-      <p><strong>Installer Pay:</strong> ${money(job.installer_pay)}</p>
+      <p><strong>Installer Pay:</strong> ${money(getDerivedInstallerPay(job))}</p>
     </div>
   `;
 
@@ -553,7 +620,7 @@ function CompactStat({ label, value }: { label: string; value: string }) {
 }
 
 function StatusPill({ job }: { job: Booking }) {
-  const normalized = normalizeBookingStatus(job.status) || "no status";
+  const normalized = normalizeBookingStatus(job) || "no status";
   const archived = job.is_archived === true;
 
   let className = "border-zinc-700 bg-zinc-800/40 text-zinc-300";
@@ -618,13 +685,12 @@ function JobDetailBlock({
 }) {
   const addOns = toArray(job.add_on_services);
   const justServices = toArray(job.just_services);
-  const payoutLines = Array.isArray(job.installer_payout_lines)
-    ? job.installer_payout_lines
-    : [];
+  const payoutLines = getPayoutLines(job);
   const ai = getAiInsight(job, allJobs);
   const sameDay = isSameDayJob(job);
   const nextDay = isNextDayJob(job);
-  const normalizedStatus = normalizeBookingStatus(job.status);
+  const normalizedStatus = normalizeBookingStatus(job);
+  const derivedInstallerPay = getDerivedInstallerPay(job);
 
   const showFullAddress = viewMode === "myJobs";
   const pickupDisplay = showFullAddress
@@ -689,17 +755,17 @@ function JobDetailBlock({
             <CompactStat
               label="Sqft"
               value={
-                Number(job.sqft || job.job_size || 0)
-                  ? `${Number(job.sqft || job.job_size || 0).toFixed(2)} sqft`
+                num(job.sqft || job.job_size)
+                  ? `${num(job.sqft || job.job_size).toFixed(2)} sqft`
                   : "-"
               }
             />
             <CompactStat
               label="Distance"
-              value={`${Number(job.one_way_km || 0).toFixed(2)} km`}
+              value={`${num(job.one_way_km).toFixed(2)} km`}
             />
             <CompactStat label="Distance Tier" value={ai.distanceTier} />
-            <CompactStat label="Total Pay" value={money(job.installer_pay)} />
+            <CompactStat label="Total Pay" value={money(derivedInstallerPay)} />
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
@@ -803,11 +869,11 @@ function JobDetailBlock({
             <p>Completed At: {job.completed_at || "-"}</p>
             <p>Incomplete At: {job.incomplete_at || "-"}</p>
 
-            {Number(job.waterfall_quantity || 0) > 0 ? (
+            {num(job.waterfall_quantity) > 0 ? (
               <p>Waterfall Quantity: {String(job.waterfall_quantity)}</p>
             ) : null}
 
-            {Number(job.outlet_plug_cutout_quantity || 0) > 0 ? (
+            {num(job.outlet_plug_cutout_quantity) > 0 ? (
               <p>Outlet Plug Cutout Quantity: {String(job.outlet_plug_cutout_quantity)}</p>
             ) : null}
 
@@ -851,10 +917,12 @@ function JobDetailBlock({
               <p>Base Pay: {money(job.installer_base_pay)}</p>
               <p>Add-On Pay: {money(job.installer_addon_pay)}</p>
               <p>Other Service Pay: {money(job.installer_other_pay)}</p>
+              <p>Cut / Polish Pay: {money(job.installer_cut_polish_pay)}</p>
+              <p>Sink / Reattach Pay: {money(job.installer_sink_pay)}</p>
               <p>Mileage Pay: {money(job.installer_mileage_pay)}</p>
               <p>Subtotal Pay: {money(job.installer_subtotal_pay)}</p>
 
-              {Number(job.installer_hst_pay || 0) > 0 ? (
+              {num(job.installer_hst_pay) > 0 ? (
                 <p>HST Pay: {money(job.installer_hst_pay)}</p>
               ) : null}
 
@@ -869,7 +937,7 @@ function JobDetailBlock({
               ) : null}
 
               <p className="pt-2 font-semibold text-yellow-400">
-                Total Pay: {money(job.installer_pay)}
+                Total Pay: {money(derivedInstallerPay)}
               </p>
             </div>
           </div>
@@ -1064,10 +1132,18 @@ export default function InstallerJobsPage() {
 
       const safeJobs = ((data as Booking[]) || []).map((job) => ({
         ...job,
-        installer_pay: Number(job.installer_pay || 0),
-        one_way_km: Number(job.one_way_km || 0),
-        sqft: Number(job.sqft || 0),
-        job_size: Number(job.job_size || 0),
+        installer_pay: getDerivedInstallerPay(job),
+        one_way_km: num(job.one_way_km),
+        sqft: num(job.sqft),
+        job_size: num(job.job_size),
+        installer_subtotal_pay: num(job.installer_subtotal_pay),
+        installer_hst_pay: num(job.installer_hst_pay),
+        installer_base_pay: num(job.installer_base_pay),
+        installer_mileage_pay: num(job.installer_mileage_pay),
+        installer_addon_pay: num(job.installer_addon_pay),
+        installer_other_pay: num(job.installer_other_pay),
+        installer_cut_polish_pay: num(job.installer_cut_polish_pay),
+        installer_sink_pay: num(job.installer_sink_pay),
       }));
 
       setAllJobs(safeJobs);
@@ -1296,6 +1372,7 @@ export default function InstallerJobsPage() {
       if (nextStatus === "completed") {
         updates.status = "completed";
         updates.completed_at = new Date().toISOString();
+        updates.incomplete_at = null;
       }
 
       if (nextStatus === "incomplete") {
@@ -1321,6 +1398,7 @@ export default function InstallerJobsPage() {
 
         updates.status = "incomplete";
         updates.incomplete_at = new Date().toISOString();
+        updates.completed_at = null;
         updates.incomplete_reason = reason.trim();
         updates.incomplete_notes = notes.trim();
       }
@@ -1359,8 +1437,8 @@ export default function InstallerJobsPage() {
     const jobs = allJobs.filter((job) => isMyJob(job, installerName));
 
     return [...jobs].sort((a, b) => {
-      const aStatus = normalizeBookingStatus(a.status);
-      const bStatus = normalizeBookingStatus(b.status);
+      const aStatus = normalizeBookingStatus(a);
+      const bStatus = normalizeBookingStatus(b);
 
       const priority = (status: string) => {
         if (status === "accepted") return 1;
@@ -1373,7 +1451,7 @@ export default function InstallerJobsPage() {
       const diff = priority(aStatus) - priority(bStatus);
       if (diff !== 0) return diff;
 
-      return Number(b.job_number || 0) - Number(a.job_number || 0);
+      return num(b.job_number) - num(a.job_number);
     });
   }, [allJobs, installerName]);
 
@@ -1394,7 +1472,7 @@ export default function InstallerJobsPage() {
       ([groupKey, groupItems]) => ({
         groupKey,
         jobs: [...groupItems].sort(
-          (a, b) => Number(a.job_number || 0) - Number(b.job_number || 0)
+          (a, b) => num(a.job_number) - num(b.job_number)
         ),
       })
     );
@@ -1418,8 +1496,8 @@ export default function InstallerJobsPage() {
       );
       if (bTopAi !== aTopAi) return bTopAi - aTopAi;
 
-      const aTopPay = Math.max(...a.jobs.map((job) => Number(job.installer_pay || 0)));
-      const bTopPay = Math.max(...b.jobs.map((job) => Number(job.installer_pay || 0)));
+      const aTopPay = Math.max(...a.jobs.map((job) => getDerivedInstallerPay(job)));
+      const bTopPay = Math.max(...b.jobs.map((job) => getDerivedInstallerPay(job)));
 
       return bTopPay - aTopPay;
     });
@@ -1438,10 +1516,7 @@ export default function InstallerJobsPage() {
         filter === "urgency" &&
         !group.jobs.some((job) => {
           const ai = getAiInsight(job, visibleJobs);
-          return (
-            ai.urgencyLabel === "Same-Day Priority" ||
-            ai.urgencyLabel === "Next-Day Priority"
-          );
+          return ai.urgencyLabel === "Same-Day Priority" || ai.urgencyLabel === "Next-Day Priority";
         })
       ) {
         return false;
@@ -1467,14 +1542,14 @@ export default function InstallerJobsPage() {
 
       if (
         filter === "longDistance" &&
-        !group.jobs.some((job) => Number(job.one_way_km || 0) > 120)
+        !group.jobs.some((job) => num(job.one_way_km) > 120)
       ) {
         return false;
       }
 
       if (
         filter === "highPay" &&
-        !group.jobs.some((job) => Number(job.installer_pay || 0) >= 500)
+        !group.jobs.some((job) => getDerivedInstallerPay(job) >= 500)
       ) {
         return false;
       }
@@ -1499,7 +1574,7 @@ export default function InstallerJobsPage() {
           safeText(job.dropoff_address).toLowerCase().includes(term) ||
           safeText(job.scheduled_date).toLowerCase().includes(term) ||
           getServiceTypeLabel(job).toLowerCase().includes(term) ||
-          getNormalizedStatus(job.status).includes(term) ||
+          normalizeBookingStatus(job).includes(term) ||
           safeText(job.installer_name).toLowerCase().includes(term) ||
           ai.recommendedInstallerType.toLowerCase().includes(term) ||
           ai.groupingLabel.toLowerCase().includes(term) ||
@@ -1516,15 +1591,13 @@ export default function InstallerJobsPage() {
 
   const nextDayGroups = useMemo(() => {
     return filteredGroups.filter(
-      (group) =>
-        !group.jobs.some(isSameDayJob) && group.jobs.some(isNextDayJob)
+      (group) => !group.jobs.some(isSameDayJob) && group.jobs.some(isNextDayJob)
     );
   }, [filteredGroups]);
 
   const regularGroups = useMemo(() => {
     return filteredGroups.filter(
-      (group) =>
-        !group.jobs.some(isSameDayJob) && !group.jobs.some(isNextDayJob)
+      (group) => !group.jobs.some(isSameDayJob) && !group.jobs.some(isNextDayJob)
     );
   }, [filteredGroups]);
 
@@ -1535,10 +1608,7 @@ export default function InstallerJobsPage() {
     const urgencyCount = filteredGroups.filter((group) =>
       group.jobs.some((job) => {
         const ai = getAiInsight(job, visibleJobs);
-        return (
-          ai.urgencyLabel === "Same-Day Priority" ||
-          ai.urgencyLabel === "Next-Day Priority"
-        );
+        return ai.urgencyLabel === "Same-Day Priority" || ai.urgencyLabel === "Next-Day Priority";
       })
     ).length;
 
@@ -1555,7 +1625,7 @@ export default function InstallerJobsPage() {
     ).length;
 
     const longDistanceCount = filteredGroups.filter((group) =>
-      group.jobs.some((job) => Number(job.one_way_km || 0) > 120)
+      group.jobs.some((job) => num(job.one_way_km) > 120)
     ).length;
 
     const topAiCount = filteredGroups.filter((group) =>
@@ -1582,18 +1652,10 @@ export default function InstallerJobsPage() {
   }, [availableJobs]);
 
   const myJobsSummary = useMemo(() => {
-    const accepted = myJobs.filter(
-      (job) => normalizeBookingStatus(job.status) === "accepted"
-    ).length;
-    const completed = myJobs.filter(
-      (job) => normalizeBookingStatus(job.status) === "completed"
-    ).length;
-    const incomplete = myJobs.filter(
-      (job) => normalizeBookingStatus(job.status) === "incomplete"
-    ).length;
-    const inProgress = myJobs.filter(
-      (job) => normalizeBookingStatus(job.status) === "in_progress"
-    ).length;
+    const accepted = myJobs.filter((job) => normalizeBookingStatus(job) === "accepted").length;
+    const completed = myJobs.filter((job) => normalizeBookingStatus(job) === "completed").length;
+    const incomplete = myJobs.filter((job) => normalizeBookingStatus(job) === "incomplete").length;
+    const inProgress = myJobs.filter((job) => normalizeBookingStatus(job) === "in_progress").length;
 
     return {
       total: myJobs.length,
@@ -1608,7 +1670,7 @@ export default function InstallerJobsPage() {
     const isGrouped = group.jobs.length > 1;
     const availableJobsInGroup = group.jobs.filter(isJobAvailable);
     const totalGroupPay = group.jobs.reduce(
-      (sum, job) => sum + Number(job.installer_pay || 0),
+      (sum, job) => sum + getDerivedInstallerPay(job),
       0
     );
 
@@ -1625,9 +1687,9 @@ export default function InstallerJobsPage() {
     )
       ? "Strong Grouping"
       : group.jobs.some(
-            (job) => getAiInsight(job, visibleJobs).groupingLabel === "Possible Group"
+            (job) => getAiInsight(job, visibleJobs).groupingLabel === "Possible Grouping"
           )
-        ? "Possible Group"
+        ? "Possible Grouping"
         : "Solo Route";
 
     const hasSameDay = group.jobs.some(isSameDayJob);

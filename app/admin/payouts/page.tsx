@@ -5,10 +5,18 @@ export const dynamic = "force-dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 
-type PayoutStatus = "unpaid" | "pending_review" | "ready" | "paid" | "hold";
+type PayoutStatus =
+  | "unpaid"
+  | "pending"
+  | "pending_review"
+  | "ready"
+  | "paid"
+  | "hold";
+
 type FilterTab =
   | "all"
   | "ready"
+  | "pending"
   | "pending_review"
   | "hold"
   | "paid"
@@ -22,35 +30,76 @@ type Booking = {
   job_id?: string | null;
   customer_name?: string | null;
   company_name?: string | null;
+
   service_type?: string | null;
   service_type_label?: string | null;
+
   scheduled_date?: string | null;
+  scheduled_time?: string | null;
+
   installer_name?: string | null;
   reassigned_installer_name?: string | null;
+
   installer_pay?: number | null;
   installer_hst?: number | null;
+  installer_hst_pay?: number | null;
   installer_total_pay?: number | null;
+
+  installer_base_pay?: number | null;
+  installer_mileage_pay?: number | null;
+  installer_addon_pay?: number | null;
+  installer_cut_polish_pay?: number | null;
+  installer_sink_pay?: number | null;
+  installer_other_pay?: number | null;
+  installer_subtotal_pay?: number | null;
+
+  installer_payout_lines?:
+    | {
+        label?: string;
+        amount?: number;
+      }[]
+    | null;
+
   installer_pay_status?: string | null;
+
   payout_notes?: string | null;
   payout_batch_id?: string | null;
   payout_sent_at?: string | null;
+
   notes?: string | null;
+
   final_total?: number | null;
+  subtotal?: number | null;
+  hst?: number | null;
+  hst_amount?: number | null;
   company_profit?: number | null;
+
   payment_status?: string | null;
+  payment_method?: string | null;
   status?: string | null;
+
   job_group_id?: string | number | null;
   job_number?: number | null;
+
   return_fee?: number | null;
   return_fee_charged?: number | null;
+  return_fee_installer_pay?: number | null;
+
   mileage_fee?: number | null;
   customer_mileage_charge?: number | null;
+  chargeable_km?: number | null;
+  one_way_km?: number | null;
+  round_trip_km?: number | null;
+
   incomplete_reason?: string | null;
   incomplete_note?: string | null;
   incomplete_notes?: string | null;
   redo_requested?: boolean | null;
+
   accepted_at?: string | null;
   completed_at?: string | null;
+  created_at?: string | null;
+
   ai_dispatch_score?: number | null;
   ai_priority_score?: number | null;
   ai_grouping_label?: string | null;
@@ -58,18 +107,26 @@ type Booking = {
   ai_recommended_installer_type?: string | null;
 };
 
-type Installer = {
+type InstallerProfile = {
   id: string;
+  installer_name?: string | null;
   full_name?: string | null;
+  name?: string | null;
+  business_name?: string | null;
+  company_name?: string | null;
+
+  email?: string | null;
   payout_method?: string | null;
-  etransfer_email?: string | null;
   payout_email?: string | null;
+  etransfer_email?: string | null;
+
   bank_name?: string | null;
   account_holder_name?: string | null;
   transit_number?: string | null;
   institution_number?: string | null;
   account_number?: string | null;
   bank_account_last4?: string | null;
+
   notes?: string | null;
   status?: string | null;
 };
@@ -94,35 +151,49 @@ type PayoutItem = {
   job_id: string;
   installer: string;
   job: string;
+
   amount: number;
   installer_hst: number;
   installer_total_pay: number;
+
   status: PayoutStatus;
+
   notes: string;
   payout_notes: string;
   payout_batch_id: string;
   payout_sent_at: string;
+
   final_total: number;
   company_profit: number;
+
   payment_status: string;
   payout_method: string;
   payout_destination: string;
+
   booking_status: string;
+
   return_fee: number;
   mileage_fee: number;
+
   service_type: string;
   scheduled_date: string;
   group_label: string;
+
   ai_dispatch_score: number;
   ai_priority_score: number;
   ai_grouping_label: string;
   ai_distance_tier: string;
   ai_recommended_installer_type: string;
+
   incomplete_reason: string;
   incomplete_note: string;
   redo_requested: boolean;
+
   accepted_at: string;
   completed_at: string;
+
+  payout_lines: { label: string; amount: number }[];
+
   ai: AiPayoutInsight;
 };
 
@@ -131,9 +202,13 @@ function toNumber(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function toStringValue(value: unknown): string {
+function toText(value: unknown): string {
   if (value === null || value === undefined) return "";
-  return String(value);
+  return String(value).trim();
+}
+
+function safeLower(value: unknown): string {
+  return toText(value).toLowerCase();
 }
 
 function formatMoney(amount: number) {
@@ -147,14 +222,165 @@ function formatDateTime(value?: string | null) {
   return date.toLocaleString();
 }
 
-function getServiceTypeLabel(value?: string | null) {
-  if (!value) return "-";
-  if (value === "full_height_backsplash") return "Full Height Backsplash";
-  if (value === "installation_3cm") return "3cm Installation";
-  if (value === "installation_2cm_standard") return "2cm Standard Installation";
-  if (value === "backsplash_tiling") return "Backsplash Tiling";
-  if (value === "justServices") return "Just Services";
-  return value;
+function getServiceTypeLabel(
+  serviceType?: string | null,
+  serviceTypeLabel?: string | null
+) {
+  if (serviceTypeLabel) return serviceTypeLabel;
+  if (!serviceType) return "-";
+  if (serviceType === "full_height_backsplash") return "Full Height Backsplash";
+  if (serviceType === "installation_3cm") return "3cm Installation";
+  if (serviceType === "installation_2cm_standard") return "2cm Standard Installation";
+  if (serviceType === "installation_2cm") return "2cm Installation";
+  if (serviceType === "backsplash_tiling") return "Backsplash Tiling";
+  if (serviceType === "justServices") return "Just Services";
+  return serviceType;
+}
+
+function normalizePayoutStatus(value?: string | null): PayoutStatus {
+  const status = safeLower(value);
+
+  if (status === "paid") return "paid";
+  if (status === "ready") return "ready";
+  if (status === "hold") return "hold";
+  if (status === "pending_review") return "pending_review";
+  if (status === "pending") return "pending";
+  return "unpaid";
+}
+
+function getInstallerDisplayName(installer?: InstallerProfile | null) {
+  if (!installer) return "";
+  return (
+    toText(installer.installer_name) ||
+    toText(installer.full_name) ||
+    toText(installer.name) ||
+    toText(installer.business_name) ||
+    toText(installer.company_name)
+  );
+}
+
+function getActiveInstallerName(booking: Booking) {
+  return (
+    toText(booking.reassigned_installer_name) ||
+    toText(booking.installer_name) ||
+    "-"
+  );
+}
+
+function getPayoutLines(booking: Booking): { label: string; amount: number }[] {
+  if (
+    Array.isArray(booking.installer_payout_lines) &&
+    booking.installer_payout_lines.length > 0
+  ) {
+    return booking.installer_payout_lines.map((line) => ({
+      label: toText(line.label) || "Payout Line",
+      amount: toNumber(line.amount),
+    }));
+  }
+
+  const lines: { label: string; amount: number }[] = [];
+
+  if (toNumber(booking.installer_base_pay) > 0) {
+    lines.push({
+      label: "Base Install Pay",
+      amount: toNumber(booking.installer_base_pay),
+    });
+  }
+
+  if (toNumber(booking.installer_addon_pay) > 0) {
+    lines.push({
+      label: "Add-On Pay",
+      amount: toNumber(booking.installer_addon_pay),
+    });
+  }
+
+  if (toNumber(booking.installer_cut_polish_pay) > 0) {
+    lines.push({
+      label: "Cut / Polish Pay",
+      amount: toNumber(booking.installer_cut_polish_pay),
+    });
+  }
+
+  if (toNumber(booking.installer_sink_pay) > 0) {
+    lines.push({
+      label: "Sink / Reattach Pay",
+      amount: toNumber(booking.installer_sink_pay),
+    });
+  }
+
+  if (toNumber(booking.installer_other_pay) > 0) {
+    lines.push({
+      label: "Other Service Pay",
+      amount: toNumber(booking.installer_other_pay),
+    });
+  }
+
+  if (toNumber(booking.installer_mileage_pay) > 0) {
+    lines.push({
+      label: "Mileage Pay",
+      amount: toNumber(booking.installer_mileage_pay),
+    });
+  }
+
+  return lines;
+}
+
+function deriveInstallerSubtotal(booking: Booking, payoutLines: { label: string; amount: number }[]) {
+  if (toNumber(booking.installer_subtotal_pay) > 0) {
+    return toNumber(booking.installer_subtotal_pay);
+  }
+
+  const lineSubtotal = payoutLines.reduce((sum, line) => sum + toNumber(line.amount), 0);
+  if (lineSubtotal > 0) return lineSubtotal;
+
+  if (toNumber(booking.installer_pay) > 0) return toNumber(booking.installer_pay);
+
+  return 0;
+}
+
+function deriveInstallerHst(booking: Booking) {
+  return toNumber(booking.installer_hst_pay) || toNumber(booking.installer_hst);
+}
+
+function deriveInstallerTotalPay(
+  booking: Booking,
+  subtotal: number,
+  installerHst: number
+) {
+  if (toNumber(booking.installer_total_pay) > 0) {
+    return toNumber(booking.installer_total_pay);
+  }
+
+  if (toNumber(booking.installer_pay) > 0 && installerHst === 0) {
+    return toNumber(booking.installer_pay);
+  }
+
+  if (toNumber(booking.installer_pay) > 0 && installerHst > 0) {
+    const pay = toNumber(booking.installer_pay);
+    if (pay >= subtotal + installerHst) return pay;
+  }
+
+  return subtotal + installerHst;
+}
+
+function deriveFinalTotal(booking: Booking) {
+  if (toNumber(booking.final_total) > 0) return toNumber(booking.final_total);
+
+  const subtotal = toNumber(booking.subtotal);
+  const hst = toNumber(booking.hst) || toNumber(booking.hst_amount);
+
+  if (subtotal > 0 || hst > 0) return subtotal + hst;
+
+  return 0;
+}
+
+function deriveCompanyProfit(booking: Booking, installerTotalPay: number) {
+  if (booking.company_profit !== null && booking.company_profit !== undefined) {
+    return toNumber(booking.company_profit);
+  }
+
+  const finalTotal = deriveFinalTotal(booking);
+  return finalTotal - installerTotalPay;
 }
 
 function getRiskClass(label: string) {
@@ -179,7 +405,7 @@ function getPayoutHealthClass(label: string) {
 }
 
 function getPaymentStatusClass(status: string) {
-  const normalized = status.toLowerCase();
+  const normalized = safeLower(status);
   if (normalized === "paid") return "text-green-400 border-green-500/30 bg-green-500/10";
   if (normalized === "pending") return "text-yellow-400 border-yellow-500/30 bg-yellow-500/10";
   if (normalized === "failed") return "text-red-400 border-red-500/30 bg-red-500/10";
@@ -194,8 +420,8 @@ function getRouteStrategyClass(label: string) {
 
 function getSpeedClass(label: string) {
   if (label === "Fast Pay Recommended") return "text-green-300 border-green-500/30 bg-green-500/10";
-  if (label === "Standard Pay") return "text-zinc-300 border-zinc-700 bg-zinc-800/40";
-  return "text-yellow-300 border-yellow-500/30 bg-yellow-500/10";
+  if (label === "Review Before Pay") return "text-yellow-300 border-yellow-500/30 bg-yellow-500/10";
+  return "text-zinc-300 border-zinc-700 bg-zinc-800/40";
 }
 
 function csvSafe(value: unknown) {
@@ -230,7 +456,7 @@ function generateBatchId() {
 }
 
 function buildAiPayoutInsight(params: {
-  amount: number;
+  installerTotalPay: number;
   finalTotal: number;
   companyProfit: number;
   status: PayoutStatus;
@@ -245,9 +471,9 @@ function buildAiPayoutInsight(params: {
   aiPriorityScore: number;
   aiGroupingLabel: string;
   aiDistanceTier: string;
-}) : AiPayoutInsight {
+}): AiPayoutInsight {
   const {
-    amount,
+    installerTotalPay,
     finalTotal,
     companyProfit,
     status,
@@ -264,7 +490,8 @@ function buildAiPayoutInsight(params: {
     aiDistanceTier,
   } = params;
 
-  const normalizedBookingStatus = bookingStatus.toLowerCase();
+  const normalizedBookingStatus = safeLower(bookingStatus);
+
   const hasIncompleteSignals =
     normalizedBookingStatus === "incomplete" ||
     incompleteReason.trim().length > 0 ||
@@ -272,7 +499,6 @@ function buildAiPayoutInsight(params: {
     redoRequested;
 
   let riskLabel = "Low Risk";
-
   if (status === "hold" || hasIncompleteSignals) {
     riskLabel = "High Risk";
   } else if (
@@ -294,25 +520,19 @@ function buildAiPayoutInsight(params: {
   }
 
   let payoutHealth = "Pending";
-  if (status === "paid") {
-    payoutHealth = "Paid";
-  } else if (status === "hold") {
-    payoutHealth = "On Hold";
-  } else if (status === "ready") {
-    payoutHealth = "Ready to Send";
-  } else if (status === "pending_review") {
-    payoutHealth = "Needs Review";
-  }
+  if (status === "paid") payoutHealth = "Paid";
+  else if (status === "hold") payoutHealth = "On Hold";
+  else if (status === "ready") payoutHealth = "Ready to Send";
+  else if (status === "pending_review") payoutHealth = "Needs Review";
 
   let recommendedAction = "Review payout details.";
-
   if (status === "paid") {
     recommendedAction = "Already paid. No action needed.";
   } else if (status === "hold") {
     recommendedAction = "Resolve issue before payout release.";
   } else if (hasIncompleteSignals) {
-    recommendedAction = "Check incomplete / redo notes before paying.";
-  } else if (!payoutMethod || payoutMethod.toLowerCase() === "not set") {
+    recommendedAction = "Check incomplete or redo notes before paying.";
+  } else if (!safeLower(payoutMethod) || safeLower(payoutMethod) === "not set") {
     recommendedAction = "Set installer payout method first.";
   } else if (
     normalizedBookingStatus !== "completed" &&
@@ -323,7 +543,7 @@ function buildAiPayoutInsight(params: {
     recommendedAction = "Admin review needed before marking ready.";
   } else if (status === "ready") {
     recommendedAction = "Good to send payout now.";
-  } else if (companyProfit <= 0 && amount > 0) {
+  } else if (companyProfit <= 0 && installerTotalPay > 0) {
     recommendedAction = "Double-check pay. Company profit is zero or negative.";
   } else if (aiDispatchScore >= 80 && companyProfit >= 250) {
     recommendedAction = "High-quality job. Prioritize fast payout.";
@@ -332,9 +552,9 @@ function buildAiPayoutInsight(params: {
   }
 
   const routeStrategy =
-    aiGroupingLabel.toLowerCase().includes("group") || aiGroupingLabel.toLowerCase().includes("paired")
+    safeLower(aiGroupingLabel).includes("group") || safeLower(aiGroupingLabel).includes("paired")
       ? "Grouped Route"
-      : aiDistanceTier.toLowerCase().includes("long") || mileageFee > 180
+      : safeLower(aiDistanceTier).includes("long") || mileageFee > 180
         ? "Long Distance"
         : "Standard Route";
 
@@ -422,152 +642,174 @@ export default function AdminPayoutsPage() {
     const bookingsResponse = await supabase
       .from("bookings")
       .select("*")
-      .not("installer_name", "is", null)
       .order("scheduled_date", { ascending: true });
 
     if (bookingsResponse.error) {
-      console.error("Error loading payouts:", JSON.stringify(bookingsResponse.error, null, 2));
+      console.error("Error loading payouts:", bookingsResponse.error);
       alert(bookingsResponse.error.message || "Could not load payouts.");
       setLoading(false);
       return;
     }
 
-    const installersResponse = await supabase.from("installers").select("*");
+    const installersResponse = await supabase
+      .from("installer_profiles")
+      .select("*");
 
     if (installersResponse.error) {
-      console.error(
-        "Error loading installer payout info:",
-        JSON.stringify(installersResponse.error, null, 2)
-      );
+      console.error("Error loading installer payout info:", installersResponse.error);
       alert(installersResponse.error.message || "Could not load installer payout details.");
       setLoading(false);
       return;
     }
 
-    const installers = (installersResponse.data as Installer[]) || [];
-    const bookings = ((bookingsResponse.data as Booking[]) || []).filter(
-      (item) => (item.installer_name || "").trim() !== ""
-    );
+    const installers = (installersResponse.data as InstallerProfile[]) || [];
+    const bookings = ((bookingsResponse.data as Booking[]) || []).filter((item) => {
+      const activeInstaller = getActiveInstallerName(item);
+      return activeInstaller !== "-" && activeInstaller !== "";
+    });
 
     const payoutItems: PayoutItem[] = bookings.map((booking) => {
-      const activeInstallerName =
-        (booking.reassigned_installer_name || booking.installer_name || "-").trim();
+      const activeInstallerName = getActiveInstallerName(booking);
 
-      const matchedInstaller = installers.find(
-        (installer) =>
-          (installer.full_name || "").trim().toLowerCase() ===
-          activeInstallerName.toLowerCase()
-      );
+      const matchedInstaller =
+        installers.find(
+          (installer) =>
+            getInstallerDisplayName(installer).toLowerCase() ===
+            activeInstallerName.toLowerCase()
+        ) || null;
 
-      const payoutMethod = matchedInstaller?.payout_method || "Not set";
+      const payoutMethod = toText(matchedInstaller?.payout_method) || "Not set";
 
       let payoutDestination = "-";
 
-      if (payoutMethod.toLowerCase() === "etransfer") {
+      if (safeLower(payoutMethod) === "etransfer") {
         payoutDestination =
-          matchedInstaller?.etransfer_email || matchedInstaller?.payout_email || "-";
-      } else if (payoutMethod.toLowerCase() === "bank") {
+          toText(matchedInstaller?.etransfer_email) ||
+          toText(matchedInstaller?.payout_email) ||
+          toText(matchedInstaller?.email) ||
+          "-";
+      } else if (safeLower(payoutMethod) === "bank") {
         payoutDestination = [
-          matchedInstaller?.bank_name || "",
-          matchedInstaller?.account_holder_name || "",
-          matchedInstaller?.transit_number ? `Transit: ${matchedInstaller.transit_number}` : "",
-          matchedInstaller?.institution_number
-            ? `Institution: ${matchedInstaller.institution_number}`
+          toText(matchedInstaller?.bank_name),
+          toText(matchedInstaller?.account_holder_name),
+          toText(matchedInstaller?.transit_number)
+            ? `Transit: ${toText(matchedInstaller?.transit_number)}`
             : "",
-          matchedInstaller?.bank_account_last4
-            ? `Acct Last4: ${matchedInstaller.bank_account_last4}`
-            : matchedInstaller?.account_number
-              ? `Account: ${matchedInstaller.account_number}`
+          toText(matchedInstaller?.institution_number)
+            ? `Institution: ${toText(matchedInstaller?.institution_number)}`
+            : "",
+          toText(matchedInstaller?.bank_account_last4)
+            ? `Acct Last4: ${toText(matchedInstaller?.bank_account_last4)}`
+            : toText(matchedInstaller?.account_number)
+              ? `Account: ${toText(matchedInstaller?.account_number)}`
               : "",
         ]
           .filter(Boolean)
           .join(" • ");
       } else if (
-        payoutMethod.toLowerCase() === "accounting_software" ||
-        payoutMethod.toLowerCase() === "accounting software"
+        safeLower(payoutMethod) === "accounting_software" ||
+        safeLower(payoutMethod) === "accounting software"
       ) {
         payoutDestination = "Pay through accounting software";
       } else {
-        payoutDestination = matchedInstaller?.notes || "-";
+        payoutDestination = toText(matchedInstaller?.notes) || "-";
       }
 
-      const finalTotal = toNumber(booking.final_total);
-      const amount = toNumber(booking.installer_pay);
-      const installerHst = toNumber(booking.installer_hst);
-      const installerTotalPay = toNumber(booking.installer_total_pay) || amount + installerHst;
-      const companyProfit =
-        booking.company_profit !== null && booking.company_profit !== undefined
-          ? toNumber(booking.company_profit)
-          : finalTotal - installerTotalPay;
+      const payoutLines = getPayoutLines(booking);
+      const amount = deriveInstallerSubtotal(booking, payoutLines);
+      const installerHst = deriveInstallerHst(booking);
+      const installerTotalPay = deriveInstallerTotalPay(booking, amount, installerHst);
+      const finalTotal = deriveFinalTotal(booking);
+      const companyProfit = deriveCompanyProfit(booking, installerTotalPay);
 
       const jobLabelParts = [
-        booking.company_name || booking.customer_name || "Job",
-        booking.service_type_label || getServiceTypeLabel(booking.service_type),
-        booking.scheduled_date || "",
+        toText(booking.company_name) || toText(booking.customer_name) || "Job",
+        getServiceTypeLabel(booking.service_type, booking.service_type_label),
+        toText(booking.scheduled_date),
         booking.job_group_id
-          ? `Group ${String(booking.job_group_id)}${booking.job_number ? ` • Job ${booking.job_number}` : ""}`
+          ? `Group ${String(booking.job_group_id)}${
+              booking.job_number ? ` • Job ${booking.job_number}` : ""
+            }`
           : "",
       ].filter(Boolean);
 
-      const status = toStringValue(booking.installer_pay_status || "unpaid") as PayoutStatus;
+      const status = normalizePayoutStatus(booking.installer_pay_status);
 
-      const ai = buildAiPayoutInsight({
-        amount: installerTotalPay,
-        finalTotal,
-        companyProfit,
-        status,
-        bookingStatus: toStringValue(booking.status),
-        returnFee: toNumber(booking.return_fee ?? booking.return_fee_charged),
-        mileageFee: toNumber(booking.mileage_fee ?? booking.customer_mileage_charge),
-        incompleteReason: toStringValue(booking.incomplete_reason),
-        incompleteNote: toStringValue(booking.incomplete_notes || booking.incomplete_note),
-        redoRequested: Boolean(booking.redo_requested),
-        payoutMethod,
-        aiDispatchScore: toNumber(booking.ai_dispatch_score),
-        aiPriorityScore: toNumber(booking.ai_priority_score),
-        aiGroupingLabel: booking.ai_grouping_label || "Solo Route",
-        aiDistanceTier: booking.ai_distance_tier || "Standard Zone",
-      });
-
-      return {
+      const item: PayoutItem = {
         id: booking.id,
-        job_id: booking.job_id || booking.id,
+        job_id: toText(booking.job_id) || booking.id,
         installer: activeInstallerName || "-",
         job: jobLabelParts.join(" • "),
         amount,
         installer_hst: installerHst,
         installer_total_pay: installerTotalPay,
         status,
-        notes: booking.notes || "",
-        payout_notes: booking.payout_notes || "",
-        payout_batch_id: booking.payout_batch_id || "",
-        payout_sent_at: booking.payout_sent_at || "",
+        notes: toText(booking.notes),
+        payout_notes: toText(booking.payout_notes),
+        payout_batch_id: toText(booking.payout_batch_id),
+        payout_sent_at: toText(booking.payout_sent_at),
         final_total: finalTotal,
         company_profit: companyProfit,
-        payment_status: booking.payment_status || "unpaid",
+        payment_status: toText(booking.payment_status) || "unpaid",
         payout_method: payoutMethod,
         payout_destination: payoutDestination || "-",
-        booking_status: booking.status || "-",
-        return_fee: toNumber(booking.return_fee ?? booking.return_fee_charged),
-        mileage_fee: toNumber(booking.mileage_fee ?? booking.customer_mileage_charge),
-        service_type: booking.service_type_label || getServiceTypeLabel(booking.service_type),
-        scheduled_date: booking.scheduled_date || "-",
+        booking_status: toText(booking.status) || "-",
+        return_fee: toNumber(booking.return_fee_charged) || toNumber(booking.return_fee),
+        mileage_fee: toNumber(booking.mileage_fee) || toNumber(booking.customer_mileage_charge),
+        service_type: getServiceTypeLabel(booking.service_type, booking.service_type_label),
+        scheduled_date: toText(booking.scheduled_date) || "-",
         group_label: booking.job_group_id ? `Group ${String(booking.job_group_id)}` : "Single Job",
         ai_dispatch_score: toNumber(booking.ai_dispatch_score),
         ai_priority_score: toNumber(booking.ai_priority_score),
-        ai_grouping_label: booking.ai_grouping_label || "Solo Route",
-        ai_distance_tier: booking.ai_distance_tier || "Standard Zone",
-        ai_recommended_installer_type: booking.ai_recommended_installer_type || "Standard Installer",
-        incomplete_reason: booking.incomplete_reason || "",
-        incomplete_note: booking.incomplete_notes || booking.incomplete_note || "",
+        ai_grouping_label: toText(booking.ai_grouping_label) || "Solo Route",
+        ai_distance_tier: toText(booking.ai_distance_tier) || "Standard Zone",
+        ai_recommended_installer_type:
+          toText(booking.ai_recommended_installer_type) || "Standard Installer",
+        incomplete_reason: toText(booking.incomplete_reason),
+        incomplete_note: toText(booking.incomplete_notes) || toText(booking.incomplete_note),
         redo_requested: Boolean(booking.redo_requested),
-        accepted_at: booking.accepted_at || "",
-        completed_at: booking.completed_at || "",
-        ai,
+        accepted_at: toText(booking.accepted_at),
+        completed_at: toText(booking.completed_at),
+        payout_lines: payoutLines,
+        ai: {
+          riskLabel: "",
+          riskClass: "",
+          recommendedAction: "",
+          priorityScore: 0,
+          profitLabel: "",
+          profitClass: "",
+          payoutHealth: "",
+          payoutHealthClass: "",
+          routeStrategy: "",
+          routeStrategyClass: "",
+          speedLabel: "",
+          speedClass: "",
+        },
       };
+
+      item.ai = buildAiPayoutInsight({
+        installerTotalPay: item.installer_total_pay,
+        finalTotal: item.final_total,
+        companyProfit: item.company_profit,
+        status: item.status,
+        bookingStatus: item.booking_status,
+        returnFee: item.return_fee,
+        mileageFee: item.mileage_fee,
+        incompleteReason: item.incomplete_reason,
+        incompleteNote: item.incomplete_note,
+        redoRequested: item.redo_requested,
+        payoutMethod: item.payout_method,
+        aiDispatchScore: item.ai_dispatch_score,
+        aiPriorityScore: item.ai_priority_score,
+        aiGroupingLabel: item.ai_grouping_label,
+        aiDistanceTier: item.ai_distance_tier,
+      });
+
+      return item;
     });
 
     setPayouts(payoutItems);
+    setSelectedIds([]);
     setLoading(false);
   }
 
@@ -575,7 +817,7 @@ export default function AdminPayoutsPage() {
     return {
       ...item,
       ai: buildAiPayoutInsight({
-        amount: item.installer_total_pay,
+        installerTotalPay: item.installer_total_pay,
         finalTotal: item.final_total,
         companyProfit: item.company_profit,
         status: item.status,
@@ -609,7 +851,7 @@ export default function AdminPayoutsPage() {
     const { error } = await supabase.from("bookings").update(updates).eq("id", id);
 
     if (error) {
-      console.error("Error updating payout status:", JSON.stringify(error, null, 2));
+      console.error("Error updating payout status:", error);
       alert(error.message || "Could not update payout status.");
       setSavingId("");
       return;
@@ -637,6 +879,7 @@ export default function AdminPayoutsPage() {
 
     setSavingId("bulk");
     const supabase = createClient();
+
     const updates: Record<string, unknown> = {
       installer_pay_status: status,
     };
@@ -648,7 +891,7 @@ export default function AdminPayoutsPage() {
     const { error } = await supabase.from("bookings").update(updates).in("id", selectedIds);
 
     if (error) {
-      console.error("Bulk payout update error:", JSON.stringify(error, null, 2));
+      console.error("Bulk payout update error:", error);
       alert(error.message || "Could not update selected payouts.");
       setSavingId("");
       return;
@@ -686,7 +929,7 @@ export default function AdminPayoutsPage() {
       .in("id", selectedIds);
 
     if (error) {
-      console.error("Batch assignment error:", JSON.stringify(error, null, 2));
+      console.error("Batch assignment error:", error);
       alert(error.message || "Could not assign payout batch.");
       setSavingId("");
       return;
@@ -707,8 +950,8 @@ export default function AdminPayoutsPage() {
     );
   }
 
-  function toggleSelectAllVisible() {
-    const visibleIds = filteredPayouts.map((item) => item.id);
+  function toggleSelectAllVisible(visibleItems: PayoutItem[]) {
+    const visibleIds = visibleItems.map((item) => item.id);
     const allVisibleSelected =
       visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
 
@@ -732,7 +975,7 @@ export default function AdminPayoutsPage() {
     const { error } = await supabase.from("bookings").update({ notes: item.notes }).eq("id", id);
 
     if (error) {
-      console.error("Error saving notes:", JSON.stringify(error, null, 2));
+      console.error("Error saving notes:", error);
       alert(error.message || "Could not save notes.");
       setSavingId("");
       return;
@@ -759,7 +1002,7 @@ export default function AdminPayoutsPage() {
       .eq("id", id);
 
     if (error) {
-      console.error("Error saving payout notes:", JSON.stringify(error, null, 2));
+      console.error("Error saving payout notes:", error);
       alert(error.message || "Could not save payout notes.");
       setSavingId("");
       return;
@@ -812,13 +1055,15 @@ export default function AdminPayoutsPage() {
       .update({
         installer_pay: item.amount,
         installer_hst: item.installer_hst,
+        installer_hst_pay: item.installer_hst,
+        installer_subtotal_pay: item.amount,
         installer_total_pay: item.installer_total_pay,
         company_profit: item.company_profit,
       })
       .eq("id", id);
 
     if (error) {
-      console.error("Error saving payout amount:", JSON.stringify(error, null, 2));
+      console.error("Error saving payout amount:", error);
       alert(error.message || "Could not save payout amount.");
       setSavingId("");
       return;
@@ -846,7 +1091,7 @@ export default function AdminPayoutsPage() {
       .eq("id", id);
 
     if (error) {
-      console.error("Error saving payout batch id:", JSON.stringify(error, null, 2));
+      console.error("Error saving payout batch id:", error);
       alert(error.message || "Could not save payout batch id.");
       setSavingId("");
       return;
@@ -859,11 +1104,12 @@ export default function AdminPayoutsPage() {
     return {
       all: payouts.length,
       ready: payouts.filter((item) => item.status === "ready").length,
+      pending: payouts.filter((item) => item.status === "pending").length,
       pending_review: payouts.filter((item) => item.status === "pending_review").length,
       hold: payouts.filter((item) => item.status === "hold").length,
       paid: payouts.filter((item) => item.status === "paid").length,
       unpaid: payouts.filter((item) => item.status === "unpaid").length,
-      customer_paid: payouts.filter((item) => item.payment_status.toLowerCase() === "paid").length,
+      customer_paid: payouts.filter((item) => safeLower(item.payment_status) === "paid").length,
       high_risk: payouts.filter((item) => item.ai.riskLabel === "High Risk").length,
       high_margin: payouts.filter((item) => item.ai.profitLabel === "High Margin").length,
     };
@@ -873,13 +1119,14 @@ export default function AdminPayoutsPage() {
     let items = payouts;
 
     if (activeTab === "ready") items = items.filter((item) => item.status === "ready");
+    else if (activeTab === "pending") items = items.filter((item) => item.status === "pending");
     else if (activeTab === "pending_review")
       items = items.filter((item) => item.status === "pending_review");
     else if (activeTab === "hold") items = items.filter((item) => item.status === "hold");
     else if (activeTab === "paid") items = items.filter((item) => item.status === "paid");
     else if (activeTab === "unpaid") items = items.filter((item) => item.status === "unpaid");
     else if (activeTab === "customer_paid")
-      items = items.filter((item) => item.payment_status.toLowerCase() === "paid");
+      items = items.filter((item) => safeLower(item.payment_status) === "paid");
     else if (activeTab === "high_risk")
       items = items.filter((item) => item.ai.riskLabel === "High Risk");
     else if (activeTab === "high_margin")
@@ -926,7 +1173,7 @@ export default function AdminPayoutsPage() {
     const highMargin = payouts.filter((item) => item.ai.profitLabel === "High Margin").length;
     const readyNow = payouts.filter((item) => item.ai.payoutHealth === "Ready to Send").length;
     const paidCustomerJobs = payouts.filter(
-      (item) => item.payment_status.toLowerCase() === "paid"
+      (item) => safeLower(item.payment_status) === "paid"
     ).length;
 
     return {
@@ -1028,7 +1275,8 @@ export default function AdminPayoutsPage() {
   }
 
   const allVisibleSelected =
-    filteredPayouts.length > 0 && filteredPayouts.every((item) => selectedIds.includes(item.id));
+    filteredPayouts.length > 0 &&
+    filteredPayouts.every((item) => selectedIds.includes(item.id));
 
   return (
     <main className="min-h-screen bg-black p-8 text-white">
@@ -1063,6 +1311,7 @@ export default function AdminPayoutsPage() {
             [
               ["all", "All", tabCounts.all],
               ["ready", "Ready", tabCounts.ready],
+              ["pending", "Pending", tabCounts.pending],
               ["pending_review", "Pending Review", tabCounts.pending_review],
               ["hold", "Hold", tabCounts.hold],
               ["paid", "Paid", tabCounts.paid],
@@ -1089,7 +1338,7 @@ export default function AdminPayoutsPage() {
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={toggleSelectAllVisible}
+              onClick={() => toggleSelectAllVisible(filteredPayouts)}
               className="rounded-xl border border-zinc-700 bg-black px-4 py-2 font-semibold text-white hover:bg-zinc-900"
             >
               {allVisibleSelected ? "Unselect Visible" : "Select Visible"}
@@ -1266,7 +1515,9 @@ export default function AdminPayoutsPage() {
                               ? "font-bold text-orange-400"
                               : item.status === "hold"
                                 ? "font-bold text-red-400"
-                                : "font-bold text-gray-300"
+                                : item.status === "pending"
+                                  ? "font-bold text-blue-400"
+                                  : "font-bold text-gray-300"
                       }
                     >
                       {item.status.replaceAll("_", " ").toUpperCase()}
@@ -1373,6 +1624,39 @@ export default function AdminPayoutsPage() {
                   </div>
                 ) : null}
 
+                <div className="mb-4 rounded-xl border border-zinc-800 bg-black p-4">
+                  <p className="mb-3 text-sm font-semibold text-yellow-400">Payout Breakdown</p>
+
+                  <div className="space-y-2 text-sm text-gray-300">
+                    {item.payout_lines.length > 0 ? (
+                      item.payout_lines.map((line, index) => (
+                        <div
+                          key={`${line.label}-${index}`}
+                          className="flex items-center justify-between border-b border-zinc-800 pb-2"
+                        >
+                          <span>{line.label}</span>
+                          <span>{formatMoney(line.amount)}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                        <span>Base / Derived Pay</span>
+                        <span>{formatMoney(item.amount)}</span>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                      <span>Installer HST</span>
+                      <span>{formatMoney(item.installer_hst)}</span>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 font-semibold text-yellow-400">
+                      <span>Total Payout</span>
+                      <span>{formatMoney(item.installer_total_pay)}</span>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="grid gap-4 md:grid-cols-2">
                   <textarea
                     placeholder="General admin notes..."
@@ -1417,6 +1701,15 @@ export default function AdminPayoutsPage() {
                     className="rounded-xl bg-orange-500 px-4 py-2 font-semibold text-black hover:bg-orange-400 disabled:opacity-60"
                   >
                     Set Pending Review
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void updateStatus(item.id, "pending")}
+                    disabled={savingId === item.id}
+                    className="rounded-xl bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-500 disabled:opacity-60"
+                  >
+                    Set Pending
                   </button>
 
                   <button

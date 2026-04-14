@@ -51,6 +51,11 @@ type Booking = {
   hst_amount?: number | null;
   final_total?: number | null;
 
+  service_price?: number | null;
+  mileage_charge?: number | null;
+  customer_add_on_total?: number | null;
+  customer_just_service_total?: number | null;
+
   job_group_id?: string | number | null;
   job_number?: number | null;
   is_archived?: boolean | null;
@@ -193,8 +198,13 @@ function normalizeText(value?: string | null) {
   return safeText(value).toLowerCase();
 }
 
+function num(value: unknown) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function money(value?: number | null) {
-  return "$" + Number(value || 0).toFixed(2);
+  return "$" + num(value).toFixed(2);
 }
 
 function toArray(value: unknown): string[] {
@@ -220,6 +230,7 @@ function getServiceTypeLabel(booking: Booking) {
   if (value === "full_height_backsplash") return "Full Height Backsplash";
   if (value === "installation_3cm") return "3cm Installation";
   if (value === "installation_2cm_standard") return "2cm Standard Installation";
+  if (value === "installation_2cm") return "2cm Installation";
   if (value === "backsplash_tiling") return "Backsplash Tiling";
   if (value === "justServices") return "Just Services";
   return value;
@@ -233,16 +244,16 @@ function getDisposalResponsibilityLabel(value?: string | null) {
 }
 
 function getPickupWindow(booking: Booking) {
-  if (booking.pickup_time_slot) return booking.pickup_time_slot;
+  if (safeText(booking.pickup_time_slot)) return safeText(booking.pickup_time_slot);
 
-  const from = booking.pickup_time_from || "";
-  const to = booking.pickup_time_to || "";
+  const from = safeText(booking.pickup_time_from);
+  const to = safeText(booking.pickup_time_to);
 
   if (from || to) {
     return [from, to].filter(Boolean).join(" - ");
   }
 
-  return booking.scheduled_time || "-";
+  return safeText(booking.scheduled_time) || "-";
 }
 
 function formatDateTime(value?: string | null) {
@@ -261,55 +272,112 @@ function getPayoutLines(booking: Booking) {
   ) {
     return booking.installer_payout_lines.map((line) => ({
       label: line.label || "Payout Line",
-      amount: Number(line.amount || 0),
+      amount: num(line.amount),
     }));
   }
 
   const lines: { label: string; amount: number }[] = [];
 
-  if (Number(booking.installer_base_pay || 0) > 0) {
+  if (num(booking.installer_base_pay) > 0) {
     lines.push({
       label: "Base Install Pay",
-      amount: Number(booking.installer_base_pay || 0),
+      amount: num(booking.installer_base_pay),
     });
   }
 
-  if (Number(booking.installer_mileage_pay || 0) > 0) {
+  if (num(booking.installer_mileage_pay) > 0) {
     lines.push({
       label: "Mileage Pay",
-      amount: Number(booking.installer_mileage_pay || 0),
+      amount: num(booking.installer_mileage_pay),
     });
   }
 
-  if (Number(booking.installer_addon_pay || 0) > 0) {
+  if (num(booking.installer_addon_pay) > 0) {
     lines.push({
       label: "Add-On Pay",
-      amount: Number(booking.installer_addon_pay || 0),
+      amount: num(booking.installer_addon_pay),
     });
   }
 
-  if (Number(booking.installer_cut_polish_pay || 0) > 0) {
+  if (num(booking.installer_cut_polish_pay) > 0) {
     lines.push({
       label: "Cut / Polish Pay",
-      amount: Number(booking.installer_cut_polish_pay || 0),
+      amount: num(booking.installer_cut_polish_pay),
     });
   }
 
-  if (Number(booking.installer_sink_pay || 0) > 0) {
+  if (num(booking.installer_sink_pay) > 0) {
     lines.push({
       label: "Sink / Reattach Pay",
-      amount: Number(booking.installer_sink_pay || 0),
+      amount: num(booking.installer_sink_pay),
     });
   }
 
-  if (Number(booking.installer_other_pay || 0) > 0) {
+  if (num(booking.installer_other_pay) > 0) {
     lines.push({
       label: "Other Service Pay",
-      amount: Number(booking.installer_other_pay || 0),
+      amount: num(booking.installer_other_pay),
     });
   }
 
   return lines;
+}
+
+function getDerivedInstallerPay(booking: Booking) {
+  if (num(booking.installer_pay) > 0) return num(booking.installer_pay);
+
+  const fromSubtotalAndHst =
+    num(booking.installer_subtotal_pay) + num(booking.installer_hst_pay);
+  if (fromSubtotalAndHst > 0) return fromSubtotalAndHst;
+
+  const fromLines = getPayoutLines(booking).reduce((sum, line) => sum + num(line.amount), 0);
+  if (fromLines > 0) return fromLines;
+
+  return 0;
+}
+
+function getDerivedSubtotal(booking: Booking) {
+  if (num(booking.subtotal) > 0) return num(booking.subtotal);
+
+  const derived =
+    num(booking.service_price) +
+    num(booking.mileage_charge) +
+    num(booking.customer_add_on_total) +
+    num(booking.customer_just_service_total) +
+    num(booking.return_fee_charged || booking.return_fee);
+
+  return derived > 0 ? derived : 0;
+}
+
+function getDerivedHst(booking: Booking) {
+  const hstValue = num(booking.hst ?? booking.hst_amount);
+  if (hstValue > 0) return hstValue;
+
+  const subtotal = getDerivedSubtotal(booking);
+  const finalTotal = num(booking.final_total);
+  if (finalTotal > subtotal && subtotal > 0) {
+    return finalTotal - subtotal;
+  }
+
+  return 0;
+}
+
+function getDerivedFinalTotal(booking: Booking) {
+  if (num(booking.final_total) > 0) return num(booking.final_total);
+
+  const subtotal = getDerivedSubtotal(booking);
+  const hst = getDerivedHst(booking);
+  return subtotal + hst;
+}
+
+function getDerivedCompanyProfit(booking: Booking) {
+  if (booking.company_profit !== null && booking.company_profit !== undefined) {
+    return num(booking.company_profit);
+  }
+
+  const finalTotal = getDerivedFinalTotal(booking);
+  const installerPay = getDerivedInstallerPay(booking);
+  return finalTotal - installerPay;
 }
 
 function getUrgencyLabel(booking: Booking) {
@@ -357,7 +425,7 @@ function getDispatchBadgeClass(score: number) {
 }
 
 function getProfitLabel(profit?: number | null) {
-  const value = Number(profit || 0);
+  const value = num(profit);
   if (value >= 300) return "High Profit";
   if (value >= 100) return "Good Profit";
   if (value > 0) return "Low Profit";
@@ -365,7 +433,7 @@ function getProfitLabel(profit?: number | null) {
 }
 
 function getProfitBadgeClass(profit?: number | null) {
-  const value = Number(profit || 0);
+  const value = num(profit);
   if (value >= 300) return "border-green-500/30 bg-green-500/10 text-green-400";
   if (value >= 100) return "border-yellow-500/30 bg-yellow-500/10 text-yellow-400";
   if (value > 0) return "border-orange-500/30 bg-orange-500/10 text-orange-400";
@@ -373,7 +441,7 @@ function getProfitBadgeClass(profit?: number | null) {
 }
 
 function getProfitTextClass(profit?: number | null) {
-  const value = Number(profit || 0);
+  const value = num(profit);
   if (value >= 300) return "text-green-400";
   if (value >= 100) return "text-yellow-400";
   if (value > 0) return "text-orange-400";
@@ -413,34 +481,69 @@ function getGroupingLabel(booking: Booking, allBookings: Booking[]) {
 }
 
 function getAiScore(booking: Booking, allBookings: Booking[]) {
-  let score = Number(booking.ai_dispatch_score || booking.ai_priority_score || 0);
+  let score = num(booking.ai_dispatch_score || booking.ai_priority_score);
 
   if (!score) {
     score = 50;
 
     if (getUrgencyLabel(booking) === "Same-Day Priority") score += 20;
     if (getUrgencyLabel(booking) === "Next-Day Priority") score += 10;
-    if (Number(booking.installer_pay || 0) >= 500) score += 10;
+    if (getDerivedInstallerPay(booking) >= 500) score += 10;
 
     const groupingLabel = getGroupingLabel(booking, allBookings);
     if (groupingLabel === "Strong Grouping") score += 15;
     if (groupingLabel === "Possible Group") score += 8;
-    if (Number(booking.mileage_fee || 0) > 0) score += 5;
+    if (num(booking.mileage_fee) > 0) score += 5;
   }
 
   return Math.max(0, Math.min(100, score));
 }
 
+function normalizeBookingStatus(booking: Booking): string {
+  const value = normalizeText(booking.status);
+
+  if (booking.is_archived === true) return "archived";
+  if (booking.completed_at) return "completed";
+  if (booking.incomplete_at || value === "incomplete") return "incomplete";
+
+  if (value === "completed_pending_admin_review") return "completed";
+  if (value === "confirmed") return "pending";
+  if (value === "assigned") return "accepted";
+  if (value === "in progress") return "in_progress";
+  if (value === "canceled") return "cancelled";
+
+  if (!value) {
+    if (safeText(booking.installer_name) || safeText(booking.reassigned_installer_name)) {
+      return "accepted";
+    }
+    return "new";
+  }
+
+  return value;
+}
+
 function getAcceptedStateLabel(booking: Booking) {
+  const normalized = normalizeBookingStatus(booking);
+
+  if (normalized === "completed") return "Completed";
+  if (normalized === "incomplete") return "Incomplete";
+
   if (safeText(booking.installer_name) || safeText(booking.reassigned_installer_name)) {
     return "Accepted";
   }
-  if (normalizeText(booking.status) === "accepted") return "Accepted";
+  if (normalized === "accepted" || normalized === "in_progress") return "Accepted";
   return "Not Accepted";
 }
 
 function getAcceptedStateClass(booking: Booking) {
-  return getAcceptedStateLabel(booking) === "Accepted"
+  const accepted = getAcceptedStateLabel(booking);
+  if (accepted === "Completed") {
+    return "border-green-500/30 bg-green-500/10 text-green-400";
+  }
+  if (accepted === "Incomplete") {
+    return "border-red-500/30 bg-red-500/10 text-red-400";
+  }
+  return accepted === "Accepted"
     ? "border-green-500/30 bg-green-500/10 text-green-400"
     : "border-zinc-700 bg-zinc-800/40 text-zinc-300";
 }
@@ -452,24 +555,10 @@ function getPublicJobPhotoUrl(path?: string | null) {
   return data.publicUrl;
 }
 
-function normalizeBookingStatus(status?: string | null): string {
-  const value = normalizeText(status);
-
-  if (!value) return "new";
-  if (value === "confirmed") return "pending";
-  if (value === "assigned") return "accepted";
-  if (value === "in progress") return "in_progress";
-  if (value === "completed_pending_admin_review") return "completed";
-  if (value === "canceled") return "cancelled";
-
-  return value;
-}
-
 function matchesStatusFilter(booking: Booking, filter: StatusFilter): boolean {
   if (filter === "all") return true;
-  if (filter === "archived") return booking.is_archived === true;
-  if (booking.is_archived === true) return false;
-  return normalizeBookingStatus(booking.status) === filter;
+  const normalized = normalizeBookingStatus(booking);
+  return normalized === filter;
 }
 
 function getInstallerDisplayName(installer: Installer) {
@@ -586,11 +675,8 @@ function GroupSummaryCard({
   group: GroupedBookingBucket;
   allBookings: Booking[];
 }) {
-  const totalPay = group.jobs.reduce((sum, job) => sum + Number(job.installer_pay || 0), 0);
-  const totalProfit = group.jobs.reduce(
-    (sum, job) => sum + Number(job.company_profit || 0),
-    0
-  );
+  const totalPay = group.jobs.reduce((sum, job) => sum + getDerivedInstallerPay(job), 0);
+  const totalProfit = group.jobs.reduce((sum, job) => sum + getDerivedCompanyProfit(job), 0);
   const maxAi = Math.max(...group.jobs.map((job) => getAiScore(job, allBookings)));
   const sameDay = group.jobs.some((job) => getUrgencyLabel(job) === "Same-Day Priority");
   const nextDay = group.jobs.some((job) => getUrgencyLabel(job) === "Next-Day Priority");
@@ -706,8 +792,14 @@ function BookingCard({
   const urgencyLabel = getUrgencyLabel(booking);
   const aiScore = getAiScore(booking, allBookings);
   const acceptedState = getAcceptedStateLabel(booking);
-  const normalizedStatus = normalizeBookingStatus(booking.status);
+  const normalizedStatus = normalizeBookingStatus(booking);
   const recommendedInstaller = dispatchRecommendation?.recommended || null;
+
+  const derivedInstallerPay = getDerivedInstallerPay(booking);
+  const derivedCompanyProfit = getDerivedCompanyProfit(booking);
+  const derivedSubtotal = getDerivedSubtotal(booking);
+  const derivedHst = getDerivedHst(booking);
+  const derivedFinalTotal = getDerivedFinalTotal(booking);
 
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
@@ -739,8 +831,8 @@ function BookingCard({
             />
 
             <Badge
-              label={getProfitLabel(booking.company_profit)}
-              className={getProfitBadgeClass(booking.company_profit)}
+              label={getProfitLabel(derivedCompanyProfit)}
+              className={getProfitBadgeClass(derivedCompanyProfit)}
             />
 
             <Badge
@@ -799,7 +891,7 @@ function BookingCard({
             <div className="rounded-xl border border-zinc-800 bg-black p-3">
               <p className="text-[11px] uppercase tracking-wide text-zinc-500">Status</p>
               <p className="mt-1 text-sm font-semibold text-white">
-                {booking.status || "new"}
+                {normalizedStatus || "new"}
               </p>
             </div>
 
@@ -817,7 +909,7 @@ function BookingCard({
                 Installer Pay
               </p>
               <p className="mt-1 text-sm font-semibold text-white">
-                {money(booking.installer_pay)}
+                {money(derivedInstallerPay)}
               </p>
             </div>
 
@@ -827,10 +919,10 @@ function BookingCard({
               </p>
               <p
                 className={`mt-1 text-sm font-semibold ${getProfitTextClass(
-                  booking.company_profit
+                  derivedCompanyProfit
                 )}`}
               >
-                {money(booking.company_profit)}
+                {money(derivedCompanyProfit)}
               </p>
             </div>
 
@@ -1087,7 +1179,7 @@ function BookingCard({
                   <p>Company: {booking.company_name || "-"}</p>
                   <p>Material Type: {booking.material_type || "-"}</p>
                   <p>Material Size: {booking.material_size || "-"}</p>
-                  <p>Sqft: {Number(booking.sqft || booking.job_size || 0) || "-"}</p>
+                  <p>Sqft: {num(booking.sqft || booking.job_size) || "-"}</p>
                   <p>Payment Method: {booking.payment_method || "-"}</p>
                   <p>Timeline: {booking.timeline || "-"}</p>
                   <p>Created: {formatDateTime(booking.created_at)}</p>
@@ -1178,20 +1270,43 @@ function BookingCard({
 
             <div className="rounded-xl border border-zinc-800 bg-black p-4">
               <p className="mb-3 text-sm font-semibold text-yellow-400">
-                Payout Breakdown
+                Pricing / Payout Breakdown
               </p>
 
-              {payoutLines.length > 0 ? (
+              <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2 text-sm text-gray-300">
-                  {payoutLines.map((line) => (
-                    <div
-                      key={line.label}
-                      className="flex items-center justify-between border-b border-zinc-800 pb-2"
-                    >
-                      <span>{line.label}</span>
-                      <span>{money(line.amount)}</span>
-                    </div>
-                  ))}
+                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                    <span>Subtotal</span>
+                    <span>{money(derivedSubtotal)}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                    <span>HST</span>
+                    <span>{money(derivedHst)}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                    <span>Final Total</span>
+                    <span>{money(derivedFinalTotal)}</span>
+                  </div>
+                  <div className="flex items-center justify-between pt-2 font-semibold text-yellow-400">
+                    <span>Company Profit</span>
+                    <span>{money(derivedCompanyProfit)}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-2 text-sm text-gray-300">
+                  {payoutLines.length > 0 ? (
+                    <>
+                      {payoutLines.map((line) => (
+                        <div
+                          key={line.label}
+                          className="flex items-center justify-between border-b border-zinc-800 pb-2"
+                        >
+                          <span>{line.label}</span>
+                          <span>{money(line.amount)}</span>
+                        </div>
+                      ))}
+                    </>
+                  ) : null}
 
                   <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
                     <span>Subtotal Pay</span>
@@ -1205,27 +1320,10 @@ function BookingCard({
 
                   <div className="flex items-center justify-between pt-2 font-semibold text-yellow-400">
                     <span>Total Installer Pay</span>
-                    <span>{money(booking.installer_pay)}</span>
+                    <span>{money(derivedInstallerPay)}</span>
                   </div>
                 </div>
-              ) : (
-                <div className="space-y-2 text-sm text-gray-300">
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                    <span>Subtotal Pay</span>
-                    <span>{money(booking.installer_subtotal_pay)}</span>
-                  </div>
-
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                    <span>HST Pay</span>
-                    <span>{money(booking.installer_hst_pay)}</span>
-                  </div>
-
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                    <span>Total Installer Pay</span>
-                    <span>{money(booking.installer_pay)}</span>
-                  </div>
-                </div>
-              )}
+              </div>
             </div>
 
             <div className="rounded-xl border border-zinc-800 bg-black p-4">
@@ -1235,10 +1333,10 @@ function BookingCard({
               <div className="space-y-2 text-sm text-gray-300">
                 <p>Notes: {booking.notes || "-"}</p>
                 <p>Side Note: {booking.side_note || "-"}</p>
-                <p>Subtotal: {money(booking.subtotal)}</p>
-                <p>HST: {money(booking.hst ?? booking.hst_amount)}</p>
+                <p>Subtotal: {money(derivedSubtotal)}</p>
+                <p>HST: {money(derivedHst)}</p>
                 <p className="font-semibold text-yellow-400">
-                  Total: {money(booking.final_total)}
+                  Total: {money(derivedFinalTotal)}
                 </p>
               </div>
             </div>
@@ -1323,7 +1421,7 @@ function BookingCard({
                 <input
                   type="number"
                   step="0.01"
-                  defaultValue={booking.installer_pay ?? 0}
+                  defaultValue={derivedInstallerPay}
                   onBlur={(e) =>
                     onUpdate(booking.id, "installer_pay", Number(e.target.value || 0))
                   }
@@ -1358,7 +1456,7 @@ function BookingCard({
                 </label>
                 <input
                   type="text"
-                  value={money(booking.company_profit)}
+                  value={money(derivedCompanyProfit)}
                   readOnly
                   className="w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-white"
                 />
@@ -1371,7 +1469,7 @@ function BookingCard({
                 <input
                   type="number"
                   step="0.01"
-                  defaultValue={booking.return_fee_charged || booking.return_fee || 0}
+                  defaultValue={num(booking.return_fee_charged || booking.return_fee)}
                   onBlur={(e) =>
                     onUpdate(
                       booking.id,
@@ -1390,7 +1488,7 @@ function BookingCard({
                 <input
                   type="number"
                   step="0.01"
-                  defaultValue={booking.return_fee_installer_pay || 0}
+                  defaultValue={num(booking.return_fee_installer_pay)}
                   onBlur={(e) =>
                     onUpdate(
                       booking.id,
@@ -1409,7 +1507,7 @@ function BookingCard({
                 <input
                   type="number"
                   step="0.01"
-                  defaultValue={booking.installer_subtotal_pay || 0}
+                  defaultValue={num(booking.installer_subtotal_pay)}
                   onBlur={(e) =>
                     onUpdate(
                       booking.id,
@@ -1428,7 +1526,7 @@ function BookingCard({
                 <input
                   type="number"
                   step="0.01"
-                  defaultValue={booking.installer_hst_pay || 0}
+                  defaultValue={num(booking.installer_hst_pay)}
                   onBlur={(e) =>
                     onUpdate(
                       booking.id,
@@ -1447,7 +1545,7 @@ function BookingCard({
                 <input
                   type="number"
                   step="0.01"
-                  defaultValue={booking.mileage_fee || 0}
+                  defaultValue={num(booking.mileage_fee)}
                   onBlur={(e) =>
                     onUpdate(booking.id, "mileage_fee", Number(e.target.value || 0))
                   }
@@ -1572,21 +1670,40 @@ export default function AdminBookingsPage() {
       return;
     }
 
-    const safeData: Booking[] = ((data as Booking[]) || []).map((booking) => ({
-      ...booking,
-      installer_pay: Number(booking.installer_pay || 0),
-      company_profit: Number(booking.company_profit || 0),
-      final_total: Number(booking.final_total || 0),
-      subtotal: Number(booking.subtotal || 0),
-      hst: Number((booking as any).hst || booking.hst_amount || 0),
-      sqft: Number(booking.sqft || booking.job_size || 0),
-      installer_subtotal_pay: Number(booking.installer_subtotal_pay || 0),
-      installer_hst_pay: Number(booking.installer_hst_pay || 0),
-      mileage_fee: Number(booking.mileage_fee || 0),
-      return_fee: Number(booking.return_fee || 0),
-      return_fee_charged: Number(booking.return_fee_charged || 0),
-      return_fee_installer_pay: Number(booking.return_fee_installer_pay || 0),
-    }));
+    const safeData: Booking[] = ((data as Booking[]) || []).map((booking) => {
+      const installerPay = getDerivedInstallerPay(booking);
+      const finalTotal = getDerivedFinalTotal(booking);
+      const subtotal = getDerivedSubtotal(booking);
+      const hst = getDerivedHst(booking);
+      const companyProfit = getDerivedCompanyProfit({
+        ...booking,
+        installer_pay: installerPay,
+        final_total: finalTotal,
+        subtotal,
+        hst_amount: hst,
+      });
+
+      return {
+        ...booking,
+        installer_pay: installerPay,
+        company_profit: companyProfit,
+        final_total: finalTotal,
+        subtotal,
+        hst,
+        hst_amount: hst,
+        sqft: num(booking.sqft || booking.job_size),
+        installer_subtotal_pay: num(booking.installer_subtotal_pay),
+        installer_hst_pay: num(booking.installer_hst_pay),
+        mileage_fee: num(booking.mileage_fee),
+        return_fee: num(booking.return_fee),
+        return_fee_charged: num(booking.return_fee_charged),
+        return_fee_installer_pay: num(booking.return_fee_installer_pay),
+        service_price: num(booking.service_price),
+        mileage_charge: num(booking.mileage_charge),
+        customer_add_on_total: num(booking.customer_add_on_total),
+        customer_just_service_total: num(booking.customer_just_service_total),
+      };
+    });
 
     setBookings(safeData);
   }
@@ -1607,7 +1724,7 @@ export default function AdminBookingsPage() {
 
   function buildDispatchInstallers(currentBooking: Booking): DispatchInstaller[] {
     const acceptedCountByName = bookings.reduce<Record<string, number>>((acc, item) => {
-      const normalized = normalizeBookingStatus(item.status);
+      const normalized = normalizeBookingStatus(item);
       const assignedName = safeText(item.reassigned_installer_name || item.installer_name);
 
       if (
@@ -1646,7 +1763,7 @@ export default function AdminBookingsPage() {
           id: installer.id,
           name,
           distanceKm,
-          rating: Number(installer.rating || 4.5),
+          rating: num(installer.rating) || 4.5,
           activeJobs,
         };
       });
@@ -1656,7 +1773,7 @@ export default function AdminBookingsPage() {
     return bookings.filter((item) => {
       if (item.id === currentBooking.id) return false;
       if (item.is_archived === true) return false;
-      const s = normalizeBookingStatus(item.status);
+      const s = normalizeBookingStatus(item);
       return s === "available" || s === "pending" || s === "new";
     });
   }
@@ -1802,28 +1919,64 @@ export default function AdminBookingsPage() {
       [field]: value,
     };
 
-    const currentFinalTotal = Number(currentBooking.final_total || 0);
+    const currentFinalTotal = getDerivedFinalTotal(currentBooking);
+    const currentInstallerPay = getDerivedInstallerPay(currentBooking);
 
     if (field === "installer_pay") {
-      const installerPay = Number(value || 0);
+      const installerPay = num(value);
       updateData.company_profit = currentFinalTotal - installerPay;
     }
 
     if (field === "final_total") {
-      const finalTotal = Number(value || 0);
-      updateData.company_profit = finalTotal - Number(currentBooking.installer_pay || 0);
+      const finalTotal = num(value);
+      updateData.company_profit = finalTotal - currentInstallerPay;
+    }
+
+    if (field === "installer_subtotal_pay" || field === "installer_hst_pay") {
+      const subtotalPay =
+        field === "installer_subtotal_pay"
+          ? num(value)
+          : num(currentBooking.installer_subtotal_pay);
+      const hstPay =
+        field === "installer_hst_pay"
+          ? num(value)
+          : num(currentBooking.installer_hst_pay);
+
+      const totalInstallerPay = subtotalPay + hstPay;
+      updateData.installer_pay = totalInstallerPay;
+      updateData.company_profit = currentFinalTotal - totalInstallerPay;
+    }
+
+    if (
+      field === "return_fee_charged" ||
+      field === "return_fee" ||
+      field === "mileage_fee"
+    ) {
+      const finalTotal = getDerivedFinalTotal({
+        ...currentBooking,
+        return_fee_charged:
+          field === "return_fee_charged" ? num(value) : currentBooking.return_fee_charged,
+        return_fee: field === "return_fee" ? num(value) : currentBooking.return_fee,
+        mileage_fee: field === "mileage_fee" ? num(value) : currentBooking.mileage_fee,
+      });
+
+      updateData.final_total = finalTotal;
+      updateData.company_profit = finalTotal - currentInstallerPay;
     }
 
     if (field === "status" && value === "completed_pending_admin_review") {
       updateData.installer_pay_status = "pending_review";
+      updateData.completed_at = new Date().toISOString();
+      updateData.incomplete_at = null;
     }
 
     if (field === "status" && value === "completed") {
       updateData.completed_at = new Date().toISOString();
+      updateData.incomplete_at = null;
 
       if (
         currentBooking.installer_name &&
-        Number(currentBooking.installer_pay || 0) > 0 &&
+        getDerivedInstallerPay(currentBooking) > 0 &&
         (
           normalizeText(currentBooking.installer_pay_status || "unpaid") === "unpaid" ||
           normalizeText(currentBooking.installer_pay_status) === "pending_review"
@@ -1835,6 +1988,7 @@ export default function AdminBookingsPage() {
 
     if (field === "status" && value === "incomplete") {
       updateData.incomplete_at = new Date().toISOString();
+      updateData.completed_at = null;
 
       const reason =
         safeText(currentBooking.incomplete_reason) ||
@@ -1859,10 +2013,10 @@ export default function AdminBookingsPage() {
         normalizedReason.includes("shop") ||
         normalizedReason.includes("homeowner")
       ) {
-        if (!Number(currentBooking.return_fee_charged || currentBooking.return_fee || 0)) {
+        if (!num(currentBooking.return_fee_charged || currentBooking.return_fee)) {
           updateData.return_fee_charged = 200;
         }
-        if (!Number(currentBooking.return_fee_installer_pay || 0)) {
+        if (!num(currentBooking.return_fee_installer_pay)) {
           updateData.return_fee_installer_pay = 180;
         }
       }
@@ -1881,6 +2035,9 @@ export default function AdminBookingsPage() {
       value !== "completed_pending_admin_review" &&
       value !== "incomplete"
     ) {
+      updateData.completed_at = null;
+      updateData.incomplete_at = null;
+
       if (
         normalizeText(currentBooking.installer_pay_status) === "ready" ||
         normalizeText(currentBooking.installer_pay_status) === "pending_review"
@@ -1900,6 +2057,8 @@ export default function AdminBookingsPage() {
       updateData.installer_name = null;
       updateData.reassigned_installer_name = null;
       updateData.accepted_at = null;
+      updateData.completed_at = null;
+      updateData.incomplete_at = null;
     }
 
     if (field === "installer_name" && value) {
@@ -1974,7 +2133,7 @@ export default function AdminBookingsPage() {
           safeText(booking.service_type).toLowerCase().includes(term) ||
           safeText(booking.service_type_label).toLowerCase().includes(term) ||
           safeText(booking.payment_method).toLowerCase().includes(term) ||
-          safeText(booking.status).toLowerCase().includes(term) ||
+          safeText(normalizeBookingStatus(booking)).toLowerCase().includes(term) ||
           safeText(booking.payment_status).toLowerCase().includes(term) ||
           safeText(booking.installer_name).toLowerCase().includes(term) ||
           safeText(booking.reassigned_installer_name).toLowerCase().includes(term) ||
@@ -2008,7 +2167,7 @@ export default function AdminBookingsPage() {
       .map(([groupKey, jobs]) => ({
         groupKey,
         jobs: [...jobs].sort(
-          (a, b) => Number(a.job_number || 0) - Number(b.job_number || 0)
+          (a, b) => num(a.job_number) - num(b.job_number)
         ),
       }))
       .filter((group) => group.jobs.length > 1);
@@ -2026,14 +2185,14 @@ export default function AdminBookingsPage() {
       (item) =>
         item.is_archived !== true &&
         (
-          normalizeBookingStatus(item.status) === "accepted" ||
+          normalizeBookingStatus(item) === "accepted" ||
           safeText(item.installer_name).length > 0 ||
           safeText(item.reassigned_installer_name).length > 0
         )
     ).length;
 
     const totalProfit = bookings.reduce(
-      (sum, item) => sum + Number(item.company_profit || 0),
+      (sum, item) => sum + getDerivedCompanyProfit(item),
       0
     );
 
@@ -2058,7 +2217,7 @@ export default function AdminBookingsPage() {
   const availableJobs = useMemo(
     () =>
       visibleNonArchived.filter((item) => {
-        const s = normalizeBookingStatus(item.status);
+        const s = normalizeBookingStatus(item);
         return s === "available" || s === "pending" || s === "new";
       }),
     [visibleNonArchived]
@@ -2067,7 +2226,7 @@ export default function AdminBookingsPage() {
   const acceptedJobs = useMemo(
     () =>
       visibleNonArchived.filter((item) => {
-        const s = normalizeBookingStatus(item.status);
+        const s = normalizeBookingStatus(item);
         return s === "accepted";
       }),
     [visibleNonArchived]
@@ -2076,7 +2235,7 @@ export default function AdminBookingsPage() {
   const inProgressJobs = useMemo(
     () =>
       visibleNonArchived.filter((item) => {
-        const s = normalizeBookingStatus(item.status);
+        const s = normalizeBookingStatus(item);
         return s === "in_progress";
       }),
     [visibleNonArchived]
@@ -2085,7 +2244,7 @@ export default function AdminBookingsPage() {
   const incompleteJobs = useMemo(
     () =>
       visibleNonArchived.filter((item) => {
-        const s = normalizeBookingStatus(item.status);
+        const s = normalizeBookingStatus(item);
         return s === "incomplete";
       }),
     [visibleNonArchived]
@@ -2094,7 +2253,7 @@ export default function AdminBookingsPage() {
   const completedJobs = useMemo(
     () =>
       visibleNonArchived.filter((item) => {
-        const s = normalizeBookingStatus(item.status);
+        const s = normalizeBookingStatus(item);
         return s === "completed";
       }),
     [visibleNonArchived]
@@ -2108,7 +2267,7 @@ export default function AdminBookingsPage() {
   const otherJobs = useMemo(
     () =>
       visibleNonArchived.filter((item) => {
-        const s = normalizeBookingStatus(item.status);
+        const s = normalizeBookingStatus(item);
         return ![
           "available",
           "pending",

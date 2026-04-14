@@ -58,6 +58,28 @@ function parseList(value: string | null) {
     .filter(Boolean);
 }
 
+function getFirstParam(
+  searchParams: ReturnType<typeof useSearchParams>,
+  keys: string[],
+  fallback = ""
+) {
+  for (const key of keys) {
+    const value = searchParams.get(key);
+    if (value && value.trim()) return value.trim();
+  }
+  return fallback;
+}
+
+function resolvePickupWindow(
+  pickupTimeSlot?: string,
+  pickupTimeFrom?: string,
+  pickupTimeTo?: string
+) {
+  if (pickupTimeSlot) return pickupTimeSlot;
+  if (pickupTimeFrom && pickupTimeTo) return `${pickupTimeFrom} - ${pickupTimeTo}`;
+  return pickupTimeFrom || pickupTimeTo || "";
+}
+
 function formatMoney(value: number) {
   return value.toFixed(2);
 }
@@ -66,19 +88,27 @@ function getTimelineLabel(params: {
   timeline: string;
   scheduledDate?: string;
   pickupTimeSlot?: string;
+  pickupTimeFrom?: string;
+  pickupTimeTo?: string;
 }) {
+  const resolvedWindow = resolvePickupWindow(
+    params.pickupTimeSlot,
+    params.pickupTimeFrom,
+    params.pickupTimeTo
+  );
+
   if (params.timeline === "sameDay") {
-    return `Same Day${params.pickupTimeSlot ? ` • ${params.pickupTimeSlot}` : ""}`;
+    return `Same Day${resolvedWindow ? ` • ${resolvedWindow}` : ""}`;
   }
 
   if (params.timeline === "nextDay") {
-    return `Next Day${params.pickupTimeSlot ? ` • ${params.pickupTimeSlot}` : ""}`;
+    return `Next Day${resolvedWindow ? ` • ${resolvedWindow}` : ""}`;
   }
 
   if (params.timeline === "scheduled") {
     const pieces = ["Scheduled"];
     if (params.scheduledDate) pieces.push(params.scheduledDate);
-    if (params.pickupTimeSlot) pieces.push(params.pickupTimeSlot);
+    if (resolvedWindow) pieces.push(resolvedWindow);
     return pieces.join(" • ");
   }
 
@@ -299,9 +329,31 @@ function CheckoutContent() {
   const bookingDistanceTier = searchParams.get("bookingDistanceTier") || "";
   const maxServiceDistanceKm = searchParams.get("maxServiceDistanceKm") || "200";
 
-  const timeline = searchParams.get("timeline") || "";
-  const scheduledDate = searchParams.get("scheduledDate") || "";
-  const pickupTimeSlot = searchParams.get("pickupTimeSlot") || "";
+  const timeline = getFirstParam(searchParams, ["timeline"], "");
+  const scheduledDate = getFirstParam(searchParams, [
+    "scheduledDate",
+    "scheduled_date",
+    "date",
+  ]);
+  const pickupTimeSlot = getFirstParam(searchParams, [
+    "pickupTimeSlot",
+    "pickup_time_slot",
+    "pickupWindow",
+    "pickup_window",
+  ]);
+  const pickupTimeFrom = getFirstParam(searchParams, [
+    "pickupTimeFrom",
+    "pickup_time_from",
+  ]);
+  const pickupTimeTo = getFirstParam(searchParams, [
+    "pickupTimeTo",
+    "pickup_time_to",
+  ]);
+  const pickupWindow = resolvePickupWindow(
+    pickupTimeSlot,
+    pickupTimeFrom,
+    pickupTimeTo
+  );
 
   const pickupAddress = searchParams.get("pickupAddress") || "";
   const dropoffAddress = searchParams.get("dropoffAddress") || "";
@@ -342,12 +394,34 @@ function CheckoutContent() {
 
   const showSecondJob = searchParams.get("showSecondJob") === "true";
 
-  const secondJobTimeline =
-    searchParams.get("secondJobTimeline") || "scheduled";
-  const secondJobScheduledDate =
-    searchParams.get("secondJobScheduledDate") || "";
-  const secondJobPickupTimeSlot =
-    searchParams.get("secondJobPickupTimeSlot") || "";
+  const secondJobTimeline = getFirstParam(
+    searchParams,
+    ["secondJobTimeline", "second_job_timeline"],
+    "scheduled"
+  );
+  const secondJobScheduledDate = getFirstParam(searchParams, [
+    "secondJobScheduledDate",
+    "second_job_scheduled_date",
+    "secondJobDate",
+  ]);
+  const secondJobPickupTimeSlot = getFirstParam(searchParams, [
+    "secondJobPickupTimeSlot",
+    "second_job_pickup_time_slot",
+    "secondJobPickupWindow",
+  ]);
+  const secondJobPickupTimeFrom = getFirstParam(searchParams, [
+    "secondJobPickupTimeFrom",
+    "second_job_pickup_time_from",
+  ]);
+  const secondJobPickupTimeTo = getFirstParam(searchParams, [
+    "secondJobPickupTimeTo",
+    "second_job_pickup_time_to",
+  ]);
+  const secondPickupWindow = resolvePickupWindow(
+    secondJobPickupTimeSlot,
+    secondJobPickupTimeFrom,
+    secondJobPickupTimeTo
+  );
 
   const secondAddress = searchParams.get("secondJobAddress") || "";
   const secondDropoffAddress =
@@ -463,13 +537,17 @@ function CheckoutContent() {
   const mainTimelineLabel = getTimelineLabel({
     timeline,
     scheduledDate,
-    pickupTimeSlot,
+    pickupTimeSlot: pickupWindow,
+    pickupTimeFrom,
+    pickupTimeTo,
   });
 
   const secondTimelineLabel = getTimelineLabel({
     timeline: secondJobTimeline,
     scheduledDate: secondJobScheduledDate,
-    pickupTimeSlot: secondJobPickupTimeSlot,
+    pickupTimeSlot: secondPickupWindow,
+    pickupTimeFrom: secondJobPickupTimeFrom,
+    pickupTimeTo: secondJobPickupTimeTo,
   });
 
   async function handleCardCheckout(jobGroupId: number) {
@@ -560,9 +638,9 @@ function CheckoutContent() {
           pickup_address: pickupAddress,
           dropoff_address: dropoffAddress,
 
-          timeline,
+          timeline: timeline || null,
           scheduled_date: scheduledDate || null,
-          pickup_time_slot: pickupTimeSlot || null,
+          pickup_time_slot: pickupWindow || null,
 
           service_type: serviceType || null,
           service_type_label: serviceTypeLabel || null,
@@ -621,7 +699,7 @@ function CheckoutContent() {
 
           timeline: secondJobTimeline || null,
           scheduled_date: secondJobScheduledDate || null,
-          pickup_time_slot: secondJobPickupTimeSlot || null,
+          pickup_time_slot: secondPickupWindow || null,
 
           service_type: secondJobServiceType || null,
           service_type_label: secondJobServiceTypeLabel || null,
@@ -764,14 +842,14 @@ function CheckoutContent() {
         sendEmail({
           to: ADMIN_NOTIFICATION_EMAIL,
           subject: `New Available Job - Group ${jobGroupId}`,
-          html: `
-            <div style="font-family: Arial, sans-serif; color: #111;">
-              <h2>New Available Job</h2>
-              <p>A new job is now available in the installer portal.</p>
-              ${jobsHtml}
-              <p><strong>Booking Value:</strong> $${formatMoney(finalTotal)}</p>
-            </div>
-          `,
+          html: installerNewJobHtml({
+            customerName,
+            companyName,
+            paymentLabel: getPaymentLabel(paymentMethod),
+            jobsHtml,
+            finalTotal: formatMoney(finalTotal),
+            jobGroupId,
+          }),
           type: "new_job_available",
           sendApprovedInstallers: true,
           jobId: firstJobId,
@@ -839,7 +917,9 @@ function CheckoutContent() {
                 <h2 className="text-yellow-500 text-xl mb-4">Job 1</h2>
 
                 <div className="space-y-2 text-sm text-gray-300">
-                  <p>Timeline: {mainTimelineLabel}</p>
+                  <p>Timeline: {timeline || "-"}</p>
+                  <p>Scheduled Date: {scheduledDate || "-"}</p>
+                  <p>Pickup Window: {pickupWindow || "-"}</p>
                   <p>Service: {serviceTypeLabel || "-"}</p>
                   <p>Pick Up: {pickupAddress || "-"}</p>
                   <p>Drop Off: {dropoffAddress || "-"}</p>
@@ -938,7 +1018,9 @@ function CheckoutContent() {
                 <h2 className="text-yellow-500 text-xl mb-4">Job 2</h2>
 
                 <div className="space-y-2 text-sm text-gray-300">
-                  <p>Timeline: {secondTimelineLabel}</p>
+                  <p>Timeline: {secondJobTimeline || "-"}</p>
+                  <p>Scheduled Date: {secondJobScheduledDate || "-"}</p>
+                  <p>Pickup Window: {secondPickupWindow || "-"}</p>
                   <p>Service: {secondJobServiceTypeLabel || "-"}</p>
                   <p>Address: {secondAddress || "-"}</p>
                   {secondDropoffAddress && <p>Drop Off: {secondDropoffAddress}</p>}

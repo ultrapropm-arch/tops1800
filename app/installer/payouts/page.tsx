@@ -62,7 +62,12 @@ type Booking = {
 
 type InstallerProfile = {
   id?: string | null;
+  user_id?: string | null;
+  installer_name?: string | null;
   full_name?: string | null;
+  name?: string | null;
+  business_name?: string | null;
+  company_name?: string | null;
   email?: string | null;
   payout_method?: string | null;
   payout_email?: string | null;
@@ -135,8 +140,21 @@ type FilterTab =
   | "paid"
   | "high_priority";
 
+function num(value?: number | null) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function money(value?: number | null) {
-  return "$" + Number(value || 0).toFixed(2);
+  return "$" + num(value).toFixed(2);
+}
+
+function safeText(value?: string | null) {
+  return String(value || "").trim();
+}
+
+function normalizeText(value?: string | null) {
+  return safeText(value).toLowerCase();
 }
 
 function formatDateTime(value?: string | null) {
@@ -157,13 +175,14 @@ function getServiceTypeLabel(booking: {
   if (value === "full_height_backsplash") return "Full Height Backsplash";
   if (value === "installation_3cm") return "3cm Installation";
   if (value === "installation_2cm_standard") return "2cm Standard Installation";
+  if (value === "installation_2cm") return "2cm Installation";
   if (value === "backsplash_tiling") return "Backsplash Tiling";
   if (value === "justServices") return "Just Services";
   return value;
 }
 
 function normalizePayoutStatus(value?: string | null): PayoutStatus {
-  const status = (value || "").trim().toLowerCase();
+  const status = normalizeText(value);
 
   if (status === "paid") return "paid";
   if (status === "ready") return "ready";
@@ -173,6 +192,18 @@ function normalizePayoutStatus(value?: string | null): PayoutStatus {
   return "unpaid";
 }
 
+function getInstallerDisplayName(profile?: InstallerProfile | null) {
+  if (!profile) return "";
+  return (
+    safeText(profile.installer_name) ||
+    safeText(profile.full_name) ||
+    safeText(profile.name) ||
+    safeText(profile.business_name) ||
+    safeText(profile.company_name) ||
+    safeText(profile.email)
+  );
+}
+
 function getPayoutLines(booking: Booking) {
   if (
     Array.isArray(booking.installer_payout_lines) &&
@@ -180,55 +211,85 @@ function getPayoutLines(booking: Booking) {
   ) {
     return booking.installer_payout_lines.map((line) => ({
       label: line.label || "Payout Line",
-      amount: Number(line.amount || 0),
+      amount: num(line.amount as number),
     }));
   }
 
   const lines: { label: string; amount: number }[] = [];
 
-  if (Number(booking.installer_base_pay || 0) > 0) {
+  if (num(booking.installer_base_pay) > 0) {
     lines.push({
       label: "Base Install Pay",
-      amount: Number(booking.installer_base_pay || 0),
+      amount: num(booking.installer_base_pay),
     });
   }
 
-  if (Number(booking.installer_addon_pay || 0) > 0) {
+  if (num(booking.installer_addon_pay) > 0) {
     lines.push({
       label: "Add-On Pay",
-      amount: Number(booking.installer_addon_pay || 0),
+      amount: num(booking.installer_addon_pay),
     });
   }
 
-  if (Number(booking.installer_cut_polish_pay || 0) > 0) {
+  if (num(booking.installer_cut_polish_pay) > 0) {
     lines.push({
       label: "Cut / Polish Pay",
-      amount: Number(booking.installer_cut_polish_pay || 0),
+      amount: num(booking.installer_cut_polish_pay),
     });
   }
 
-  if (Number(booking.installer_sink_pay || 0) > 0) {
+  if (num(booking.installer_sink_pay) > 0) {
     lines.push({
       label: "Sink / Reattach Pay",
-      amount: Number(booking.installer_sink_pay || 0),
+      amount: num(booking.installer_sink_pay),
     });
   }
 
-  if (Number(booking.installer_other_pay || 0) > 0) {
+  if (num(booking.installer_other_pay) > 0) {
     lines.push({
       label: "Other Service Pay",
-      amount: Number(booking.installer_other_pay || 0),
+      amount: num(booking.installer_other_pay),
     });
   }
 
-  if (Number(booking.installer_mileage_pay || 0) > 0) {
+  if (num(booking.installer_mileage_pay) > 0) {
     lines.push({
       label: "Mileage Pay",
-      amount: Number(booking.installer_mileage_pay || 0),
+      amount: num(booking.installer_mileage_pay),
     });
   }
 
   return lines;
+}
+
+function getDerivedSubtotalPay(booking: Booking, payoutLines: { label: string; amount: number }[]) {
+  if (num(booking.installer_subtotal_pay) > 0) return num(booking.installer_subtotal_pay);
+
+  const derivedLinesTotal = payoutLines.reduce((sum, line) => sum + num(line.amount), 0);
+  if (derivedLinesTotal > 0) return derivedLinesTotal;
+
+  const fallback =
+    num(booking.installer_base_pay) +
+    num(booking.installer_mileage_pay) +
+    num(booking.installer_addon_pay) +
+    num(booking.installer_cut_polish_pay) +
+    num(booking.installer_sink_pay) +
+    num(booking.installer_other_pay);
+
+  return fallback;
+}
+
+function getDerivedTotalPay(
+  booking: Booking,
+  subtotalPay: number,
+  hstPay: number,
+  returnPay: number
+) {
+  if (num(booking.installer_total_pay) > 0) return num(booking.installer_total_pay);
+  if (num(booking.installer_pay) > 0) return num(booking.installer_pay);
+
+  const total = subtotalPay + hstPay + returnPay;
+  return total;
 }
 
 function statusColor(status: PayoutStatus) {
@@ -243,7 +304,8 @@ function statusColor(status: PayoutStatus) {
 function statusChipClass(status: PayoutStatus) {
   if (status === "paid") return "border-green-500/30 bg-green-500/10 text-green-300";
   if (status === "ready") return "border-yellow-500/30 bg-yellow-500/10 text-yellow-300";
-  if (status === "pending_review") return "border-orange-500/30 bg-orange-500/10 text-orange-300";
+  if (status === "pending_review")
+    return "border-orange-500/30 bg-orange-500/10 text-orange-300";
   if (status === "pending") return "border-blue-500/30 bg-blue-500/10 text-blue-300";
   if (status === "hold") return "border-red-500/30 bg-red-500/10 text-red-300";
   return "border-zinc-700 bg-zinc-800/40 text-zinc-300";
@@ -432,148 +494,169 @@ export default function PayoutPage() {
   const [activeTab, setActiveTab] = useState<FilterTab>("all");
 
   useEffect(() => {
-    const savedName = localStorage.getItem("installerPortalName") || "";
-    setInstallerName(savedName);
-  }, []);
-
-  useEffect(() => {
     void loadPayouts();
   }, []);
 
   async function loadPayouts() {
     setLoading(true);
-
     const supabase = createClient();
 
-    const savedName = localStorage.getItem("installerPortalName") || "";
-    const savedEmail = localStorage.getItem("installerPortalEmail") || "";
-    const normalizedInstallerName = savedName.trim().toLowerCase();
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-    const { data: bookingsData, error: bookingsError } = await supabase
-      .from("bookings")
-      .select("*")
-      .order("scheduled_date", { ascending: false });
+      let installerProfile: InstallerProfile | null = null;
 
-    if (bookingsError) {
-      console.error("Error loading payouts:", bookingsError);
-      alert(bookingsError.message || "Could not load payouts.");
-      setLoading(false);
-      return;
-    }
+      if (user?.id) {
+        const byUserId = await supabase
+          .from("installer_profiles")
+          .select("*")
+          .eq("user_id", user.id)
+          .maybeSingle();
 
-    let installerProfile: InstallerProfile | null = null;
+        if (!byUserId.error && byUserId.data) {
+          installerProfile = byUserId.data as InstallerProfile;
+        }
 
-    if (savedEmail) {
-      const { data: profileData, error: profileError } = await supabase
-        .from("installer_profiles")
-        .select("*")
-        .ilike("email", savedEmail)
-        .maybeSingle();
+        if (!installerProfile) {
+          const byId = await supabase
+            .from("installer_profiles")
+            .select("*")
+            .eq("id", user.id)
+            .maybeSingle();
 
-      if (profileError) {
-        console.error("Error loading installer profile:", profileError);
+          if (!byId.error && byId.data) {
+            installerProfile = byId.data as InstallerProfile;
+          }
+        }
       }
 
-      installerProfile = (profileData as InstallerProfile) || null;
-    }
+      if (!installerProfile && user?.email) {
+        const byEmail = await supabase
+          .from("installer_profiles")
+          .select("*")
+          .ilike("email", user.email)
+          .maybeSingle();
 
-    const payoutMethod =
-      installerProfile?.payout_method ||
-      (installerProfile?.etransfer_email || installerProfile?.payout_email
-        ? "etransfer"
-        : installerProfile?.bank_name
-          ? "bank"
-          : "");
+        if (!byEmail.error && byEmail.data) {
+          installerProfile = byEmail.data as InstallerProfile;
+        }
+      }
 
-    const myPayouts = ((bookingsData as Booking[]) || [])
-      .filter((booking) => {
-        return (
-          normalizedInstallerName !== "" &&
-          (booking.installer_name || "").trim().toLowerCase() ===
-            normalizedInstallerName
-        );
-      })
-      .map((booking) => {
-        const payoutLines = getPayoutLines(booking);
+      const fallbackName = localStorage.getItem("installerPortalName") || "";
+      const resolvedInstallerName = getInstallerDisplayName(installerProfile) || fallbackName;
+      setInstallerName(resolvedInstallerName);
 
-        const labelParts = [
-          booking.company_name || booking.customer_name || "Job",
-          getServiceTypeLabel(booking),
-          booking.scheduled_date || "",
-          booking.job_group_id
-            ? `Group ${String(booking.job_group_id)}${
-                booking.job_number ? ` • Job ${booking.job_number}` : ""
-              }`
-            : "",
-        ].filter(Boolean);
+      if (resolvedInstallerName) {
+        localStorage.setItem("installerPortalName", resolvedInstallerName);
+      }
+      if (user?.email) {
+        localStorage.setItem("installerPortalEmail", user.email);
+      }
 
-        const subtotalPay =
-          Number(booking.installer_subtotal_pay || 0) > 0
-            ? Number(booking.installer_subtotal_pay || 0)
-            : payoutLines.reduce((sum, line) => sum + line.amount, 0);
+      const { data: bookingsData, error: bookingsError } = await supabase
+        .from("bookings")
+        .select("*")
+        .order("scheduled_date", { ascending: false });
 
-        const hstPay = Number(booking.installer_hst_pay || 0);
-        const returnPay = Number(booking.return_fee_installer_pay || 0);
+      if (bookingsError) {
+        console.error("Error loading payouts:", bookingsError);
+        alert(bookingsError.message || "Could not load payouts.");
+        setLoading(false);
+        return;
+      }
 
-        const totalPay =
-          Number(booking.installer_total_pay || 0) > 0
-            ? Number(booking.installer_total_pay || 0)
-            : Number(booking.installer_pay || 0) > 0
-              ? Number(booking.installer_pay || 0)
-              : subtotalPay + hstPay + returnPay;
+      const payoutMethod =
+        installerProfile?.payout_method ||
+        (installerProfile?.etransfer_email || installerProfile?.payout_email
+          ? "etransfer"
+          : installerProfile?.bank_name
+            ? "bank"
+            : "");
 
-        const customerReturnFee = Number(
-          booking.return_fee_charged || booking.return_fee || 0
-        );
+      const normalizedInstallerName = normalizeText(resolvedInstallerName);
 
-        const status = normalizePayoutStatus(booking.installer_pay_status);
+      const myPayouts = ((bookingsData as Booking[]) || [])
+        .filter((booking) => {
+          if (!normalizedInstallerName) return false;
 
-        return {
-          id: booking.id,
-          jobId: booking.job_id || booking.id,
-          jobLabel: labelParts.join(" • "),
-          serviceLabel: getServiceTypeLabel(booking),
-          subtotalPay,
-          hstPay,
-          returnPay,
-          totalPay,
-          customerReturnFee,
-          status,
-          payoutLines,
-          payoutNotes: booking.payout_notes || "",
-          payoutBatchId: booking.payout_batch_id || "",
-          payoutSentAt: booking.payout_sent_at || "",
-          acceptedAt: booking.accepted_at || "",
-          completedAt: booking.completed_at || "",
-          aiDispatchScore: Number(booking.ai_dispatch_score || 0),
-          aiPriorityScore: Number(booking.ai_priority_score || 0),
-          aiGroupingLabel: booking.ai_grouping_label || "Solo Route",
-          aiDistanceTier: booking.ai_distance_tier || "Standard Zone",
-          aiRecommendedInstallerType:
-            booking.ai_recommended_installer_type || "Standard Installer",
-          incompleteReason: booking.incomplete_reason || "",
-          incompleteNote:
-            booking.incomplete_notes || booking.incomplete_note || "",
-          redoRequested: Boolean(booking.redo_requested),
-          ai: buildAiPayoutSummary({
-            status,
+          const assignedNames = [
+            normalizeText(booking.installer_name),
+            normalizeText(booking.reassigned_installer_name),
+          ].filter(Boolean);
+
+          return assignedNames.includes(normalizedInstallerName);
+        })
+        .map((booking) => {
+          const payoutLines = getPayoutLines(booking);
+          const subtotalPay = getDerivedSubtotalPay(booking, payoutLines);
+          const hstPay = num(booking.installer_hst_pay);
+          const returnPay = num(booking.return_fee_installer_pay);
+          const totalPay = getDerivedTotalPay(booking, subtotalPay, hstPay, returnPay);
+          const customerReturnFee = num(booking.return_fee_charged || booking.return_fee);
+          const status = normalizePayoutStatus(booking.installer_pay_status);
+
+          const labelParts = [
+            booking.company_name || booking.customer_name || "Job",
+            getServiceTypeLabel(booking),
+            booking.scheduled_date || "",
+            booking.job_group_id
+              ? `Group ${String(booking.job_group_id)}${
+                  booking.job_number ? ` • Job ${booking.job_number}` : ""
+                }`
+              : "",
+          ].filter(Boolean);
+
+          return {
+            id: booking.id,
+            jobId: booking.job_id || booking.id,
+            jobLabel: labelParts.join(" • "),
+            serviceLabel: getServiceTypeLabel(booking),
+            subtotalPay,
+            hstPay,
+            returnPay,
             totalPay,
-            aiDispatchScore: Number(booking.ai_dispatch_score || 0),
-            aiPriorityScore: Number(booking.ai_priority_score || 0),
+            customerReturnFee,
+            status,
+            payoutLines,
+            payoutNotes: booking.payout_notes || "",
+            payoutBatchId: booking.payout_batch_id || "",
+            payoutSentAt: booking.payout_sent_at || "",
+            acceptedAt: booking.accepted_at || "",
+            completedAt: booking.completed_at || "",
+            aiDispatchScore: num(booking.ai_dispatch_score),
+            aiPriorityScore: num(booking.ai_priority_score),
             aiGroupingLabel: booking.ai_grouping_label || "Solo Route",
             aiDistanceTier: booking.ai_distance_tier || "Standard Zone",
+            aiRecommendedInstallerType:
+              booking.ai_recommended_installer_type || "Standard Installer",
             incompleteReason: booking.incomplete_reason || "",
-            incompleteNote:
-              booking.incomplete_notes || booking.incomplete_note || "",
+            incompleteNote: booking.incomplete_notes || booking.incomplete_note || "",
             redoRequested: Boolean(booking.redo_requested),
-            payoutMethod,
-          }),
-        };
-      });
+            ai: buildAiPayoutSummary({
+              status,
+              totalPay,
+              aiDispatchScore: num(booking.ai_dispatch_score),
+              aiPriorityScore: num(booking.ai_priority_score),
+              aiGroupingLabel: booking.ai_grouping_label || "Solo Route",
+              aiDistanceTier: booking.ai_distance_tier || "Standard Zone",
+              incompleteReason: booking.incomplete_reason || "",
+              incompleteNote: booking.incomplete_notes || booking.incomplete_note || "",
+              redoRequested: Boolean(booking.redo_requested),
+              payoutMethod,
+            }),
+          };
+        });
 
-    setProfile(installerProfile);
-    setPayouts(myPayouts);
-    setLoading(false);
+      setProfile(installerProfile);
+      setPayouts(myPayouts);
+    } catch (error) {
+      console.error("Error loading payouts:", error);
+      alert("Could not load payouts.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   const totals = useMemo(() => {
@@ -602,7 +685,7 @@ export default function PayoutPage() {
       .reduce((sum, payout) => sum + payout.totalPay, 0);
 
     const highPriority = payouts.filter(
-      (payout) => payout.aiPriorityScore >= 80
+      (payout) => payout.aiPriorityScore >= 80 || payout.aiDispatchScore >= 80
     ).length;
 
     return { unpaid, pending, pendingReview, hold, ready, paid, highPriority };
@@ -616,7 +699,9 @@ export default function PayoutPage() {
       hold: payouts.filter((payout) => payout.status === "hold").length,
       ready: payouts.filter((payout) => payout.status === "ready").length,
       paid: payouts.filter((payout) => payout.status === "paid").length,
-      high_priority: payouts.filter((payout) => payout.aiPriorityScore >= 80).length,
+      high_priority: payouts.filter(
+        (payout) => payout.aiPriorityScore >= 80 || payout.aiDispatchScore >= 80
+      ).length,
     };
   }, [payouts]);
 
@@ -634,7 +719,9 @@ export default function PayoutPage() {
     } else if (activeTab === "paid") {
       items = items.filter((payout) => payout.status === "paid");
     } else if (activeTab === "high_priority") {
-      items = items.filter((payout) => payout.aiPriorityScore >= 80);
+      items = items.filter(
+        (payout) => payout.aiPriorityScore >= 80 || payout.aiDispatchScore >= 80
+      );
     }
 
     const term = search.trim().toLowerCase();
@@ -651,7 +738,9 @@ export default function PayoutPage() {
         payout.ai.statusLabel.toLowerCase().includes(term) ||
         payout.ai.recommendedAction.toLowerCase().includes(term) ||
         payout.ai.routeLabel.toLowerCase().includes(term) ||
-        payout.ai.speedLabel.toLowerCase().includes(term)
+        payout.ai.speedLabel.toLowerCase().includes(term) ||
+        payout.incompleteReason.toLowerCase().includes(term) ||
+        payout.incompleteNote.toLowerCase().includes(term)
       );
     });
   }, [payouts, search, activeTab]);
@@ -659,7 +748,7 @@ export default function PayoutPage() {
   function renderPayoutMethod() {
     if (!profile) return "-";
 
-    const method = (profile.payout_method || "").toLowerCase();
+    const method = normalizeText(profile.payout_method);
 
     if (method === "etransfer") {
       return profile.etransfer_email || profile.payout_email || "-";
@@ -807,16 +896,12 @@ export default function PayoutPage() {
 
             <div>
               <p className="text-sm text-gray-400">Payout Method</p>
-              <p className="mt-1 text-lg font-semibold">
-                {profile?.payout_method || "-"}
-              </p>
+              <p className="mt-1 text-lg font-semibold">{profile?.payout_method || "-"}</p>
             </div>
 
             <div className="md:col-span-2">
               <p className="text-sm text-gray-400">Payout Details</p>
-              <p className="mt-1 break-words text-sm text-gray-300">
-                {renderPayoutMethod()}
-              </p>
+              <p className="mt-1 break-words text-sm text-gray-300">{renderPayoutMethod()}</p>
             </div>
           </div>
         </div>
@@ -893,9 +978,7 @@ export default function PayoutPage() {
 
                   <div>
                     <p className="text-sm text-gray-400">Service</p>
-                    <p className="text-base font-semibold text-white">
-                      {payout.serviceLabel}
-                    </p>
+                    <p className="text-base font-semibold text-white">{payout.serviceLabel}</p>
                     <p className="mt-1 text-xs text-zinc-500">
                       Suggested Type: {payout.aiRecommendedInstallerType}
                     </p>
@@ -967,9 +1050,7 @@ export default function PayoutPage() {
 
                 {payout.customerReturnFee > 0 ? (
                   <div className="mt-4 rounded-xl border border-zinc-800 bg-black p-4">
-                    <p className="text-sm text-gray-400">
-                      Customer Return Fee Charged
-                    </p>
+                    <p className="text-sm text-gray-400">Customer Return Fee Charged</p>
                     <p className="mt-2 text-base font-semibold text-white">
                       {money(payout.customerReturnFee)}
                     </p>
@@ -990,9 +1071,7 @@ export default function PayoutPage() {
                       </p>
                     ) : null}
                     {payout.redoRequested ? (
-                      <p className="mt-1 text-sm text-gray-300">
-                        Redo Requested: Yes
-                      </p>
+                      <p className="mt-1 text-sm text-gray-300">Redo Requested: Yes</p>
                     ) : null}
                   </div>
                 ) : null}
