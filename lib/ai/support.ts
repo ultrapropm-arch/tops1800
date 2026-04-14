@@ -1,7 +1,14 @@
 import { openai } from "./client";
 
+type ServiceType = "installation_3cm" | "installation_2cm" | "backsplash";
+
+export type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
 type QuoteInput = {
-  serviceType?: "installation_3cm" | "installation_2cm" | "backsplash";
+  serviceType?: ServiceType;
   sqft?: number;
   distanceKm?: number;
   waterfalls?: number;
@@ -17,18 +24,60 @@ type QuoteInput = {
   remeasureFH?: boolean;
   remeasureLH?: boolean;
   extraHelpers?: number;
+  removal?: boolean;
   city?: string;
   timeline?: "same-day" | "next-day" | "scheduled";
 };
 
-function detectQuoteInput(message: string): QuoteInput {
-  const text = message.toLowerCase();
+const BOOKING_URL = "https://1800tops.com/book";
 
-  const sqftMatch = text.match(/(\d+(?:\.\d+)?)\s*(sq\s*ft|sqft|square\s*feet|square\s*foot)/i);
-  const kmMatch = text.match(/(\d+(?:\.\d+)?)\s*(km|kilometer|kilometers)/i);
-  const waterfallMatch = text.match(/(\d+)\s*(waterfall|waterfalls)/i);
-  const outletMatch = text.match(/(\d+)\s*(outlet|outlets|plug cutout|plug cutouts|outlet cutout|outlet cutouts)/i);
-  const helperMatch = text.match(/(\d+)\s*(extra helper|extra helpers|helper|helpers)/i);
+function normalizeText(message: string) {
+  return message.toLowerCase().trim();
+}
+
+function isGreeting(text: string) {
+  return /^(hi|hello|hey|yo|good morning|good afternoon|good evening)$/i.test(
+    text.trim()
+  );
+}
+
+function isBookingIntent(text: string) {
+  return /\b(book|booking|go ahead|move forward|yes book|want to book|proceed|continue|yes)\b/i.test(
+    text
+  );
+}
+
+function isNegative(text: string) {
+  return /\b(no|none|nope|nah)\b/i.test(text);
+}
+
+function parseBooleanIntent(
+  text: string,
+  keywords: string[],
+  negativeKeywords: string[] = []
+): boolean | undefined {
+  const hasKeyword = keywords.some((k) => text.includes(k));
+  const hasNegative = negativeKeywords.some((k) => text.includes(k));
+
+  if (hasKeyword && hasNegative) return false;
+  if (hasKeyword) return true;
+  return undefined;
+}
+
+function detectQuoteInput(message: string): QuoteInput {
+  const text = normalizeText(message);
+
+  const sqftMatch = text.match(
+    /(\d+(?:\.\d+)?)\s*(sq\s*ft|sqft|square\s*feet|square\s*foot)\b/i
+  );
+  const kmMatch = text.match(/(\d+(?:\.\d+)?)\s*(km|kilometer|kilometers)\b/i);
+  const waterfallMatch = text.match(/(\d+)\s*(waterfall|waterfalls)\b/i);
+  const outletMatch = text.match(
+    /(\d+)\s*(outlet|outlets|plug cutout|plug cutouts|outlet cutout|outlet cutouts)\b/i
+  );
+  const helperMatch = text.match(
+    /(\d+)\s*(extra helper|extra helpers|helper|helpers)\b/i
+  );
 
   let serviceType: QuoteInput["serviceType"];
   if (text.includes("3cm")) serviceType = "installation_3cm";
@@ -40,130 +89,246 @@ function detectQuoteInput(message: string): QuoteInput {
   else if (text.includes("next day") || text.includes("next-day")) timeline = "next-day";
   else if (text.includes("scheduled") || text.includes("schedule")) timeline = "scheduled";
 
+  const cityList = [
+    "toronto",
+    "mississauga",
+    "brampton",
+    "vaughan",
+    "markham",
+    "richmond hill",
+    "oakville",
+    "milton",
+    "burlington",
+    "hamilton",
+    "scarborough",
+    "north york",
+    "etobicoke",
+  ];
+
+  const city = cityList.find((c) => text.includes(c));
+
+  const sinkCutout =
+    parseBooleanIntent(text, ["sink cutout", "sink"], ["no sink", "no sink cutout"]) ??
+    undefined;
+
+  const cooktopCutout =
+    parseBooleanIntent(text, ["cooktop cutout", "cooktop"], ["no cooktop", "no cooktop cutout"]) ??
+    undefined;
+
+  const condoHighRise =
+    parseBooleanIntent(text, ["condo", "high-rise", "high rise"], ["not condo", "not high-rise"]) ??
+    undefined;
+
+  const difficultAccess =
+    parseBooleanIntent(
+      text,
+      ["stairs", "basement", "difficult access"],
+      ["no stairs", "no basement", "easy access"]
+    ) ?? undefined;
+
+  const onsiteCutting =
+    parseBooleanIntent(text, ["onsite cutting", "on-site cutting"], ["no onsite cutting"]) ??
+    undefined;
+
+  const onsitePolishing =
+    parseBooleanIntent(text, ["onsite polishing", "on-site polishing"], ["no onsite polishing"]) ??
+    undefined;
+
+  const plumbingRemoval =
+    parseBooleanIntent(text, ["plumbing removal"], ["no plumbing removal"]) ?? undefined;
+
+  const sealing =
+    parseBooleanIntent(
+      text,
+      ["sealing", "marble sealing", "granite sealing"],
+      ["no sealing"]
+    ) ?? undefined;
+
+  const removal =
+    parseBooleanIntent(
+      text,
+      ["removal", "remove", "disposal", "haul away", "tear out"],
+      ["no removal", "no disposal"]
+    ) ?? undefined;
+
   return {
     serviceType,
     sqft: sqftMatch ? Number(sqftMatch[1]) : undefined,
     distanceKm: kmMatch ? Number(kmMatch[1]) : undefined,
     waterfalls: waterfallMatch ? Number(waterfallMatch[1]) : undefined,
     outletCutouts: outletMatch ? Number(outletMatch[1]) : undefined,
-    sinkCutout: /sink cutout|sink/i.test(text) ? true : undefined,
-    cooktopCutout: /cooktop cutout|cooktop/i.test(text) ? true : undefined,
-    condoHighRise: /condo|high-rise|high rise/i.test(text) ? true : undefined,
-    difficultAccess: /stairs|basement|difficult access/i.test(text) ? true : undefined,
-    onsiteCutting: /onsite cutting|on-site cutting/i.test(text) ? true : undefined,
-    onsitePolishing: /onsite polishing|on-site polishing/i.test(text) ? true : undefined,
-    plumbingRemoval: /plumbing removal/i.test(text) ? true : undefined,
-    sealing: /sealing|marble sealing|granite sealing/i.test(text) ? true : undefined,
-    remeasureFH: /remeasure backsplash fh/i.test(text) ? true : undefined,
-    remeasureLH: /remeasure backsplash lh/i.test(text) ? true : undefined,
+    sinkCutout,
+    cooktopCutout,
+    condoHighRise,
+    difficultAccess,
+    onsiteCutting,
+    onsitePolishing,
+    plumbingRemoval,
+    sealing,
+    remeasureFH: /\bremeasure backsplash fh\b/.test(text) ? true : undefined,
+    remeasureLH: /\bremeasure backsplash lh\b/.test(text) ? true : undefined,
     extraHelpers: helperMatch ? Number(helperMatch[1]) : undefined,
-    city: (() => {
-      const cities = [
-        "toronto",
-        "mississauga",
-        "brampton",
-        "vaughan",
-        "markham",
-        "richmond hill",
-        "oakville",
-        "milton",
-        "burlington",
-        "hamilton",
-        "scarborough",
-        "north york",
-        "etobicoke",
-      ];
-      return cities.find((c) => text.includes(c));
-    })(),
+    removal,
+    city,
     timeline,
   };
 }
 
+function mergeQuoteInputs(base: QuoteInput, next: QuoteInput): QuoteInput {
+  return {
+    serviceType: next.serviceType ?? base.serviceType,
+    sqft: next.sqft ?? base.sqft,
+    distanceKm: next.distanceKm ?? base.distanceKm,
+    waterfalls: next.waterfalls ?? base.waterfalls,
+    outletCutouts: next.outletCutouts ?? base.outletCutouts,
+    sinkCutout: next.sinkCutout ?? base.sinkCutout,
+    cooktopCutout: next.cooktopCutout ?? base.cooktopCutout,
+    condoHighRise: next.condoHighRise ?? base.condoHighRise,
+    difficultAccess: next.difficultAccess ?? base.difficultAccess,
+    onsiteCutting: next.onsiteCutting ?? base.onsiteCutting,
+    onsitePolishing: next.onsitePolishing ?? base.onsitePolishing,
+    plumbingRemoval: next.plumbingRemoval ?? base.plumbingRemoval,
+    sealing: next.sealing ?? base.sealing,
+    remeasureFH: next.remeasureFH ?? base.remeasureFH,
+    remeasureLH: next.remeasureLH ?? base.remeasureLH,
+    extraHelpers: next.extraHelpers ?? base.extraHelpers,
+    removal: next.removal ?? base.removal,
+    city: next.city ?? base.city,
+    timeline: next.timeline ?? base.timeline,
+  };
+}
+
+function applySmartSingleNumber(
+  message: string,
+  current: QuoteInput,
+  previousMissingFields: string[]
+): QuoteInput {
+  const text = normalizeText(message);
+  const plainNumber = text.match(/^(\d+(?:\.\d+)?)$/);
+
+  if (!plainNumber) return current;
+
+  const value = Number(plainNumber[1]);
+  const next = { ...current };
+
+  if (!next.sqft && previousMissingFields.includes("sqft")) {
+    next.sqft = value;
+    return next;
+  }
+
+  if (next.distanceKm === undefined && previousMissingFields.includes("distanceKm")) {
+    next.distanceKm = value;
+    return next;
+  }
+
+  if (next.waterfalls === undefined && previousMissingFields.includes("waterfalls")) {
+    next.waterfalls = value;
+    return next;
+  }
+
+  if (next.outletCutouts === undefined && previousMissingFields.includes("outletCutouts")) {
+    next.outletCutouts = value;
+    return next;
+  }
+
+  if (next.extraHelpers === undefined && previousMissingFields.includes("extraHelpers")) {
+    next.extraHelpers = value;
+    return next;
+  }
+
+  if (!next.sqft) {
+    next.sqft = value;
+    return next;
+  }
+
+  if (next.distanceKm === undefined) {
+    next.distanceKm = value;
+    return next;
+  }
+
+  return next;
+}
+
+function buildQuoteInputFromMessages(messages: ChatMessage[]) {
+  let combined: QuoteInput = {};
+  let previousMissingFields: string[] = ["serviceType", "sqft", "distanceKm"];
+
+  for (const msg of messages) {
+    if (msg.role !== "user") continue;
+
+    const parsed = detectQuoteInput(msg.content);
+    combined = mergeQuoteInputs(combined, parsed);
+    combined = applySmartSingleNumber(msg.content, combined, previousMissingFields);
+    previousMissingFields = getMissingFieldKeys(combined);
+  }
+
+  return combined;
+}
+
 function calculateQuote(input: QuoteInput) {
-  const serviceRates = {
-    installation_3cm: 10,
-    installation_2cm: 9,
-    backsplash: 10,
-  } as const;
-
-  const serviceLabelMap = {
-    installation_3cm: "3cm Installation",
-    installation_2cm: "2cm Installation",
-    backsplash: "Full Height Backsplash",
-  } as const;
-
   const lineItems: Array<{ label: string; amount: number }> = [];
 
   if (input.serviceType && input.sqft) {
-    const rate = serviceRates[input.serviceType];
-    lineItems.push({
-      label: `${serviceLabelMap[input.serviceType]} (${input.sqft} sqft × $${rate})`,
-      amount: input.sqft * rate,
-    });
+    if (input.serviceType === "installation_3cm") {
+      lineItems.push({
+        label: `3cm Installation (${input.sqft} sqft × $10)`,
+        amount: input.sqft * 10,
+      });
+    }
+
+    if (input.serviceType === "installation_2cm") {
+      lineItems.push({
+        label: `2cm Installation (${input.sqft} sqft × $9)`,
+        amount: input.sqft * 9,
+      });
+    }
+
+    if (input.serviceType === "backsplash") {
+      lineItems.push({
+        label: `Full Height Backsplash (${input.sqft} sqft × $10)`,
+        amount: input.sqft * 10,
+      });
+    }
   }
 
-  if (input.distanceKm) {
+  if (typeof input.distanceKm === "number") {
     lineItems.push({
       label: `Mileage (${input.distanceKm} km × $1.40)`,
       amount: input.distanceKm * 1.4,
     });
   }
 
-  if (input.waterfalls) {
+  if (typeof input.waterfalls === "number" && input.waterfalls > 0) {
     lineItems.push({
       label: `Waterfalls (${input.waterfalls} × $100)`,
       amount: input.waterfalls * 100,
     });
   }
 
-  if (input.outletCutouts) {
+  if (typeof input.outletCutouts === "number" && input.outletCutouts > 0) {
     lineItems.push({
       label: `Outlet Cutouts (${input.outletCutouts} × $50)`,
       amount: input.outletCutouts * 50,
     });
   }
 
-  if (input.sinkCutout) {
-    lineItems.push({ label: "Sink Cutout Onsite", amount: 180 });
-  }
-
-  if (input.cooktopCutout) {
-    lineItems.push({ label: "Cooktop Cutout", amount: 180 });
-  }
-
-  if (input.condoHighRise) {
-    lineItems.push({ label: "Condo / High-Rise", amount: 80 });
-  }
-
+  if (input.sinkCutout) lineItems.push({ label: "Sink Cutout Onsite", amount: 180 });
+  if (input.cooktopCutout) lineItems.push({ label: "Cooktop Cutout", amount: 180 });
+  if (input.condoHighRise) lineItems.push({ label: "Condo / High-Rise", amount: 80 });
   if (input.difficultAccess) {
-    lineItems.push({ label: "Difficult Access / Stairs / Basement", amount: 180 });
+    lineItems.push({
+      label: "Difficult Access / Stairs 7+ / Basement",
+      amount: 180,
+    });
   }
+  if (input.onsiteCutting) lineItems.push({ label: "Onsite Cutting", amount: 175 });
+  if (input.onsitePolishing) lineItems.push({ label: "Onsite Polishing", amount: 175 });
+  if (input.plumbingRemoval) lineItems.push({ label: "Plumbing Removal", amount: 50 });
+  if (input.sealing) lineItems.push({ label: "Marble / Granite Sealing", amount: 50 });
+  if (input.remeasureFH) lineItems.push({ label: "Remeasure Backsplash FH", amount: 180 });
+  if (input.remeasureLH) lineItems.push({ label: "Remeasure Backsplash LH", amount: 80 });
 
-  if (input.onsiteCutting) {
-    lineItems.push({ label: "Onsite Cutting", amount: 175 });
-  }
-
-  if (input.onsitePolishing) {
-    lineItems.push({ label: "Onsite Polishing", amount: 175 });
-  }
-
-  if (input.plumbingRemoval) {
-    lineItems.push({ label: "Plumbing Removal", amount: 50 });
-  }
-
-  if (input.sealing) {
-    lineItems.push({ label: "Marble / Granite Sealing", amount: 50 });
-  }
-
-  if (input.remeasureFH) {
-    lineItems.push({ label: "Remeasure Backsplash FH", amount: 180 });
-  }
-
-  if (input.remeasureLH) {
-    lineItems.push({ label: "Remeasure Backsplash LH", amount: 80 });
-  }
-
-  if (input.extraHelpers) {
+  if (typeof input.extraHelpers === "number" && input.extraHelpers > 0) {
     lineItems.push({
       label: `Extra Helpers (${input.extraHelpers} × $200)`,
       amount: input.extraHelpers * 200,
@@ -171,54 +336,138 @@ function calculateQuote(input: QuoteInput) {
   }
 
   const total = lineItems.reduce((sum, item) => sum + item.amount, 0);
-
   return { lineItems, total };
 }
 
-function getMissingFields(input: QuoteInput) {
+function formatCurrency(value: number) {
+  return `$${value.toFixed(2)}`;
+}
+
+function getMissingFieldKeys(input: QuoteInput) {
   const missing: string[] = [];
 
-  if (!input.serviceType) missing.push("service type");
-  if (!input.sqft) missing.push("square footage");
-
-  if (
-    input.serviceType === "installation_3cm" ||
-    input.serviceType === "installation_2cm" ||
-    input.serviceType === "backsplash"
-  ) {
-    if (input.distanceKm === undefined) missing.push("distance in km");
-  }
-
-  if (input.waterfalls === undefined) missing.push("number of waterfalls");
-  if (input.outletCutouts === undefined) missing.push("number of outlet cutouts");
-  if (input.sinkCutout === undefined) missing.push("whether you need a sink cutout");
-  if (input.cooktopCutout === undefined) missing.push("whether you need a cooktop cutout");
-  if (input.condoHighRise === undefined) missing.push("whether this is a condo or high-rise");
-  if (input.difficultAccess === undefined) missing.push("whether there are stairs, basement access, or difficult access");
-  if (!input.timeline) missing.push("timing: same-day, next-day, or scheduled");
+  if (!input.serviceType) missing.push("serviceType");
+  if (!input.sqft) missing.push("sqft");
+  if (input.distanceKm === undefined) missing.push("distanceKm");
 
   return missing;
 }
 
-export async function supportReply(message: string) {
-  if (!openai) return "AI not configured.";
+function getStraightQuestions(input: QuoteInput) {
+  const questions: string[] = [];
 
-  const parsed = detectQuoteInput(message);
-  const missing = getMissingFields(parsed);
+  if (!input.serviceType) {
+    questions.push("Is it 2cm, 3cm, or full height backsplash?");
+  }
+
+  if (!input.sqft) {
+    questions.push("How many sqft is it?");
+  }
+
+  if (input.distanceKm === undefined) {
+    questions.push("What is the distance in km?");
+  }
+
+  const extrasUnknown =
+    input.removal === undefined &&
+    input.waterfalls === undefined &&
+    input.extraHelpers === undefined &&
+    input.onsiteCutting === undefined &&
+    input.onsitePolishing === undefined &&
+    input.sinkCutout === undefined &&
+    input.cooktopCutout === undefined &&
+    input.outletCutouts === undefined;
+
+  if (extrasUnknown) {
+    questions.push(
+      "Do you need any extras like removal, waterfall, extra helper, sink cutout, cooktop cutout, outlet cutouts, or onsite services?"
+    );
+  }
+
+  if (!input.timeline) {
+    questions.push("Do you need same-day, next-day, or scheduled service?");
+  }
+
+  return questions.slice(0, 2);
+}
+
+function buildIntro(input: QuoteInput) {
+  const parts: string[] = [];
+
+  if (input.serviceType === "installation_3cm") parts.push("3cm installation");
+  if (input.serviceType === "installation_2cm") parts.push("2cm installation");
+  if (input.serviceType === "backsplash") parts.push("full height backsplash");
+  if (input.sqft) parts.push(`${input.sqft} sqft`);
+  if (input.city) parts.push(input.city.charAt(0).toUpperCase() + input.city.slice(1));
+
+  return parts.length ? `Got it — ${parts.join(", ")}.` : "Got it.";
+}
+
+function buildDeterministicQuoteReply(messages: ChatMessage[]) {
+  const lastUserMessage =
+    [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+
+  const lastText = normalizeText(lastUserMessage);
+
+  if (isGreeting(lastText)) {
+    return "Hi 👋 What would you like quoted today? Send me the type of job, sqft, and distance in km.";
+  }
+
+  if (isBookingIntent(lastText)) {
+    return `Perfect — book here:\n👉 ${BOOKING_URL}`;
+  }
+
+  const parsed = buildQuoteInputFromMessages(messages);
   const { lineItems, total } = calculateQuote(parsed);
+  const followUps = getStraightQuestions(parsed);
 
-  const breakdown =
-    lineItems.length > 0
-      ? lineItems.map((item) => `• ${item.label} = $${item.amount.toFixed(2)}`).join("\n")
-      : "• No pricing items calculated yet.";
+  if (!parsed.serviceType && !parsed.sqft && !parsed.distanceKm) {
+    return "What are you looking for today — 2cm installation, 3cm installation, or full height backsplash?";
+  }
 
-  const missingPrompt =
-    missing.length > 0
-      ? `Ask only the most important missing questions from this list:\n${missing
-          .slice(0, 5)
-          .map((m) => `- ${m}`)
-          .join("\n")}`
-      : `You have enough information to give the estimate and ask if the customer wants to continue to booking.`;
+  const intro = buildIntro(parsed);
+
+  if (lineItems.length > 0) {
+    const breakdown = lineItems
+      .map((item) => `• ${item.label} = ${formatCurrency(item.amount)}`)
+      .join("\n");
+
+    if (followUps.length > 0) {
+      return `${intro}
+
+Here is your rough quote so far:
+
+${breakdown}
+
+Current total: ${formatCurrency(total)}
+
+${followUps.join("\n")}`;
+    }
+
+    return `${intro}
+
+Here is your estimate:
+
+${breakdown}
+
+Estimated total: ${formatCurrency(total)}
+
+Do you want to book?
+
+👉 ${BOOKING_URL}`;
+  }
+
+  return `${intro}
+
+${followUps.join("\n")}`;
+}
+
+export async function supportReply(messages: ChatMessage[]) {
+  const deterministicReply = buildDeterministicQuoteReply(messages);
+
+  if (!openai) {
+    return deterministicReply;
+  }
 
   try {
     const res = await openai.chat.completions.create({
@@ -227,54 +476,33 @@ export async function supportReply(message: string) {
         {
           role: "system",
           content: `
-You are the 1800TOPS AI sales assistant.
+You are the 1800TOPS quote assistant.
 
-Use ONLY the pricing breakdown and totals provided to you.
-Do NOT invent any market pricing.
-Do NOT change any amounts.
-Keep replies short, clean, and sales-focused.
-
-If enough details are available:
-- show the estimate clearly
-- ask whether the customer wants to continue to booking
-- tell them they can book here: https://1800tops.com/book
-
-If details are missing:
-- show any partial estimate already available
-- ask only a few short missing questions
-- always ask if they need any additional services
-
-Tone:
-- professional
+Rewrite the draft reply so it sounds:
 - direct
-- helpful
+- natural
+- short
+- sales-focused
+
+Rules:
+- keep all prices exactly the same
+- keep all totals exactly the same
+- keep the booking link exactly the same
+- do not ask repeated questions
+- ask straightforward questions only
+- when enough info is available, clearly ask: "Do you want to book?"
+- do not add fake pricing
           `.trim(),
         },
         {
           role: "user",
-          content: `
-Customer message:
-${message}
-
-Detected details:
-${JSON.stringify(parsed, null, 2)}
-
-Pricing breakdown:
-${breakdown}
-
-Current total:
-$${total.toFixed(2)}
-
-Instructions:
-${missingPrompt}
-          `.trim(),
+          content: deterministicReply,
         },
       ],
     });
 
-    return res.choices[0]?.message?.content || "No response.";
-  } catch (error) {
-    console.error("OpenAI support error:", error);
-    return "AI failed.";
+    return res.choices[0]?.message?.content?.trim() || deterministicReply;
+  } catch {
+    return deterministicReply;
   }
 }
