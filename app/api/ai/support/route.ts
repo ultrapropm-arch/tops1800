@@ -1,27 +1,46 @@
 import { NextResponse } from "next/server";
 import { supportReply, ChatMessage } from "@/lib/ai/support";
 
+function isValidChatMessage(value: unknown): value is ChatMessage {
+  if (typeof value !== "object" || value === null) return false;
+
+  const candidate = value as Record<string, unknown>;
+
+  return (
+    (candidate.role === "user" || candidate.role === "assistant") &&
+    typeof candidate.content === "string"
+  );
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    const rawMessages = Array.isArray(body?.messages) ? body.messages : [];
+    const rawMessages: unknown[] = Array.isArray(body?.messages)
+      ? body.messages
+      : [];
 
     const messages: ChatMessage[] = rawMessages
-      .filter(
-        (msg: unknown) =>
-          typeof msg === "object" &&
-          msg !== null &&
-          "role" in msg &&
-          "content" in msg
+      .filter(isValidChatMessage)
+      .map(
+        (msg): ChatMessage => ({
+          role: msg.role,
+          content: msg.content.trim(),
+        })
       )
-      .map((msg: any) => ({
-        role: msg.role === "assistant" ? "assistant" : "user",
-        content: typeof msg.content === "string" ? msg.content : "",
-      }))
-      .filter((msg) => msg.content.trim().length > 0);
+      .filter((msg) => msg.content.length > 0);
 
-    const reply = await supportReply(messages);
+    const safeMessages: ChatMessage[] =
+      messages.length > 0
+        ? messages
+        : [
+            {
+              role: "user",
+              content: "I need a quote.",
+            },
+          ];
+
+    const reply = await supportReply(safeMessages);
 
     return NextResponse.json({ reply });
   } catch (error) {
