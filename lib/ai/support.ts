@@ -10,7 +10,7 @@ export type ChatMessage = {
 type QuoteInput = {
   serviceType?: ServiceType;
   sqft?: number;
-  distanceKm?: number;
+  distanceKm?: number; // one-way distance
   waterfalls?: number;
   outletCutouts?: number;
   sinkCutout?: boolean;
@@ -29,7 +29,16 @@ type QuoteInput = {
   timeline?: "same-day" | "next-day" | "scheduled";
 };
 
+type LineItem = {
+  label: string;
+  amount: number;
+};
+
 const BOOKING_URL = "https://1800tops.com/book";
+const MAX_ONE_WAY_SERVICE_KM = 200;
+const CUSTOMER_MILEAGE_RATE = 1.5;
+const FREE_ROUND_TRIP_KM = 120;
+const MAX_ROUND_TRIP_BILLABLE_WINDOW_KM = 320;
 
 function normalizeText(value: string) {
   return value.toLowerCase().trim();
@@ -52,8 +61,14 @@ function isGreeting(text: string) {
   );
 }
 
+function isAffirmative(text: string) {
+  return /^(yes|yeah|yep|sure|ok|okay|go ahead|continue|proceed)$/i.test(
+    text.trim()
+  );
+}
+
 function isBookingIntent(text: string) {
-  return /\b(book|booking|go ahead|move forward|yes book|want to book|proceed|continue)\b/i.test(
+  return /\b(book|booking|want to book|book now|go to booking|complete booking)\b/i.test(
     text
   );
 }
@@ -301,8 +316,40 @@ function buildQuoteInputFromMessages(messages: ChatMessage[]) {
   return combined;
 }
 
+function calculateCustomerMileage(distanceKm?: number) {
+  if (typeof distanceKm !== "number" || Number.isNaN(distanceKm) || distanceKm <= 0) {
+    return {
+      originalOneWayKm: 0,
+      usedOneWayKm: 0,
+      roundTripKm: 0,
+      chargeableKm: 0,
+      amount: 0,
+      capped: false,
+    };
+  }
+
+  const originalOneWayKm = distanceKm;
+  const usedOneWayKm = Math.min(distanceKm, MAX_ONE_WAY_SERVICE_KM);
+  const capped = originalOneWayKm > MAX_ONE_WAY_SERVICE_KM;
+
+  const roundTripKm = usedOneWayKm * 2;
+  const eligibleRoundTripKm = Math.min(roundTripKm, MAX_ROUND_TRIP_BILLABLE_WINDOW_KM);
+  const chargeableKm = Math.max(0, eligibleRoundTripKm - FREE_ROUND_TRIP_KM);
+  const amount = chargeableKm * CUSTOMER_MILEAGE_RATE;
+
+  return {
+    originalOneWayKm,
+    usedOneWayKm,
+    roundTripKm,
+    chargeableKm,
+    amount,
+    capped,
+  };
+}
+
 function calculateQuote(input: QuoteInput) {
-  const lineItems: Array<{ label: string; amount: number }> = [];
+  const lineItems: LineItem[] = [];
+  const notes: string[] = [];
 
   if (input.serviceType && input.sqft) {
     if (input.serviceType === "installation_3cm") {
@@ -328,10 +375,26 @@ function calculateQuote(input: QuoteInput) {
   }
 
   if (typeof input.distanceKm === "number") {
-    lineItems.push({
-      label: `Mileage (${input.distanceKm} km × $1.40)`,
-      amount: input.distanceKm * 1.4,
-    });
+    const mileage = calculateCustomerMileage(input.distanceKm);
+
+    if (mileage.amount > 0) {
+      lineItems.push({
+        label: `Mileage (${mileage.chargeableKm} extra km × $1.50, first 120 km round-trip free)`,
+        amount: mileage.amount,
+      });
+    }
+
+    if (mileage.amount === 0) {
+      notes.push(
+        `Mileage is $0.00 so far because the first ${FREE_ROUND_TRIP_KM} km round-trip is free.`
+      );
+    }
+
+    if (mileage.capped) {
+      notes.push(
+        `Distance entered is above the ${MAX_ONE_WAY_SERVICE_KM} km one-way service limit. This rough quote used ${MAX_ONE_WAY_SERVICE_KM} km one-way max.`
+      );
+    }
   }
 
   if (typeof input.waterfalls === "number" && input.waterfalls > 0) {
@@ -398,15 +461,20 @@ function calculateQuote(input: QuoteInput) {
     });
   }
 
+  if (input.removal) {
+    notes.push("Removal requested. I can include it once the removal scope is confirmed.");
+  }
+
   const total = lineItems.reduce((sum, item) => sum + item.amount, 0);
-  return { lineItems, total };
+
+  return { lineItems, total, notes };
 }
 
 function getStraightQuestions(input: QuoteInput) {
   const questions: string[] = [];
 
   if (!input.serviceType) {
-    questions.push("Is it 2cm, 3cm, or full height backsplash?");
+    questions.push("Is it 2cm installation, 3cm installation, or full height backsplash?");
   }
 
   if (!input.sqft) {
@@ -414,7 +482,9 @@ function getStraightQuestions(input: QuoteInput) {
   }
 
   if (input.distanceKm === undefined) {
-    questions.push("What is the distance in km?");
+    questions.push(
+      "What is the one-way distance in km? We use your booking mileage rule with the first 120 km round-trip free."
+    );
   }
 
   const extrasUnknown =
@@ -425,11 +495,13 @@ function getStraightQuestions(input: QuoteInput) {
     input.onsitePolishing === undefined &&
     input.sinkCutout === undefined &&
     input.cooktopCutout === undefined &&
-    input.outletCutouts === undefined;
+    input.outletCutouts === undefined &&
+    input.plumbingRemoval === undefined &&
+    input.sealing === undefined;
 
   if (extrasUnknown) {
     questions.push(
-      "Do you need any extras like removal, waterfall, extra helper, sink cutout, cooktop cutout, outlet cutouts, or onsite services?"
+      "Do you need any extras like removal, waterfall, extra helper, sink cutout, cooktop cutout, outlet cutouts, plumbing removal, sealing, or onsite services?"
     );
   }
 
@@ -452,6 +524,26 @@ function buildIntro(input: QuoteInput) {
   return parts.length ? `Got it — ${parts.join(", ")}.` : "Got it.";
 }
 
+function shouldTreatAsBookingYes(messages: ChatMessage[]) {
+  const lastUserMessage =
+    [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
+
+  const lastAssistantMessage =
+    [...messages].reverse().find((m) => m.role === "assistant")?.content ?? "";
+
+  const userText = normalizeText(lastUserMessage);
+  const assistantText = normalizeText(lastAssistantMessage);
+
+  if (!isAffirmative(userText)) return false;
+
+  return (
+    assistantText.includes("do you want to book") ||
+    assistantText.includes("would you like to book") ||
+    assistantText.includes("book here") ||
+    assistantText.includes(BOOKING_URL.toLowerCase())
+  );
+}
+
 function buildDeterministicQuoteReply(messages: ChatMessage[]) {
   const lastUserMessage =
     [...messages].reverse().find((m) => m.role === "user")?.content ?? "";
@@ -459,21 +551,23 @@ function buildDeterministicQuoteReply(messages: ChatMessage[]) {
   const lastText = normalizeText(lastUserMessage);
 
   if (isGreeting(lastText)) {
-    return "Hi 👋 What would you like quoted today? Send me the type of job, sqft, and distance in km.";
+    return "Hi 👋 What would you like quoted today? Send me the type of job, sqft, and one-way distance in km.";
   }
 
-  if (isBookingIntent(lastText)) {
+  if (isBookingIntent(lastText) || shouldTreatAsBookingYes(messages)) {
     return `Perfect — you can book here:\n👉 ${BOOKING_URL}`;
   }
 
   const parsed = buildQuoteInputFromMessages(messages);
-  const { lineItems, total } = calculateQuote(parsed);
+  const { lineItems, total, notes } = calculateQuote(parsed);
   const followUps = getStraightQuestions(parsed);
   const intro = buildIntro(parsed);
 
   if (!parsed.serviceType && !parsed.sqft && !parsed.distanceKm) {
     return "What are you looking for today — 2cm installation, 3cm installation, or full height backsplash?";
   }
+
+  const notesBlock = notes.length > 0 ? `\n\n${notes.map((note) => `• ${note}`).join("\n")}` : "";
 
   if (lineItems.length > 0) {
     const breakdown = lineItems
@@ -487,7 +581,7 @@ Here is your rough quote so far:
 
 ${breakdown}
 
-Current total: ${formatCurrency(total)}
+Current total: ${formatCurrency(total)}${notesBlock}
 
 ${followUps.join("\n")}`;
     }
@@ -498,7 +592,7 @@ Here is your estimate:
 
 ${breakdown}
 
-Estimated total: ${formatCurrency(total)}
+Estimated total: ${formatCurrency(total)}${notesBlock}
 
 Do you want to book?
 
@@ -542,10 +636,12 @@ Rules:
 - keep all prices exactly the same
 - keep all totals exactly the same
 - keep the booking link exactly the same
+- keep the booking mileage logic exactly the same
 - do not ask repeated questions
 - ask straightforward questions only
 - when enough info is available, clearly ask: "Do you want to book?"
 - do not add fake pricing
+- do not remove important notes about mileage or service limits
           `.trim(),
         },
         {
