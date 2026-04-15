@@ -4,6 +4,9 @@ export const dynamic = "force-dynamic";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import AddressAutocomplete, {
+  type ParsedAddress,
+} from "@/components/AddressAutocomplete";
 
 const CUSTOMER_JUST_SERVICE_MINIMUM = 220;
 const INSTALLER_JUST_SERVICE_MINIMUM = 160;
@@ -16,7 +19,6 @@ const RETURN_FEE_INSTALLER_PAY = 180;
 
 const REBOOK_CUSTOMER_MILEAGE_MULTIPLIER = 0.6;
 const REBOOK_INSTALLER_MILEAGE_MULTIPLIER = 0.5;
-const REBOOK_COMPANY_MILEAGE_MULTIPLIER = 0.1;
 
 const MAX_SERVICE_DISTANCE_KM = 200;
 
@@ -109,6 +111,16 @@ const JUST_SERVICES = [
   "Polishing",
 ] as const;
 
+const emptyAddress: ParsedAddress = {
+  formattedAddress: "",
+  city: "",
+  province: "",
+  postalCode: "",
+  country: "",
+  lat: null,
+  lng: null,
+};
+
 function normalizeServiceName(label: string) {
   return label.split("—")[0].trim().toLowerCase();
 }
@@ -178,15 +190,18 @@ function getCustomerAddOnPrice(params: {
   if (service === "sink cutout") return 180;
   if (service === "waterfall") return 100 * params.waterfallQuantity;
   if (service === "extra helper needed") return 200;
+
   if (service === "outlet plug cutout") {
     return 50 * params.outletPlugCutoutQuantity;
   }
+
   if (
     service === "granite / marble sealing" ||
     service === "granite/marble sealing"
   ) {
     return 50;
   }
+
   if (service === "cooktop cutout") return 180;
   if (service === "condo / high-rise") return 80;
   if (service === "difficult / stairs 7+ / basement") return 180;
@@ -194,18 +209,23 @@ function getCustomerAddOnPrice(params: {
   if (service === "full countertop template") return 300;
   if (service === "remeasure backsplash - full height") return 180;
   if (service === "remeasure backsplash - low height") return 80;
+
   if (service === "remove and dispose laminate") {
     return params.disposalResponsibility === "installer" ? 350 : 175;
   }
+
   if (service === "remove and dispose stone") {
     return params.disposalResponsibility === "installer" ? 450 : 325;
   }
+
   if (service === "vanity removal") {
     return params.disposalResponsibility === "installer" ? 190 : 80;
   }
+
   if (service === "backsplash tile removal") {
     return params.disposalResponsibility === "installer" ? 480 : 300;
   }
+
   if (service === "removal") return 60;
 
   return extractPrice(params.service);
@@ -225,15 +245,18 @@ function getInstallerAddOnPrice(params: {
   if (service === "sink cutout") return 100;
   if (service === "waterfall") return 60 * params.waterfallQuantity;
   if (service === "extra helper needed") return 110;
+
   if (service === "outlet plug cutout") {
     return 25 * params.outletPlugCutoutQuantity;
   }
+
   if (
     service === "granite / marble sealing" ||
     service === "granite/marble sealing"
   ) {
     return 25;
   }
+
   if (service === "cooktop cutout") return 100;
   if (service === "condo / high-rise") return 50;
   if (service === "difficult / stairs 7+ / basement") return 100;
@@ -241,18 +264,23 @@ function getInstallerAddOnPrice(params: {
   if (service === "full countertop template") return 215;
   if (service === "remeasure backsplash - full height") return 100;
   if (service === "remeasure backsplash - low height") return 50;
+
   if (service === "remove and dispose laminate") {
     return params.disposalResponsibility === "installer" ? 250 : 100;
   }
+
   if (service === "remove and dispose stone") {
     return params.disposalResponsibility === "installer" ? 325 : 200;
   }
+
   if (service === "vanity removal") {
     return params.disposalResponsibility === "installer" ? 110 : 40;
   }
+
   if (service === "backsplash tile removal") {
     return params.disposalResponsibility === "installer" ? 320 : 190;
   }
+
   if (service === "removal") return 0;
 
   return 0;
@@ -311,10 +339,7 @@ function calculateInstallerPay(params: {
     polishing: 90,
   };
 
-  const normalizedJustServices = (params.justServices || []).map(
-    normalizeServiceName
-  );
-
+  const normalizedJustServices = (params.justServices || []).map(normalizeServiceName);
   const { installerRate } = getSqftRates(params.serviceType);
 
   let total = 0;
@@ -350,7 +375,7 @@ function calculateInstallerPay(params: {
   if (params.oneWayKm && params.oneWayKm > 0) {
     const { chargeableKm } = getChargeableKm(params.oneWayKm);
     const mileageRate = params.isRebookMileage
-      ? CUSTOMER_MILEAGE_RATE * REBOOK_INSTALLER_MILEAGE_MULTIPLIER
+      ? INSTALLER_MILEAGE_RATE * REBOOK_INSTALLER_MILEAGE_MULTIPLIER
       : INSTALLER_MILEAGE_RATE;
 
     total += chargeableKm * mileageRate;
@@ -434,11 +459,7 @@ function getDistanceTierLabel(oneWayKm: number, total: number) {
   return "Restricted Distance Zone";
 }
 
-function getPaymentGuidance(
-  oneWayKm: number,
-  total: number,
-  companyName: string
-) {
+function getPaymentGuidance(oneWayKm: number, total: number, companyName: string) {
   const notes: string[] = [];
 
   notes.push("Cash Pickup: up to 80km.");
@@ -482,6 +503,7 @@ function getRecommendedInstallerType(params: {
   if (sqft >= 80) return "Large Project Specialist";
   if (serviceType === "installation_3cm") return "3cm Stone Specialist";
   if (serviceType === "full_height_backsplash") return "Backsplash Specialist";
+
   return "Standard Installer";
 }
 
@@ -500,6 +522,16 @@ function SectionTitle({
   );
 }
 
+function isAddressSelected(address: ParsedAddress) {
+  return Boolean(
+    address.formattedAddress &&
+      address.city &&
+      address.province &&
+      address.lat !== null &&
+      address.lng !== null
+  );
+}
+
 function BookPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -508,8 +540,13 @@ function BookPageContent() {
   const [customerEmail, setCustomerEmail] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
+
   const [pickupAddress, setPickupAddress] = useState("");
   const [dropoffAddress, setDropoffAddress] = useState("");
+
+  const [pickupDetails, setPickupDetails] = useState<ParsedAddress>(emptyAddress);
+  const [dropoffDetails, setDropoffDetails] = useState<ParsedAddress>(emptyAddress);
+  const [secondJobDetails, setSecondJobDetails] = useState<ParsedAddress>(emptyAddress);
 
   const [timeline, setTimeline] = useState("");
   const [scheduledDate, setScheduledDate] = useState("");
@@ -541,26 +578,19 @@ function BookPageContent() {
     useState<MainServiceType>("");
   const [secondJobSideNote, setSecondJobSideNote] = useState("");
   const [secondJobAddOns, setSecondJobAddOns] = useState<string[]>([]);
-  const [secondJobJustServices, setSecondJobJustServices] = useState<string[]>(
-    []
-  );
-  const [secondJobWaterfallQuantity, setSecondJobWaterfallQuantity] =
+  const [secondJobJustServices, setSecondJobJustServices] = useState<string[]>([]);
+  const [secondJobWaterfallQuantity, setSecondJobWaterfallQuantity] = useState("1");
+  const [secondJobOutletPlugCutoutQuantity, setSecondJobOutletPlugCutoutQuantity] =
     useState("1");
-  const [
-    secondJobOutletPlugCutoutQuantity,
-    setSecondJobOutletPlugCutoutQuantity,
-  ] = useState("1");
   const [secondJobDisposalResponsibility, setSecondJobDisposalResponsibility] =
     useState<DisposalResponsibility>("customer");
 
   const [secondJobMileageLoading, setSecondJobMileageLoading] = useState(false);
   const [secondJobMileageError, setSecondJobMileageError] = useState("");
-  const [secondJobOneWayKm, setSecondJobOneWayKm] = useState<number | null>(
+  const [secondJobOneWayKm, setSecondJobOneWayKm] = useState<number | null>(null);
+  const [secondJobRoundTripKm, setSecondJobRoundTripKm] = useState<number | null>(
     null
   );
-  const [secondJobRoundTripKm, setSecondJobRoundTripKm] = useState<
-    number | null
-  >(null);
   const [secondJobChargeableKm, setSecondJobChargeableKm] = useState<number>(0);
   const [secondJobMileageCharge, setSecondJobMileageCharge] = useState<number>(0);
 
@@ -612,11 +642,47 @@ function BookPageContent() {
     if (urlCustomerEmail) setCustomerEmail(urlCustomerEmail);
     if (urlCompanyName) setCompanyName(urlCompanyName);
     if (urlPhoneNumber) setPhoneNumber(urlPhoneNumber);
-    if (urlPickupAddress) setPickupAddress(urlPickupAddress);
-    if (urlDropoffAddress) setDropoffAddress(urlDropoffAddress);
+
+    if (urlPickupAddress) {
+      setPickupAddress(urlPickupAddress);
+      setPickupDetails({
+        ...emptyAddress,
+        formattedAddress: urlPickupAddress,
+        city: searchParams.get("pickupCity") || "",
+        province: searchParams.get("pickupProvince") || "",
+        postalCode: searchParams.get("pickupPostalCode") || "",
+        country: searchParams.get("pickupCountry") || "",
+        lat: searchParams.get("pickupLat")
+          ? Number(searchParams.get("pickupLat"))
+          : null,
+        lng: searchParams.get("pickupLng")
+          ? Number(searchParams.get("pickupLng"))
+          : null,
+      });
+    }
+
+    if (urlDropoffAddress) {
+      setDropoffAddress(urlDropoffAddress);
+      setDropoffDetails({
+        ...emptyAddress,
+        formattedAddress: urlDropoffAddress,
+        city: searchParams.get("dropoffCity") || "",
+        province: searchParams.get("dropoffProvince") || "",
+        postalCode: searchParams.get("dropoffPostalCode") || "",
+        country: searchParams.get("dropoffCountry") || "",
+        lat: searchParams.get("dropoffLat")
+          ? Number(searchParams.get("dropoffLat"))
+          : null,
+        lng: searchParams.get("dropoffLng")
+          ? Number(searchParams.get("dropoffLng"))
+          : null,
+      });
+    }
+
     if (rebookDate || urlScheduledDate) {
       setScheduledDate(rebookDate || urlScheduledDate);
     }
+
     if (urlPickupTimeSlot) setPickupTimeSlot(urlPickupTimeSlot);
     if (urlServiceType) setServiceType(urlServiceType);
     if (urlSqft) setJobSize(urlSqft);
@@ -684,8 +750,7 @@ function BookPageContent() {
   );
 
   const secondJobOutletPlugCutoutQtyNumber = useMemo(
-    () =>
-      Math.max(1, parsePositiveNumber(secondJobOutletPlugCutoutQuantity) || 1),
+    () => Math.max(1, parsePositiveNumber(secondJobOutletPlugCutoutQuantity) || 1),
     [secondJobOutletPlugCutoutQuantity]
   );
 
@@ -716,10 +781,7 @@ function BookPageContent() {
   }, [sqft, pricingConfig.installerRate]);
 
   const secondJobInstallerServicePayout = useMemo(() => {
-    if (
-      secondJobSqftNumber <= 0 ||
-      secondJobPricingConfig.installerRate <= 0
-    ) {
+    if (secondJobSqftNumber <= 0 || secondJobPricingConfig.installerRate <= 0) {
       return 0;
     }
 
@@ -772,15 +834,15 @@ function BookPageContent() {
 
   const effectiveInstallerMileageRate = useMemo(() => {
     return isRebook
-      ? CUSTOMER_MILEAGE_RATE * REBOOK_INSTALLER_MILEAGE_MULTIPLIER
+      ? INSTALLER_MILEAGE_RATE * REBOOK_INSTALLER_MILEAGE_MULTIPLIER
       : INSTALLER_MILEAGE_RATE;
   }, [isRebook]);
 
   const effectiveCompanyMileageRate = useMemo(() => {
-    return isRebook
-      ? CUSTOMER_MILEAGE_RATE * REBOOK_COMPANY_MILEAGE_MULTIPLIER
-      : CUSTOMER_MILEAGE_RATE - INSTALLER_MILEAGE_RATE;
-  }, [isRebook]);
+    return Number(
+      Math.max(0, effectiveCustomerMileageRate - effectiveInstallerMileageRate).toFixed(2)
+    );
+  }, [effectiveCustomerMileageRate, effectiveInstallerMileageRate]);
 
   const installerMileagePayout = useMemo(() => {
     return Number((chargeableKm * effectiveInstallerMileageRate).toFixed(2));
@@ -852,8 +914,7 @@ function BookPageContent() {
       isRebookMileage: isRebook,
     });
 
-    const returnPay =
-      isRebook && returnFeeRequired ? RETURN_FEE_INSTALLER_PAY : 0;
+    const returnPay = isRebook && returnFeeRequired ? RETURN_FEE_INSTALLER_PAY : 0;
 
     return Number((basePay + returnPay).toFixed(2));
   }, [
@@ -981,10 +1042,7 @@ function BookPageContent() {
 
   const combinedCustomerTotal = useMemo(() => {
     return Number(
-      (
-        (customerTotal || 0) +
-        (showSecondJob ? secondJobCustomerTotal || 0 : 0)
-      ).toFixed(2)
+      ((customerTotal || 0) + (showSecondJob ? secondJobCustomerTotal || 0 : 0)).toFixed(2)
     );
   }, [customerTotal, secondJobCustomerTotal, showSecondJob]);
 
@@ -1016,9 +1074,38 @@ function BookPageContent() {
     combinedCustomerTotal,
   ]);
 
+  const resetPrimaryMileage = () => {
+    setMileageError("");
+    setOneWayKm(null);
+    setRoundTripKm(null);
+    setChargeableKm(0);
+    setMileageCharge(0);
+  };
+
+  const resetSecondMileage = () => {
+    setSecondJobMileageError("");
+    setSecondJobOneWayKm(null);
+    setSecondJobRoundTripKm(null);
+    setSecondJobChargeableKm(0);
+    setSecondJobMileageCharge(0);
+  };
+
   const calculateMileage = async () => {
-    if (!pickupAddress.trim() || !dropoffAddress.trim()) {
+    const pickup = pickupDetails.formattedAddress || pickupAddress;
+    const dropoff = dropoffDetails.formattedAddress || dropoffAddress;
+
+    if (!pickup.trim() || !dropoff.trim()) {
       setMileageError("Please enter both pick up and drop off address.");
+      return;
+    }
+
+    if (!isAddressSelected(pickupDetails)) {
+      setMileageError("Please select a valid pick up address from the suggestions.");
+      return;
+    }
+
+    if (!isAddressSelected(dropoffDetails)) {
+      setMileageError("Please select a valid drop off address from the suggestions.");
       return;
     }
 
@@ -1032,8 +1119,8 @@ function BookPageContent() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          pickupAddress,
-          dropoffAddress,
+          pickupAddress: pickup,
+          dropoffAddress: dropoff,
         }),
       });
 
@@ -1066,9 +1153,26 @@ function BookPageContent() {
   };
 
   const calculateSecondJobMileage = async () => {
-    if (!pickupAddress.trim() || !secondJobAddress.trim()) {
+    const pickup = pickupDetails.formattedAddress || pickupAddress;
+    const secondDropoff = secondJobDetails.formattedAddress || secondJobAddress;
+
+    if (!pickup.trim() || !secondDropoff.trim()) {
       setSecondJobMileageError(
         "Please enter first job pick up address and second job address."
+      );
+      return;
+    }
+
+    if (!isAddressSelected(pickupDetails)) {
+      setSecondJobMileageError(
+        "Please select a valid first job pick up address from the suggestions."
+      );
+      return;
+    }
+
+    if (!isAddressSelected(secondJobDetails)) {
+      setSecondJobMileageError(
+        "Please select a valid second job address from the suggestions."
       );
       return;
     }
@@ -1083,8 +1187,8 @@ function BookPageContent() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          pickupAddress,
-          dropoffAddress: secondJobAddress,
+          pickupAddress: pickup,
+          dropoffAddress: secondDropoff,
         }),
       });
 
@@ -1142,6 +1246,16 @@ function BookPageContent() {
       return;
     }
 
+    if (!isAddressSelected(pickupDetails)) {
+      alert("Please select a valid pick up address from the suggestions.");
+      return;
+    }
+
+    if (!isAddressSelected(dropoffDetails)) {
+      alert("Please select a valid drop off address from the suggestions.");
+      return;
+    }
+
     if (!timeline) {
       alert("Please select a timeline.");
       return;
@@ -1180,6 +1294,11 @@ function BookPageContent() {
     if (showSecondJob) {
       if (!secondJobAddress.trim()) {
         alert("Please enter second job address.");
+        return;
+      }
+
+      if (!isAddressSelected(secondJobDetails)) {
+        alert("Please select a valid second job address from the suggestions.");
         return;
       }
 
@@ -1246,8 +1365,23 @@ function BookPageContent() {
       customerEmail,
       companyName,
       phoneNumber,
-      pickupAddress,
-      dropoffAddress,
+
+      pickupAddress: pickupDetails.formattedAddress || pickupAddress,
+      pickupCity: pickupDetails.city || "",
+      pickupProvince: pickupDetails.province || "",
+      pickupPostalCode: pickupDetails.postalCode || "",
+      pickupCountry: pickupDetails.country || "",
+      pickupLat: pickupDetails.lat !== null ? String(pickupDetails.lat) : "",
+      pickupLng: pickupDetails.lng !== null ? String(pickupDetails.lng) : "",
+
+      dropoffAddress: dropoffDetails.formattedAddress || dropoffAddress,
+      dropoffCity: dropoffDetails.city || "",
+      dropoffProvince: dropoffDetails.province || "",
+      dropoffPostalCode: dropoffDetails.postalCode || "",
+      dropoffCountry: dropoffDetails.country || "",
+      dropoffLat: dropoffDetails.lat !== null ? String(dropoffDetails.lat) : "",
+      dropoffLng: dropoffDetails.lng !== null ? String(dropoffDetails.lng) : "",
+
       timeline,
       scheduledDate,
       pickupTimeSlot,
@@ -1255,10 +1389,12 @@ function BookPageContent() {
       jobSize,
       sqft: String(sqft),
       sideNote,
+
       oneWayKm: oneWayKm !== null ? String(oneWayKm) : "",
       roundTripKm: roundTripKm !== null ? String(roundTripKm) : "",
       chargeableKm: String(chargeableKm),
       mileageCharge: String(mileageCharge),
+
       addOnServices: formattedSelectedAddOns.join(" | "),
       justServices: selectedJustServices.join(" | "),
       additionalServices: allAdditionalServices.join(" | "),
@@ -1272,12 +1408,23 @@ function BookPageContent() {
       platformMileageProfit: String(platformMileageProfit),
       customerTotal: String(customerTotal),
       installerTotalPayout: String(installerPay),
+
       waterfallQuantity: String(waterfallQtyNumber),
       outletPlugCutoutQuantity: String(outletPlugCutoutQtyNumber),
       disposalResponsibility,
 
       showSecondJob: String(showSecondJob),
-      secondJobAddress,
+
+      secondJobAddress: secondJobDetails.formattedAddress || secondJobAddress,
+      secondJobCity: secondJobDetails.city || "",
+      secondJobProvince: secondJobDetails.province || "",
+      secondJobPostalCode: secondJobDetails.postalCode || "",
+      secondJobCountry: secondJobDetails.country || "",
+      secondJobLat:
+        secondJobDetails.lat !== null ? String(secondJobDetails.lat) : "",
+      secondJobLng:
+        secondJobDetails.lng !== null ? String(secondJobDetails.lng) : "",
+
       secondJobDate,
       secondJobPickupTimeSlot,
       secondJobSqft,
@@ -1285,6 +1432,7 @@ function BookPageContent() {
       secondJobSideNote,
       secondJobAddOns: formattedSecondJobAddOns.join(" | "),
       secondJobJustServices: secondJobJustServices.join(" | "),
+
       secondJobOneWayKm:
         secondJobOneWayKm !== null ? String(secondJobOneWayKm) : "",
       secondJobRoundTripKm:
@@ -1315,6 +1463,7 @@ function BookPageContent() {
         isRebook && returnFeeRequired ? String(RETURN_FEE_CUSTOMER) : "0",
       returnFeeInstallerPay:
         isRebook && returnFeeRequired ? String(RETURN_FEE_INSTALLER_PAY) : "0",
+
       discountedMileageMode: String(isRebook),
       discountedCustomerMileageRate: String(effectiveCustomerMileageRate),
       discountedInstallerMileageRate: String(effectiveInstallerMileageRate),
@@ -1341,7 +1490,6 @@ function BookPageContent() {
           <h1 className="mb-2 text-3xl font-bold text-yellow-500 md:text-4xl">
             {isRebook ? "Rebook Job" : "Book Installation / Services"}
           </h1>
-
           <p className="text-zinc-300">
             {isRebook
               ? "Review the return visit details, discounted mileage, and continue to checkout."
@@ -1359,8 +1507,8 @@ function BookPageContent() {
               <p>Reason: {rebookReason || "-"}</p>
               <p>Customer Mileage Discount: 40%</p>
               <p>Customer Pays: 60% of mileage</p>
-              <p>Installer Gets: 50% of mileage</p>
-              <p>Company Keeps: 10% of mileage</p>
+              <p>Installer Gets: 50% of installer mileage rate</p>
+              <p>Company Keeps: Customer mileage minus installer mileage</p>
               {returnFeeRequired ? (
                 <p className="font-semibold text-yellow-400">
                   Return Trip Fee: ${RETURN_FEE_CUSTOMER.toFixed(2)}
@@ -1381,6 +1529,7 @@ function BookPageContent() {
                 onChange={(e) => setCustomerName(e.target.value)}
                 className="w-full rounded-xl border border-zinc-700 bg-black p-3"
               />
+
               <input
                 type="email"
                 placeholder="Customer Email"
@@ -1388,6 +1537,7 @@ function BookPageContent() {
                 onChange={(e) => setCustomerEmail(e.target.value)}
                 className="w-full rounded-xl border border-zinc-700 bg-black p-3"
               />
+
               <input
                 type="text"
                 placeholder="Company Name"
@@ -1395,6 +1545,7 @@ function BookPageContent() {
                 onChange={(e) => setCompanyName(e.target.value)}
                 className="w-full rounded-xl border border-zinc-700 bg-black p-3"
               />
+
               <input
                 type="tel"
                 placeholder="Phone Number"
@@ -1402,19 +1553,47 @@ function BookPageContent() {
                 onChange={(e) => setPhoneNumber(e.target.value)}
                 className="w-full rounded-xl border border-zinc-700 bg-black p-3"
               />
-              <input
-                type="text"
+
+              <AddressAutocomplete
+                hideLabel
                 placeholder="Drop Off Address"
                 value={dropoffAddress}
-                onChange={(e) => setDropoffAddress(e.target.value)}
-                className="w-full rounded-xl border border-zinc-700 bg-black p-3"
+                onChangeText={(value) => {
+                  setDropoffAddress(value);
+                  setDropoffDetails({
+                    ...emptyAddress,
+                    formattedAddress: value,
+                  });
+                  resetPrimaryMileage();
+                }}
+                onSelectAddress={(address) => {
+                  setDropoffAddress(address.formattedAddress);
+                  setDropoffDetails(address);
+                  resetPrimaryMileage();
+                }}
+                inputClassName="w-full rounded-xl border border-zinc-700 bg-black p-3"
               />
-              <input
-                type="text"
+
+              <AddressAutocomplete
+                hideLabel
                 placeholder="Pick Up Address"
                 value={pickupAddress}
-                onChange={(e) => setPickupAddress(e.target.value)}
-                className="w-full rounded-xl border border-zinc-700 bg-black p-3"
+                onChangeText={(value) => {
+                  setPickupAddress(value);
+                  setPickupDetails({
+                    ...emptyAddress,
+                    formattedAddress: value,
+                  });
+                  resetPrimaryMileage();
+                  resetSecondMileage();
+                }}
+                onSelectAddress={(address) => {
+                  setPickupAddress(address.formattedAddress);
+                  setPickupDetails(address);
+                  resetPrimaryMileage();
+                  resetSecondMileage();
+                }}
+                inputClassName="w-full rounded-xl border border-zinc-700 bg-black p-3"
               />
             </div>
           </div>
@@ -1427,6 +1606,8 @@ function BookPageContent() {
               <p>• Distance Tier: {distanceTierLabel}</p>
               <p>• AI Recommended Installer: {recommendedInstallerType}</p>
               <p>• Max Service Distance: {MAX_SERVICE_DISTANCE_KM} km one-way</p>
+              {pickupDetails.city ? <p>• Pick Up City: {pickupDetails.city}</p> : null}
+              {dropoffDetails.city ? <p>• Drop Off City: {dropoffDetails.city}</p> : null}
               {paymentGuidance.map((note) => (
                 <p key={note}>• {note}</p>
               ))}
@@ -1438,9 +1619,11 @@ function BookPageContent() {
               title="Mileage Calculation"
               subtitle={
                 isRebook
-                  ? `Round-trip mileage rules: first 120 km total is free. Over 120 km up to 320 km is charged only on the extra km. Rebook mileage rate is discounted to $${effectiveCustomerMileageRate.toFixed(
+                  ? `Round-trip mileage rules: first 120 km total is free. Over 120 km up to 320 km is charged only on the extra km. Rebook customer mileage is $${effectiveCustomerMileageRate.toFixed(
                       2
-                    )}/km for the customer.`
+                    )}/km, installer mileage is $${effectiveInstallerMileageRate.toFixed(
+                      2
+                    )}/km.`
                   : `Round-trip mileage rules: first 120 km total is free. Over 120 km up to 320 km is charged only on the extra km. Standard customer mileage rate is $${CUSTOMER_MILEAGE_RATE.toFixed(
                       2
                     )}/km.`
@@ -1584,10 +1767,7 @@ function BookPageContent() {
                 <div className="space-y-2 text-sm text-gray-300">
                   <p>• Service: {pricingConfig.label || "-"}</p>
                   <p>• Square Footage: {sqft}</p>
-                  <p>
-                    • Customer Rate: ${pricingConfig.customerRate.toFixed(2)}
-                    /sqft
-                  </p>
+                  <p>• Customer Rate: ${pricingConfig.customerRate.toFixed(2)} /sqft</p>
                   <p className="font-semibold text-yellow-400">
                     • Service Price: ${servicePrice.toFixed(2)}
                   </p>
@@ -1602,9 +1782,7 @@ function BookPageContent() {
                       key={service}
                       className="flex items-center justify-between rounded-xl border border-zinc-700 bg-black p-4"
                     >
-                      <span className="pr-4 text-sm text-gray-300">
-                        {service}
-                      </span>
+                      <span className="pr-4 text-sm text-gray-300">{service}</span>
                       <input
                         type="checkbox"
                         checked={selectedAddOns.includes(service)}
@@ -1640,7 +1818,9 @@ function BookPageContent() {
                       min="1"
                       step="1"
                       value={outletPlugCutoutQuantity}
-                      onChange={(e) => setOutletPlugCutoutQuantity(e.target.value)}
+                      onChange={(e) =>
+                        setOutletPlugCutoutQuantity(e.target.value)
+                      }
                       className="w-full rounded-xl border border-zinc-700 bg-black p-3"
                     />
                   </div>
@@ -1657,16 +1837,21 @@ function BookPageContent() {
                           type="radio"
                           name="disposalResponsibility"
                           checked={disposalResponsibility === "customer"}
-                          onChange={() => setDisposalResponsibility("customer")}
+                          onChange={() =>
+                            setDisposalResponsibility("customer")
+                          }
                         />
                         <span>Customer / Shop Responsible for Disposal</span>
                       </label>
+
                       <label className="flex items-center gap-2">
                         <input
                           type="radio"
                           name="disposalResponsibility"
                           checked={disposalResponsibility === "installer"}
-                          onChange={() => setDisposalResponsibility("installer")}
+                          onChange={() =>
+                            setDisposalResponsibility("installer")
+                          }
                         />
                         <span>Installer Responsible for Disposal</span>
                       </label>
@@ -1761,11 +1946,13 @@ function BookPageContent() {
                 <h2 className="text-xl font-semibold text-yellow-500">
                   Second Job
                 </h2>
+
                 <button
                   type="button"
                   onClick={() => {
                     setShowSecondJob(false);
                     setSecondJobAddress("");
+                    setSecondJobDetails(emptyAddress);
                     setSecondJobDate("");
                     setSecondJobPickupTimeSlot("");
                     setSecondJobSqft("");
@@ -1788,12 +1975,24 @@ function BookPageContent() {
                 </button>
               </div>
 
-              <input
-                type="text"
+              <AddressAutocomplete
+                hideLabel
                 placeholder="Second Job Address"
                 value={secondJobAddress}
-                onChange={(e) => setSecondJobAddress(e.target.value)}
-                className="w-full rounded-xl border border-zinc-700 bg-zinc-900 p-3"
+                onChangeText={(value) => {
+                  setSecondJobAddress(value);
+                  setSecondJobDetails({
+                    ...emptyAddress,
+                    formattedAddress: value,
+                  });
+                  resetSecondMileage();
+                }}
+                onSelectAddress={(address) => {
+                  setSecondJobAddress(address.formattedAddress);
+                  setSecondJobDetails(address);
+                  resetSecondMileage();
+                }}
+                inputClassName="w-full rounded-xl border border-zinc-700 bg-zinc-900 p-3"
               />
 
               <input
@@ -1877,7 +2076,6 @@ function BookPageContent() {
                     <h3 className="mb-3 text-lg font-semibold text-yellow-500">
                       Second Job Add-On Services
                     </h3>
-
                     <div className="grid gap-3 md:grid-cols-2">
                       {ADD_ON_SERVICES.map((service) => (
                         <label
@@ -1937,7 +2135,6 @@ function BookPageContent() {
                         <p className="mb-2 font-semibold text-yellow-400">
                           Second Job Disposal Responsibility
                         </p>
-
                         <div className="space-y-2 text-sm text-gray-300">
                           <label className="flex items-center gap-2">
                             <input
@@ -1975,7 +2172,6 @@ function BookPageContent() {
                         <p className="mb-2 font-semibold text-yellow-400">
                           Selected Second Job Add-On Services
                         </p>
-
                         <div className="space-y-1 text-sm text-gray-300">
                           {formattedSecondJobAddOns.map((service) => (
                             <p key={`second-job-selected-${service}`}>
@@ -1983,7 +2179,6 @@ function BookPageContent() {
                             </p>
                           ))}
                         </div>
-
                         <p className="mt-3 font-semibold text-yellow-400">
                           Add-On Service Total: ${secondJobAddOnTotal.toFixed(2)}
                         </p>
@@ -1998,7 +2193,6 @@ function BookPageContent() {
                   <h3 className="mb-3 text-lg font-semibold text-yellow-500">
                     Second Job Just Services
                   </h3>
-
                   <div className="grid gap-3 md:grid-cols-2">
                     {JUST_SERVICES.map((service) => (
                       <label
@@ -2022,7 +2216,6 @@ function BookPageContent() {
                       <p className="mb-2 font-semibold text-yellow-400">
                         Selected Second Job Just Services
                       </p>
-
                       <div className="space-y-1 text-sm text-gray-300">
                         {secondJobJustServices.map((service) => (
                           <p key={`second-job-just-selected-${service}`}>
@@ -2030,7 +2223,6 @@ function BookPageContent() {
                           </p>
                         ))}
                       </div>
-
                       <p className="mt-3 font-semibold text-yellow-400">
                         Just Service Minimum: $
                         {secondJobJustServiceTotal.toFixed(2)}
@@ -2044,7 +2236,6 @@ function BookPageContent() {
                 <h3 className="mb-3 text-lg font-semibold text-yellow-500">
                   Second Job Mileage Calculation
                 </h3>
-
                 <button
                   type="button"
                   onClick={calculateSecondJobMileage}
