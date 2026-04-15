@@ -5,6 +5,8 @@ const AI_CONFIG = {
   maxServiceDistanceKm: 200,
 };
 
+const HST_RATE = 0.13;
+
 type BookingPayload = {
   customerName?: string;
   customerEmail?: string;
@@ -45,6 +47,33 @@ type BookingPayload = {
   hst?: number | string;
   finalTotal?: number | string;
 
+  customerSubtotal?: number | string;
+  customerHst?: number | string;
+  customerTotal?: number | string;
+
+  companySubtotal?: number | string;
+  companyHst?: number | string;
+
+  timelineCharge?: number | string;
+  servicePrice?: number | string;
+  customerAddOnTotal?: number | string;
+  customerJustServiceTotal?: number | string;
+  customerMileageCharge?: number | string;
+  mileageCharge?: number | string;
+  customerSqftRate?: number | string;
+
+  installerServicePayout?: number | string;
+  installerBasePay?: number | string;
+  installerMileagePay?: number | string;
+  installerAddonPay?: number | string;
+  installerJustServicePay?: number | string;
+  installerCutPolishPay?: number | string;
+  installerSinkPay?: number | string;
+  installerOtherPay?: number | string;
+  installerSubtotalPay?: number | string;
+  installerHstPay?: number | string;
+  installerReturnPay?: number | string;
+
   jobGroupId?: string | number;
   jobNumber?: number | string;
 
@@ -66,15 +95,6 @@ type BookingPayload = {
   waterfallQuantity?: number | string;
   outletPlugCutoutQuantity?: number | string;
   disposalResponsibility?: string;
-
-  installerBasePay?: number | string;
-  installerMileagePay?: number | string;
-  installerAddonPay?: number | string;
-  installerCutPolishPay?: number | string;
-  installerSinkPay?: number | string;
-  installerOtherPay?: number | string;
-  installerSubtotalPay?: number | string;
-  installerHstPay?: number | string;
 
   completedPhotoUrl?: string;
   completionSignatureUrl?: string;
@@ -99,6 +119,10 @@ type BookingPayload = {
 
   secondJob?: BookingPayload | null;
 };
+
+function round2(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
 
 function toNumber(value: unknown, fallback = 0) {
   const parsed = Number(value);
@@ -128,9 +152,7 @@ function toBoolean(value: unknown) {
 
 function toArray(value: unknown): string[] {
   if (Array.isArray(value)) {
-    return value
-      .map((item) => String(item).trim())
-      .filter(Boolean);
+    return value.map((item) => String(item).trim()).filter(Boolean);
   }
 
   if (typeof value === "string") {
@@ -212,11 +234,10 @@ function getRecommendedInstallerType(params: {
   return "Standard Installer";
 }
 
-function buildAiFields(payload: BookingPayload, hasSecondJob: boolean) {
+function buildAiFields(payload: BookingPayload, hasSecondJob: boolean, finalTotal: number) {
   const oneWayKm = toNumber(payload.oneWayKm);
   const sqft = toNumber(payload.sqft || payload.jobSize);
-  const finalTotal = toNumber(payload.finalTotal);
-  const mileageFee = toNumber(payload.mileageFee);
+  const mileageFee = toNumber(payload.mileageFee ?? payload.customerMileageCharge ?? payload.mileageCharge);
   const timeline = String(payload.timeline || "").toLowerCase();
   const sameDay = timeline.includes("same");
   const nextDay = timeline.includes("next");
@@ -284,6 +305,121 @@ function makeJobId(groupId: string | number, jobNumber: number) {
   return `JOB-${groupId}-${jobNumber}`;
 }
 
+function normalizeMoneyPayload(payload: BookingPayload) {
+  const rawCustomerSubtotal = toNumber(
+    payload.customerSubtotal ?? payload.subtotal
+  );
+
+  const rawCustomerHst = toNumber(
+    payload.customerHst ?? payload.hst
+  );
+
+  const rawCustomerTotal = toNumber(
+    payload.customerTotal ?? payload.finalTotal
+  );
+
+  const customerSubtotal =
+    rawCustomerSubtotal > 0
+      ? round2(rawCustomerSubtotal)
+      : round2(
+          toNumber(payload.servicePrice) +
+            toNumber(payload.customerAddOnTotal) +
+            toNumber(payload.customerJustServiceTotal) +
+            toNumber(payload.customerMileageCharge ?? payload.mileageCharge ?? payload.mileageFee) +
+            toNumber(payload.timelineCharge) +
+            toNumber(payload.returnFeeCharged ?? payload.returnFee)
+        );
+
+  const customerHst =
+    rawCustomerHst > 0 ? round2(rawCustomerHst) : round2(customerSubtotal * HST_RATE);
+
+  const customerTotal =
+    rawCustomerTotal > 0 ? round2(rawCustomerTotal) : round2(customerSubtotal + customerHst);
+
+  const installerBasePay = round2(
+    toNumber(payload.installerBasePay ?? payload.installerServicePayout)
+  );
+  const installerMileagePay = round2(toNumber(payload.installerMileagePay));
+  const installerAddonPay = round2(toNumber(payload.installerAddonPay));
+  const installerJustServicePay = round2(toNumber(payload.installerJustServicePay));
+  const installerCutPolishPay = round2(toNumber(payload.installerCutPolishPay));
+  const installerSinkPay = round2(toNumber(payload.installerSinkPay));
+  const installerOtherPay = round2(toNumber(payload.installerOtherPay));
+
+  const rawInstallerSubtotal = toNumber(payload.installerSubtotalPay);
+  const rawInstallerHst = toNumber(payload.installerHstPay);
+  const rawInstallerReturnPay = toNumber(
+    payload.installerReturnPay ?? payload.returnFeeInstallerPay
+  );
+  const rawInstallerTotal = toNumber(payload.installerPay);
+
+  const installerSubtotalPay =
+    rawInstallerSubtotal > 0
+      ? round2(rawInstallerSubtotal)
+      : round2(
+          installerBasePay +
+            installerMileagePay +
+            installerAddonPay +
+            installerJustServicePay +
+            installerCutPolishPay +
+            installerSinkPay +
+            installerOtherPay
+        );
+
+  const installerHstPay =
+    rawInstallerHst > 0
+      ? round2(rawInstallerHst)
+      : round2(installerSubtotalPay * HST_RATE);
+
+  const installerReturnPay = round2(rawInstallerReturnPay);
+
+  const installerPay =
+    rawInstallerTotal > 0
+      ? round2(rawInstallerTotal)
+      : round2(installerSubtotalPay + installerHstPay + installerReturnPay);
+
+  const rawCompanySubtotal = toNumber(payload.companySubtotal);
+  const rawCompanyHst = toNumber(payload.companyHst);
+  const rawCompanyProfit = toNumber(payload.companyProfit);
+
+  const companySubtotal =
+    rawCompanySubtotal !== 0
+      ? round2(rawCompanySubtotal)
+      : round2(customerSubtotal - installerSubtotalPay);
+
+  const companyHst =
+    rawCompanyHst !== 0
+      ? round2(rawCompanyHst)
+      : round2(customerHst - installerHstPay);
+
+  const companyProfit =
+    rawCompanyProfit !== 0
+      ? round2(rawCompanyProfit)
+      : round2(customerTotal - installerPay);
+
+  return {
+    customerSubtotal,
+    customerHst,
+    customerTotal,
+
+    installerBasePay,
+    installerMileagePay,
+    installerAddonPay,
+    installerJustServicePay,
+    installerCutPolishPay,
+    installerSinkPay,
+    installerOtherPay,
+    installerSubtotalPay,
+    installerHstPay,
+    installerReturnPay,
+    installerPay,
+
+    companySubtotal,
+    companyHst,
+    companyProfit,
+  };
+}
+
 function buildBookingRow(
   payload: BookingPayload,
   options: {
@@ -296,24 +432,22 @@ function buildBookingRow(
   const serviceTypeLabel =
     toNullableString(payload.serviceTypeLabel) || getServiceTypeLabel(serviceType);
 
-  const finalTotal = toNumber(payload.finalTotal);
-  const installerPay = toNumber(payload.installerPay);
-  const companyProfit =
-    payload.companyProfit !== undefined && payload.companyProfit !== null
-      ? toNumber(payload.companyProfit)
-      : finalTotal - installerPay;
-
+  const money = normalizeMoneyPayload(payload);
   const status = toNullableString(payload.status) || "available";
   const paymentStatus = toNullableString(payload.paymentStatus) || "pending";
   const installerPayStatus =
     toNullableString(payload.installerPayStatus) ||
-    (installerPay > 0 ? "unpaid" : null);
+    (money.installerPay > 0 ? "unpaid" : null);
 
   const jobId =
     toNullableString((payload as { jobId?: string }).jobId) ||
     makeJobId(options.jobGroupId, options.jobNumber);
 
-  const aiFields = buildAiFields(payload, options.hasSecondJob);
+  const aiFields = buildAiFields(payload, options.hasSecondJob, money.customerTotal);
+
+  const customerMileageCharge = round2(
+    toNumber(payload.customerMileageCharge ?? payload.mileageCharge ?? payload.mileageFee)
+  );
 
   return {
     job_id: jobId,
@@ -347,16 +481,16 @@ function buildBookingRow(
 
     installer_name: toNullableString(payload.installerName),
     reassigned_installer_name: toNullableString(payload.reassignedInstallerName),
-    installer_pay: toNullableNumber(payload.installerPay),
+    installer_pay: money.installerPay,
     installer_pay_status: installerPayStatus,
-    company_profit: companyProfit,
+    company_profit: money.companyProfit,
 
     notes: toNullableString(payload.notes),
     side_note: toNullableString(payload.sideNote),
 
-    subtotal: toNullableNumber(payload.subtotal),
-    hst: toNullableNumber(payload.hst),
-    final_total: toNullableNumber(payload.finalTotal),
+    subtotal: money.customerSubtotal,
+    hst: money.customerHst,
+    final_total: money.customerTotal,
 
     job_group_id: String(options.jobGroupId),
     job_number: options.jobNumber,
@@ -366,10 +500,10 @@ function buildBookingRow(
     incomplete_notes: toNullableString(payload.incompleteNotes),
     incomplete_photo_url: toNullableString(payload.incompletePhotoUrl),
 
-    return_fee: toNullableNumber(payload.returnFee),
-    return_fee_charged: toNullableNumber(payload.returnFeeCharged),
-    return_fee_installer_pay: toNullableNumber(payload.returnFeeInstallerPay),
-    mileage_fee: toNullableNumber(payload.mileageFee),
+    return_fee: toNullableNumber(payload.returnFee ?? payload.returnFeeCharged),
+    return_fee_charged: toNullableNumber(payload.returnFeeCharged ?? payload.returnFee),
+    return_fee_installer_pay: money.installerReturnPay,
+    mileage_fee: customerMileageCharge,
     admin_fee_note: toNullableString(payload.adminFeeNote),
     redo_requested: toBoolean(payload.redoRequested),
 
@@ -380,14 +514,14 @@ function buildBookingRow(
     outlet_plug_cutout_quantity: toNullableNumber(payload.outletPlugCutoutQuantity),
     disposal_responsibility: toNullableString(payload.disposalResponsibility),
 
-    installer_base_pay: toNullableNumber(payload.installerBasePay),
-    installer_mileage_pay: toNullableNumber(payload.installerMileagePay),
-    installer_addon_pay: toNullableNumber(payload.installerAddonPay),
-    installer_cut_polish_pay: toNullableNumber(payload.installerCutPolishPay),
-    installer_sink_pay: toNullableNumber(payload.installerSinkPay),
-    installer_other_pay: toNullableNumber(payload.installerOtherPay),
-    installer_subtotal_pay: toNullableNumber(payload.installerSubtotalPay),
-    installer_hst_pay: toNullableNumber(payload.installerHstPay),
+    installer_base_pay: money.installerBasePay,
+    installer_mileage_pay: money.installerMileagePay,
+    installer_addon_pay: round2(money.installerAddonPay + money.installerJustServicePay),
+    installer_cut_polish_pay: money.installerCutPolishPay,
+    installer_sink_pay: money.installerSinkPay,
+    installer_other_pay: money.installerOtherPay,
+    installer_subtotal_pay: money.installerSubtotalPay,
+    installer_hst_pay: money.installerHstPay,
 
     completed_photo_url: toNullableString(payload.completedPhotoUrl),
     completion_signature_url: toNullableString(payload.completionSignatureUrl),
@@ -397,7 +531,7 @@ function buildBookingRow(
     installer_payout_lines: Array.isArray(payload.installerPayoutLines)
       ? payload.installerPayoutLines.map((line) => ({
           label: toNullableString(line?.label) || "Payout Line",
-          amount: toNumber(line?.amount),
+          amount: round2(toNumber(line?.amount)),
         }))
       : null,
 
@@ -456,7 +590,7 @@ export async function POST(req: Request) {
           toNullableString(data.secondJob.pickupAddress) ||
           toNullableString(data.secondJob.dropoffAddress) ||
           toNullableString(data.secondJob.serviceType) ||
-          toNumber(data.secondJob.finalTotal) > 0
+          toNumber(data.secondJob.finalTotal ?? data.secondJob.customerTotal) > 0
         )
     );
 
