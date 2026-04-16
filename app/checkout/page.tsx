@@ -1,28 +1,24 @@
-"use client";
+use client";
 
 export const dynamic = "force-dynamic";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { loadStripe } from "@stripe/stripe-js";
-import { createClient } from "@/utils/supabase/client";
 
-const stripePromise = loadStripe(
-  process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || ""
-);
-
-const HST_RATE = 0.13;
 const CUSTOMER_JUST_SERVICE_MINIMUM = 220;
 const INSTALLER_JUST_SERVICE_MINIMUM = 160;
+
 const CUSTOMER_MILEAGE_RATE = 1.5;
 const INSTALLER_MILEAGE_RATE = 1.0;
+
 const RETURN_FEE_CUSTOMER = 200;
 const RETURN_FEE_INSTALLER_PAY = 180;
+
 const REBOOK_CUSTOMER_MILEAGE_MULTIPLIER = 0.6;
 const REBOOK_INSTALLER_MILEAGE_MULTIPLIER = 0.5;
-const MAX_SERVICE_DISTANCE_KM = 200;
+const REBOOK_COMPANY_MILEAGE_MULTIPLIER = 0.1;
 
-const ADMIN_EMAIL = "ultrapropm@gmail.com";
+const MAX_SERVICE_DISTANCE_KM = 200;
 
 type MainServiceType =
   | ""
@@ -33,14 +29,6 @@ type MainServiceType =
   | "justServices";
 
 type DisposalResponsibility = "customer" | "installer";
-
-type PaymentMethod =
-  | ""
-  | "creditDebit"
-  | "etransfer"
-  | "cashPickup"
-  | "chequePickup"
-  | "weeklyInvoice";
 
 type ServicePricingConfig = {
   customerRate: number;
@@ -54,8 +42,6 @@ type SavedCustomerProfile = {
   companyName?: string;
   phoneNumber?: string;
 };
-
-type CheckoutDraft = Record<string, any>;
 
 const MAIN_SERVICE_PRICING: Record<
   Exclude<MainServiceType, "" | "justServices">,
@@ -137,52 +123,28 @@ function parsePositiveNumber(value: string | number | null | undefined) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
-function round2(value: number) {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
-
-function money(value: number) {
-  return `$${round2(value).toFixed(2)}`;
-}
-
-function safeString(value: unknown) {
-  return typeof value === "string" ? value : "";
-}
-
-function safeBool(value: unknown) {
-  return value === true || value === "true";
-}
-
-function toArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(String).filter(Boolean);
-  if (typeof value === "string") {
-    return value
-      .split(" | ")
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-  return [];
-}
-
-function getTimelineCharge(timeline: string) {
-  if (timeline === "sameDay") return 210;
-  if (timeline === "nextDay") return 150;
-  return 0;
-}
-
 function getChargeableKm(oneWayKm: number) {
   const safeOneWayKm = Number.isFinite(oneWayKm) && oneWayKm > 0 ? oneWayKm : 0;
   const roundTripKm = safeOneWayKm * 2;
 
   if (roundTripKm <= 120) {
-    return { roundTripKm, chargeableKm: 0 };
+    return {
+      roundTripKm,
+      chargeableKm: 0,
+    };
   }
 
   if (roundTripKm <= 320) {
-    return { roundTripKm, chargeableKm: roundTripKm - 120 };
+    return {
+      roundTripKm,
+      chargeableKm: roundTripKm - 120,
+    };
   }
 
-  return { roundTripKm, chargeableKm: roundTripKm };
+  return {
+    roundTripKm,
+    chargeableKm: roundTripKm,
+  };
 }
 
 function getSqftRates(serviceType: MainServiceType) {
@@ -216,18 +178,15 @@ function getCustomerAddOnPrice(params: {
   if (service === "sink cutout") return 180;
   if (service === "waterfall") return 100 * params.waterfallQuantity;
   if (service === "extra helper needed") return 200;
-
   if (service === "outlet plug cutout") {
     return 50 * params.outletPlugCutoutQuantity;
   }
-
   if (
     service === "granite / marble sealing" ||
     service === "granite/marble sealing"
   ) {
     return 50;
   }
-
   if (service === "cooktop cutout") return 180;
   if (service === "condo / high-rise") return 80;
   if (service === "difficult / stairs 7+ / basement") return 180;
@@ -235,23 +194,18 @@ function getCustomerAddOnPrice(params: {
   if (service === "full countertop template") return 300;
   if (service === "remeasure backsplash - full height") return 180;
   if (service === "remeasure backsplash - low height") return 80;
-
   if (service === "remove and dispose laminate") {
     return params.disposalResponsibility === "installer" ? 350 : 175;
   }
-
   if (service === "remove and dispose stone") {
     return params.disposalResponsibility === "installer" ? 450 : 325;
   }
-
   if (service === "vanity removal") {
     return params.disposalResponsibility === "installer" ? 190 : 80;
   }
-
   if (service === "backsplash tile removal") {
     return params.disposalResponsibility === "installer" ? 480 : 300;
   }
-
   if (service === "removal") return 60;
 
   return extractPrice(params.service);
@@ -271,18 +225,15 @@ function getInstallerAddOnPrice(params: {
   if (service === "sink cutout") return 100;
   if (service === "waterfall") return 60 * params.waterfallQuantity;
   if (service === "extra helper needed") return 110;
-
   if (service === "outlet plug cutout") {
     return 25 * params.outletPlugCutoutQuantity;
   }
-
   if (
     service === "granite / marble sealing" ||
     service === "granite/marble sealing"
   ) {
     return 25;
   }
-
   if (service === "cooktop cutout") return 100;
   if (service === "condo / high-rise") return 50;
   if (service === "difficult / stairs 7+ / basement") return 100;
@@ -290,23 +241,18 @@ function getInstallerAddOnPrice(params: {
   if (service === "full countertop template") return 215;
   if (service === "remeasure backsplash - full height") return 100;
   if (service === "remeasure backsplash - low height") return 50;
-
   if (service === "remove and dispose laminate") {
     return params.disposalResponsibility === "installer" ? 250 : 100;
   }
-
   if (service === "remove and dispose stone") {
     return params.disposalResponsibility === "installer" ? 325 : 200;
   }
-
   if (service === "vanity removal") {
     return params.disposalResponsibility === "installer" ? 110 : 40;
   }
-
   if (service === "backsplash tile removal") {
     return params.disposalResponsibility === "installer" ? 320 : 190;
   }
-
   if (service === "removal") return 0;
 
   return 0;
@@ -334,6 +280,83 @@ function calculateCustomerAddOnTotal(params: {
 function calculateCustomerJustServiceTotal(services: string[]) {
   if (services.length === 0) return 0;
   return CUSTOMER_JUST_SERVICE_MINIMUM;
+}
+
+function calculateInstallerPay(params: {
+  serviceType: MainServiceType;
+  sqft: number;
+  oneWayKm?: number | null;
+  addOns?: string[];
+  justServices?: string[];
+  waterfallQuantity: number;
+  outletPlugCutoutQuantity: number;
+  disposalResponsibility: DisposalResponsibility;
+  isRebookMileage?: boolean;
+}) {
+  const knownJustServicePrices: Record<string, number> = {
+    "extra cutting": 100,
+    "big polishing": 90,
+    "small polishing": 90,
+    "sink cutout": 100,
+    "outlet plug cutout": 25,
+    "cooktop cutout": 100,
+    "granite / marble sealing": 25,
+    "granite/marble sealing": 25,
+    plumbing: 25,
+    "drill holes": 25,
+    "silicone caulking": 25,
+    "reinstall sink": 100,
+    "fix chips": 50,
+    "fix seam": 50,
+    polishing: 90,
+  };
+
+  const normalizedJustServices = (params.justServices || []).map(
+    normalizeServiceName
+  );
+
+  const { installerRate } = getSqftRates(params.serviceType);
+
+  let total = 0;
+
+  if (installerRate > 0 && params.sqft > 0) {
+    total += params.sqft * installerRate;
+  }
+
+  (params.addOns || []).forEach((service) => {
+    total += getInstallerAddOnPrice({
+      service,
+      waterfallQuantity: params.waterfallQuantity,
+      outletPlugCutoutQuantity: params.outletPlugCutoutQuantity,
+      disposalResponsibility: params.disposalResponsibility,
+    });
+  });
+
+  let justServiceSubtotal = 0;
+
+  normalizedJustServices.forEach((service) => {
+    justServiceSubtotal += knownJustServicePrices[service] || 0;
+  });
+
+  if (
+    normalizedJustServices.length > 0 &&
+    justServiceSubtotal < INSTALLER_JUST_SERVICE_MINIMUM
+  ) {
+    justServiceSubtotal = INSTALLER_JUST_SERVICE_MINIMUM;
+  }
+
+  total += justServiceSubtotal;
+
+  if (params.oneWayKm && params.oneWayKm > 0) {
+    const { chargeableKm } = getChargeableKm(params.oneWayKm);
+    const mileageRate = params.isRebookMileage
+      ? CUSTOMER_MILEAGE_RATE * REBOOK_INSTALLER_MILEAGE_MULTIPLIER
+      : INSTALLER_MILEAGE_RATE;
+
+    total += chargeableKm * mileageRate;
+  }
+
+  return Number(total.toFixed(2));
 }
 
 function formatSelectedAddOnLabel(params: {
@@ -403,17 +426,6 @@ function loadCustomerProfile(): SavedCustomerProfile | null {
   }
 }
 
-function loadSessionDraft(): CheckoutDraft | null {
-  try {
-    const raw = sessionStorage.getItem("checkoutDraft");
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch (error) {
-    console.error("Failed to load checkout draft:", error);
-    return null;
-  }
-}
-
 function getDistanceTierLabel(oneWayKm: number, total: number) {
   if (oneWayKm <= 80) return "Local Zone";
   if (oneWayKm <= 120 && total >= 2500) return "Extended Zone";
@@ -422,7 +434,11 @@ function getDistanceTierLabel(oneWayKm: number, total: number) {
   return "Restricted Distance Zone";
 }
 
-function getPaymentGuidance(oneWayKm: number, total: number, companyName: string) {
+function getPaymentGuidance(
+  oneWayKm: number,
+  total: number,
+  companyName: string
+) {
   const notes: string[] = [];
 
   notes.push("Cash Pickup: up to 80km.");
@@ -436,9 +452,13 @@ function getPaymentGuidance(oneWayKm: number, total: number, companyName: string
       `This booking is outside the current max service distance of ${MAX_SERVICE_DISTANCE_KM} km.`
     );
   } else if (oneWayKm > 120 && total < 5000) {
-    notes.push("This distance likely needs a $5,000+ order for wider payment flexibility.");
+    notes.push(
+      "This distance likely needs a $5,000+ order for wider payment flexibility."
+    );
   } else if (oneWayKm > 80 && total < 2500) {
-    notes.push("This distance likely needs a $2,500+ order for local pickup payment flexibility.");
+    notes.push(
+      "This distance likely needs a $2,500+ order for local pickup payment flexibility."
+    );
   }
 
   if (!companyName.trim()) {
@@ -462,134 +482,7 @@ function getRecommendedInstallerType(params: {
   if (sqft >= 80) return "Large Project Specialist";
   if (serviceType === "installation_3cm") return "3cm Stone Specialist";
   if (serviceType === "full_height_backsplash") return "Backsplash Specialist";
-
   return "Standard Installer";
-}
-
-function getAllowedPaymentOptions(params: {
-  oneWayKm: number;
-  total: number;
-  companyName: string;
-}) {
-  const { oneWayKm, total, companyName } = params;
-
-  return {
-    creditDebit: true,
-    etransfer: true,
-    cashPickup:
-      oneWayKm <= 80 ||
-      (oneWayKm <= 120 && total >= 2500) ||
-      (oneWayKm <= 200 && total >= 5000),
-    chequePickup:
-      oneWayKm <= 50 ||
-      (oneWayKm <= 80 && total >= 2500) ||
-      (oneWayKm <= 120 && total >= 5000),
-    weeklyInvoice: companyName.trim().length > 0 && total >= 2500,
-  };
-}
-
-function getBookingStatusFromPaymentMethod(paymentMethod: PaymentMethod) {
-  if (paymentMethod === "creditDebit") return "pending_payment";
-  if (paymentMethod === "weeklyInvoice") return "pending_invoice";
-  return "available";
-}
-
-function getPaymentMethodLabel(paymentMethod: PaymentMethod) {
-  if (paymentMethod === "creditDebit") return "Credit / Debit";
-  if (paymentMethod === "etransfer") return "E-Transfer";
-  if (paymentMethod === "cashPickup") return "Cash Pickup";
-  if (paymentMethod === "chequePickup") return "Cheque Pickup";
-  if (paymentMethod === "weeklyInvoice") return "Weekly Invoice";
-  return "-";
-}
-
-function buildCustomerConfirmationHtml(p: {
-  customerName: string;
-  customerEmail: string;
-  companyName: string;
-  bookingNumber: string;
-  paymentMethod: string;
-  total: number;
-  timeline: string;
-  scheduledDate: string;
-  pickupTimeSlot: string;
-  pickupAddress: string;
-  dropoffAddress: string;
-  serviceLabel: string;
-}) {
-  return `
-    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111">
-      <h2 style="color:#c9a227;">1800TOPS Booking Confirmation</h2>
-      <p>Hello ${p.customerName || "Customer"},</p>
-      <p>Your booking has been received.</p>
-      <p><strong>Booking ID:</strong> ${p.bookingNumber}</p>
-      <p><strong>Company:</strong> ${p.companyName || "-"}</p>
-      <p><strong>Email:</strong> ${p.customerEmail || "-"}</p>
-      <p><strong>Service:</strong> ${p.serviceLabel || "-"}</p>
-      <p><strong>Timeline:</strong> ${p.timeline || "-"}</p>
-      <p><strong>Scheduled Date:</strong> ${p.scheduledDate || "-"}</p>
-      <p><strong>Pickup Window:</strong> ${p.pickupTimeSlot || "-"}</p>
-      <p><strong>Pick Up:</strong> ${p.pickupAddress || "-"}</p>
-      <p><strong>Drop Off:</strong> ${p.dropoffAddress || "-"}</p>
-      <p><strong>Payment Method:</strong> ${p.paymentMethod}</p>
-      <p><strong>Total:</strong> ${money(p.total)}</p>
-      <p>Thank you for booking with 1800TOPS.</p>
-    </div>
-  `;
-}
-
-function buildAdminConfirmationHtml(p: {
-  customerName: string;
-  customerEmail: string;
-  companyName: string;
-  bookingNumber: string;
-  paymentMethod: string;
-  total: number;
-  timeline: string;
-  scheduledDate: string;
-  pickupTimeSlot: string;
-  pickupAddress: string;
-  dropoffAddress: string;
-  serviceLabel: string;
-  notes: string;
-}) {
-  return `
-    <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111">
-      <h2 style="color:#c9a227;">New 1800TOPS Booking</h2>
-      <p><strong>Booking ID:</strong> ${p.bookingNumber}</p>
-      <p><strong>Customer:</strong> ${p.customerName || "-"}</p>
-      <p><strong>Email:</strong> ${p.customerEmail || "-"}</p>
-      <p><strong>Company:</strong> ${p.companyName || "-"}</p>
-      <p><strong>Service:</strong> ${p.serviceLabel || "-"}</p>
-      <p><strong>Timeline:</strong> ${p.timeline || "-"}</p>
-      <p><strong>Scheduled Date:</strong> ${p.scheduledDate || "-"}</p>
-      <p><strong>Pickup Window:</strong> ${p.pickupTimeSlot || "-"}</p>
-      <p><strong>Pick Up:</strong> ${p.pickupAddress || "-"}</p>
-      <p><strong>Drop Off:</strong> ${p.dropoffAddress || "-"}</p>
-      <p><strong>Payment Method:</strong> ${p.paymentMethod}</p>
-      <p><strong>Total:</strong> ${money(p.total)}</p>
-      <p><strong>Notes:</strong> ${p.notes || "-"}</p>
-    </div>
-  `;
-}
-
-async function sendEmail(params: {
-  to: string;
-  subject: string;
-  html: string;
-}) {
-  const res = await fetch("/api/send-email", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(params),
-  });
-
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data?.error || "Email failed");
-  }
 }
 
 function SectionTitle({
@@ -607,33 +500,8 @@ function SectionTitle({
   );
 }
 
-function SummaryBox({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-xl border border-zinc-700 bg-black p-4">
-      <p className="mb-2 font-semibold text-yellow-400">{title}</p>
-      <div className="space-y-1 text-sm text-gray-300">{children}</div>
-    </div>
-  );
-}
-
 function CheckoutPageContent() {
   const searchParams = useSearchParams();
-  const supabase = useMemo(() => createClient(), []);
-
-  const [checkoutStep, setCheckoutStep] = useState<"form" | "review">("form");
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("");
-  const [submitting, setSubmitting] = useState(false);
-  const [stripeLoading, setStripeLoading] = useState(false);
-  const [loadError, setLoadError] = useState("");
-  const [bookingSaved, setBookingSaved] = useState(false);
-  const [savedBookingId, setSavedBookingId] = useState("");
-  const [confirmationReady, setConfirmationReady] = useState(false);
 
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
@@ -641,6 +509,7 @@ function CheckoutPageContent() {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [pickupAddress, setPickupAddress] = useState("");
   const [dropoffAddress, setDropoffAddress] = useState("");
+
   const [timeline, setTimeline] = useState("");
   const [scheduledDate, setScheduledDate] = useState("");
   const [pickupTimeSlot, setPickupTimeSlot] = useState("");
@@ -648,6 +517,8 @@ function CheckoutPageContent() {
   const [jobSize, setJobSize] = useState("");
   const [sideNote, setSideNote] = useState("");
 
+  const [mileageLoading, setMileageLoading] = useState(false);
+  const [mileageError, setMileageError] = useState("");
   const [oneWayKm, setOneWayKm] = useState<number | null>(null);
   const [roundTripKm, setRoundTripKm] = useState<number | null>(null);
   const [chargeableKm, setChargeableKm] = useState<number>(0);
@@ -669,17 +540,26 @@ function CheckoutPageContent() {
     useState<MainServiceType>("");
   const [secondJobSideNote, setSecondJobSideNote] = useState("");
   const [secondJobAddOns, setSecondJobAddOns] = useState<string[]>([]);
-  const [secondJobJustServices, setSecondJobJustServices] = useState<string[]>([]);
-  const [secondJobWaterfallQuantity, setSecondJobWaterfallQuantity] = useState("1");
-  const [secondJobOutletPlugCutoutQuantity, setSecondJobOutletPlugCutoutQuantity] =
+  const [secondJobJustServices, setSecondJobJustServices] = useState<string[]>(
+    []
+  );
+  const [secondJobWaterfallQuantity, setSecondJobWaterfallQuantity] =
     useState("1");
+  const [
+    secondJobOutletPlugCutoutQuantity,
+    setSecondJobOutletPlugCutoutQuantity,
+  ] = useState("1");
   const [secondJobDisposalResponsibility, setSecondJobDisposalResponsibility] =
     useState<DisposalResponsibility>("customer");
 
-  const [secondJobOneWayKm, setSecondJobOneWayKm] = useState<number | null>(null);
-  const [secondJobRoundTripKm, setSecondJobRoundTripKm] = useState<number | null>(
+  const [secondJobMileageLoading, setSecondJobMileageLoading] = useState(false);
+  const [secondJobMileageError, setSecondJobMileageError] = useState("");
+  const [secondJobOneWayKm, setSecondJobOneWayKm] = useState<number | null>(
     null
   );
+  const [secondJobRoundTripKm, setSecondJobRoundTripKm] = useState<
+    number | null
+  >(null);
   const [secondJobChargeableKm, setSecondJobChargeableKm] = useState<number>(0);
   const [secondJobMileageCharge, setSecondJobMileageCharge] = useState<number>(0);
 
@@ -688,197 +568,98 @@ function CheckoutPageContent() {
   const rebookReason = searchParams.get("reason") || "";
   const returnFeeRequired = searchParams.get("returnFee") === "true";
   const rebookDate = searchParams.get("date") || "";
-  const cancelled = searchParams.get("cancelled") === "true";
 
   useEffect(() => {
-    const step = searchParams.get("step");
-    setCheckoutStep(step === "review" ? "review" : "form");
-  }, [searchParams]);
-
-  useEffect(() => {
-    const draft = loadSessionDraft();
-
-    if (draft) {
-      setCustomerName(safeString(draft.customerName));
-      setCustomerEmail(safeString(draft.customerEmail));
-      setCompanyName(safeString(draft.companyName));
-      setPhoneNumber(safeString(draft.phoneNumber));
-      setPickupAddress(safeString(draft.pickupAddress));
-      setDropoffAddress(safeString(draft.dropoffAddress));
-      setTimeline(safeString(draft.timeline));
-      setScheduledDate(safeString(draft.scheduledDate));
-      setPickupTimeSlot(safeString(draft.pickupTimeSlot));
-      setServiceType((safeString(draft.serviceType) as MainServiceType) || "");
-      setJobSize(String(draft.jobSize ?? ""));
-      setSideNote(safeString(draft.sideNote));
-
-      setOneWayKm(
-        draft.oneWayKm === null || draft.oneWayKm === undefined
-          ? null
-          : Number(draft.oneWayKm)
-      );
-      setRoundTripKm(
-        draft.roundTripKm === null || draft.roundTripKm === undefined
-          ? null
-          : Number(draft.roundTripKm)
-      );
-      setChargeableKm(Number(draft.chargeableKm || 0));
-      setMileageCharge(Number(draft.mileageCharge || 0));
-
-      setSelectedAddOns(toArray(draft.selectedAddOns ?? draft.addOnServices));
-      setSelectedJustServices(
-        toArray(draft.selectedJustServices ?? draft.justServices)
-      );
-      setWaterfallQuantity(String(draft.waterfallQuantity ?? "1"));
-      setOutletPlugCutoutQuantity(String(draft.outletPlugCutoutQuantity ?? "1"));
-      setDisposalResponsibility(
-        (safeString(draft.disposalResponsibility) as DisposalResponsibility) ||
-          "customer"
-      );
-
-      setShowSecondJob(safeBool(draft.showSecondJob));
-      setSecondJobAddress(safeString(draft.secondJobAddress));
-      setSecondJobDate(
-        safeString(draft.secondJobScheduledDate || draft.secondJobDate)
-      );
-      setSecondJobPickupTimeSlot(safeString(draft.secondJobPickupTimeSlot));
-      setSecondJobSqft(String(draft.secondJobSqft ?? ""));
-      setSecondJobServiceType(
-        (safeString(draft.secondJobServiceType) as MainServiceType) || ""
-      );
-      setSecondJobSideNote(safeString(draft.secondJobSideNote));
-      setSecondJobAddOns(toArray(draft.secondJobAddOns));
-      setSecondJobJustServices(toArray(draft.secondJobJustServices));
-      setSecondJobWaterfallQuantity(String(draft.secondJobWaterfallQuantity ?? "1"));
-      setSecondJobOutletPlugCutoutQuantity(
-        String(draft.secondJobOutletPlugCutoutQuantity ?? "1")
-      );
-      setSecondJobDisposalResponsibility(
-        (safeString(
-          draft.secondJobDisposalResponsibility
-        ) as DisposalResponsibility) || "customer"
-      );
-      setSecondJobOneWayKm(
-        draft.secondJobOneWayKm === null || draft.secondJobOneWayKm === undefined
-          ? null
-          : Number(draft.secondJobOneWayKm)
-      );
-      setSecondJobRoundTripKm(
-        draft.secondJobRoundTripKm === null || draft.secondJobRoundTripKm === undefined
-          ? null
-          : Number(draft.secondJobRoundTripKm)
-      );
-      setSecondJobChargeableKm(Number(draft.secondJobChargeableKm || 0));
-      setSecondJobMileageCharge(Number(draft.secondJobMileageCharge || 0));
-
-      setLoadError("");
-      return;
-    }
-
     if (!isRebook) {
       const saved = loadCustomerProfile();
+
       if (saved) {
-        if (saved.customerName) setCustomerName(saved.customerName);
-        if (saved.customerEmail) setCustomerEmail(saved.customerEmail);
-        if (saved.companyName) setCompanyName(saved.companyName);
-        if (saved.phoneNumber) setPhoneNumber(saved.phoneNumber);
+        if (saved.customerName) {
+          setCustomerName((prev) => prev || saved.customerName || "");
+        }
+        if (saved.customerEmail) {
+          setCustomerEmail((prev) => prev || saved.customerEmail || "");
+        }
+        if (saved.companyName) {
+          setCompanyName((prev) => prev || saved.companyName || "");
+        }
+        if (saved.phoneNumber) {
+          setPhoneNumber((prev) => prev || saved.phoneNumber || "");
+        }
       }
     }
-
-    if (searchParams.size > 0) {
-      setCustomerName(searchParams.get("customerName") || "");
-      setCustomerEmail(searchParams.get("customerEmail") || "");
-      setCompanyName(searchParams.get("companyName") || "");
-      setPhoneNumber(searchParams.get("phoneNumber") || "");
-      setPickupAddress(searchParams.get("pickupAddress") || "");
-      setDropoffAddress(searchParams.get("dropoffAddress") || "");
-      setTimeline(searchParams.get("timeline") || "");
-      setScheduledDate(searchParams.get("scheduledDate") || "");
-      setPickupTimeSlot(searchParams.get("pickupTimeSlot") || "");
-      setServiceType(
-        ((searchParams.get("serviceType") || "") as MainServiceType) || ""
-      );
-      setJobSize(searchParams.get("jobSize") || searchParams.get("sqft") || "");
-      setSideNote(searchParams.get("sideNote") || "");
-      setOneWayKm(
-        searchParams.get("oneWayKm")
-          ? Number(searchParams.get("oneWayKm"))
-          : null
-      );
-      setRoundTripKm(
-        searchParams.get("roundTripKm")
-          ? Number(searchParams.get("roundTripKm"))
-          : null
-      );
-      setChargeableKm(Number(searchParams.get("chargeableKm") || 0));
-      setMileageCharge(Number(searchParams.get("mileageCharge") || 0));
-      setSelectedAddOns(toArray(searchParams.get("addOnServices")));
-      setSelectedJustServices(toArray(searchParams.get("justServices")));
-      setWaterfallQuantity(searchParams.get("waterfallQuantity") || "1");
-      setOutletPlugCutoutQuantity(
-        searchParams.get("outletPlugCutoutQuantity") || "1"
-      );
-      setDisposalResponsibility(
-        ((searchParams.get("disposalResponsibility") ||
-          "customer") as DisposalResponsibility) || "customer"
-      );
-      setShowSecondJob(searchParams.get("showSecondJob") === "true");
-      setSecondJobAddress(searchParams.get("secondJobAddress") || "");
-      setSecondJobDate(
-        searchParams.get("secondJobScheduledDate") ||
-          searchParams.get("secondJobDate") ||
-          ""
-      );
-      setSecondJobPickupTimeSlot(searchParams.get("secondJobPickupTimeSlot") || "");
-      setSecondJobSqft(searchParams.get("secondJobSqft") || "");
-      setSecondJobServiceType(
-        ((searchParams.get("secondJobServiceType") || "") as MainServiceType) || ""
-      );
-      setSecondJobSideNote(searchParams.get("secondJobSideNote") || "");
-      setSecondJobAddOns(toArray(searchParams.get("secondJobAddOns")));
-      setSecondJobJustServices(toArray(searchParams.get("secondJobJustServices")));
-      setSecondJobWaterfallQuantity(
-        searchParams.get("secondJobWaterfallQuantity") || "1"
-      );
-      setSecondJobOutletPlugCutoutQuantity(
-        searchParams.get("secondJobOutletPlugCutoutQuantity") || "1"
-      );
-      setSecondJobDisposalResponsibility(
-        ((searchParams.get("secondJobDisposalResponsibility") ||
-          "customer") as DisposalResponsibility) || "customer"
-      );
-      setSecondJobOneWayKm(
-        searchParams.get("secondJobOneWayKm")
-          ? Number(searchParams.get("secondJobOneWayKm"))
-          : null
-      );
-      setSecondJobRoundTripKm(
-        searchParams.get("secondJobRoundTripKm")
-          ? Number(searchParams.get("secondJobRoundTripKm"))
-          : null
-      );
-      setSecondJobChargeableKm(
-        Number(searchParams.get("secondJobChargeableKm") || 0)
-      );
-      setSecondJobMileageCharge(
-        Number(searchParams.get("secondJobMileageCharge") || 0)
-      );
-      setLoadError("");
-      return;
-    }
-
-    setLoadError("No booking data found. Please go back to the booking page.");
-  }, [isRebook, searchParams]);
+  }, [isRebook]);
 
   useEffect(() => {
     if (!isRebook) return;
-    if (rebookDate) setScheduledDate(rebookDate);
-    if (rebookReason) {
-      setSideNote((prev) =>
-        prev ? `${prev} | Rebook reason: ${rebookReason}` : `Rebook reason: ${rebookReason}`
-      );
+
+    setTimeline("scheduled");
+
+    const urlCustomerName = searchParams.get("customerName") || "";
+    const urlCustomerEmail = searchParams.get("customerEmail") || "";
+    const urlCompanyName = searchParams.get("companyName") || "";
+    const urlPhoneNumber = searchParams.get("phoneNumber") || "";
+    const urlPickupAddress = searchParams.get("pickupAddress") || "";
+    const urlDropoffAddress = searchParams.get("dropoffAddress") || "";
+    const urlScheduledDate = searchParams.get("scheduledDate") || "";
+    const urlPickupTimeSlot = searchParams.get("pickupTimeSlot") || "";
+    const urlServiceType = (searchParams.get("serviceType") || "") as MainServiceType;
+    const urlSqft = searchParams.get("sqft") || "";
+    const urlSideNote = searchParams.get("sideNote") || "";
+
+    if (urlCustomerName) setCustomerName(urlCustomerName);
+    if (urlCustomerEmail) setCustomerEmail(urlCustomerEmail);
+    if (urlCompanyName) setCompanyName(urlCompanyName);
+    if (urlPhoneNumber) setPhoneNumber(urlPhoneNumber);
+    if (urlPickupAddress) setPickupAddress(urlPickupAddress);
+    if (urlDropoffAddress) setDropoffAddress(urlDropoffAddress);
+    if (rebookDate || urlScheduledDate) {
+      setScheduledDate(rebookDate || urlScheduledDate);
     }
-  }, [isRebook, rebookDate, rebookReason]);
+    if (urlPickupTimeSlot) setPickupTimeSlot(urlPickupTimeSlot);
+    if (urlServiceType) setServiceType(urlServiceType);
+    if (urlSqft) setJobSize(urlSqft);
+
+    if (urlSideNote) {
+      setSideNote(
+        `${urlSideNote}${rebookReason ? ` | Rebook reason: ${rebookReason}` : ""}`
+      );
+    } else if (rebookReason) {
+      setSideNote(`Rebook reason: ${rebookReason}`);
+    }
+  }, [isRebook, rebookDate, rebookReason, searchParams]);
+
+  const toggleAddOn = (service: string) => {
+    setSelectedAddOns((prev) =>
+      prev.includes(service)
+        ? prev.filter((item) => item !== service)
+        : [...prev, service]
+    );
+  };
+
+  const toggleJustService = (service: string) => {
+    setSelectedJustServices((prev) =>
+      prev.includes(service)
+        ? prev.filter((item) => item !== service)
+        : [...prev, service]
+    );
+  };
+
+  const toggleSecondJobAddOn = (service: string) => {
+    setSecondJobAddOns((prev) =>
+      prev.includes(service)
+        ? prev.filter((item) => item !== service)
+        : [...prev, service]
+    );
+  };
+
+  const toggleSecondJobJustService = (service: string) => {
+    setSecondJobJustServices((prev) =>
+      prev.includes(service)
+        ? prev.filter((item) => item !== service)
+        : [...prev, service]
+    );
+  };
 
   const sqft = useMemo(() => parsePositiveNumber(jobSize), [jobSize]);
   const secondJobSqftNumber = useMemo(
@@ -902,7 +683,8 @@ function CheckoutPageContent() {
   );
 
   const secondJobOutletPlugCutoutQtyNumber = useMemo(
-    () => Math.max(1, parsePositiveNumber(secondJobOutletPlugCutoutQuantity) || 1),
+    () =>
+      Math.max(1, parsePositiveNumber(secondJobOutletPlugCutoutQuantity) || 1),
     [secondJobOutletPlugCutoutQuantity]
   );
 
@@ -914,33 +696,44 @@ function CheckoutPageContent() {
 
   const servicePrice = useMemo(() => {
     if (sqft <= 0 || pricingConfig.customerRate <= 0) return 0;
-    return round2(sqft * pricingConfig.customerRate);
+    return Number((sqft * pricingConfig.customerRate).toFixed(2));
   }, [sqft, pricingConfig.customerRate]);
 
   const secondJobServicePrice = useMemo(() => {
-    if (secondJobSqftNumber <= 0 || secondJobPricingConfig.customerRate <= 0) return 0;
-    return round2(secondJobSqftNumber * secondJobPricingConfig.customerRate);
+    if (secondJobSqftNumber <= 0 || secondJobPricingConfig.customerRate <= 0) {
+      return 0;
+    }
+
+    return Number(
+      (secondJobSqftNumber * secondJobPricingConfig.customerRate).toFixed(2)
+    );
   }, [secondJobSqftNumber, secondJobPricingConfig.customerRate]);
 
   const installerServicePayout = useMemo(() => {
     if (sqft <= 0 || pricingConfig.installerRate <= 0) return 0;
-    return round2(sqft * pricingConfig.installerRate);
+    return Number((sqft * pricingConfig.installerRate).toFixed(2));
   }, [sqft, pricingConfig.installerRate]);
 
   const secondJobInstallerServicePayout = useMemo(() => {
-    if (secondJobSqftNumber <= 0 || secondJobPricingConfig.installerRate <= 0) return 0;
-    return round2(secondJobSqftNumber * secondJobPricingConfig.installerRate);
+    if (
+      secondJobSqftNumber <= 0 ||
+      secondJobPricingConfig.installerRate <= 0
+    ) {
+      return 0;
+    }
+
+    return Number(
+      (secondJobSqftNumber * secondJobPricingConfig.installerRate).toFixed(2)
+    );
   }, [secondJobSqftNumber, secondJobPricingConfig.installerRate]);
 
   const customerAddOnTotal = useMemo(() => {
-    return round2(
-      calculateCustomerAddOnTotal({
-        services: selectedAddOns,
-        waterfallQuantity: waterfallQtyNumber,
-        outletPlugCutoutQuantity: outletPlugCutoutQtyNumber,
-        disposalResponsibility,
-      })
-    );
+    return calculateCustomerAddOnTotal({
+      services: selectedAddOns,
+      waterfallQuantity: waterfallQtyNumber,
+      outletPlugCutoutQuantity: outletPlugCutoutQtyNumber,
+      disposalResponsibility,
+    });
   }, [
     selectedAddOns,
     waterfallQtyNumber,
@@ -949,14 +742,12 @@ function CheckoutPageContent() {
   ]);
 
   const secondJobAddOnTotal = useMemo(() => {
-    return round2(
-      calculateCustomerAddOnTotal({
-        services: secondJobAddOns,
-        waterfallQuantity: secondJobWaterfallQtyNumber,
-        outletPlugCutoutQuantity: secondJobOutletPlugCutoutQtyNumber,
-        disposalResponsibility: secondJobDisposalResponsibility,
-      })
-    );
+    return calculateCustomerAddOnTotal({
+      services: secondJobAddOns,
+      waterfallQuantity: secondJobWaterfallQtyNumber,
+      outletPlugCutoutQuantity: secondJobOutletPlugCutoutQtyNumber,
+      disposalResponsibility: secondJobDisposalResponsibility,
+    });
   }, [
     secondJobAddOns,
     secondJobWaterfallQtyNumber,
@@ -965,11 +756,11 @@ function CheckoutPageContent() {
   ]);
 
   const customerJustServiceTotal = useMemo(() => {
-    return round2(calculateCustomerJustServiceTotal(selectedJustServices));
+    return calculateCustomerJustServiceTotal(selectedJustServices);
   }, [selectedJustServices]);
 
   const secondJobJustServiceTotal = useMemo(() => {
-    return round2(calculateCustomerJustServiceTotal(secondJobJustServices));
+    return calculateCustomerJustServiceTotal(secondJobJustServices);
   }, [secondJobJustServices]);
 
   const effectiveCustomerMileageRate = useMemo(() => {
@@ -980,67 +771,65 @@ function CheckoutPageContent() {
 
   const effectiveInstallerMileageRate = useMemo(() => {
     return isRebook
-      ? INSTALLER_MILEAGE_RATE * REBOOK_INSTALLER_MILEAGE_MULTIPLIER
+      ? CUSTOMER_MILEAGE_RATE * REBOOK_INSTALLER_MILEAGE_MULTIPLIER
       : INSTALLER_MILEAGE_RATE;
   }, [isRebook]);
 
   const effectiveCompanyMileageRate = useMemo(() => {
-    return round2(
-      Math.max(0, effectiveCustomerMileageRate - effectiveInstallerMileageRate)
-    );
-  }, [effectiveCustomerMileageRate, effectiveInstallerMileageRate]);
+    return isRebook
+      ? CUSTOMER_MILEAGE_RATE * REBOOK_COMPANY_MILEAGE_MULTIPLIER
+      : CUSTOMER_MILEAGE_RATE - INSTALLER_MILEAGE_RATE;
+  }, [isRebook]);
 
   const installerMileagePayout = useMemo(() => {
-    return round2(chargeableKm * effectiveInstallerMileageRate);
+    return Number((chargeableKm * effectiveInstallerMileageRate).toFixed(2));
   }, [chargeableKm, effectiveInstallerMileageRate]);
 
   const secondJobInstallerMileagePayout = useMemo(() => {
-    return round2(secondJobChargeableKm * effectiveInstallerMileageRate);
+    return Number(
+      (secondJobChargeableKm * effectiveInstallerMileageRate).toFixed(2)
+    );
   }, [secondJobChargeableKm, effectiveInstallerMileageRate]);
 
   const platformMileageProfit = useMemo(() => {
-    return round2(chargeableKm * effectiveCompanyMileageRate);
+    return Number((chargeableKm * effectiveCompanyMileageRate).toFixed(2));
   }, [chargeableKm, effectiveCompanyMileageRate]);
 
   const secondJobPlatformMileageProfit = useMemo(() => {
-    return round2(secondJobChargeableKm * effectiveCompanyMileageRate);
+    return Number(
+      (secondJobChargeableKm * effectiveCompanyMileageRate).toFixed(2)
+    );
   }, [secondJobChargeableKm, effectiveCompanyMileageRate]);
 
-  const timelineCharge = useMemo(() => getTimelineCharge(timeline), [timeline]);
-  const secondJobTimelineCharge = 0;
+  const customerTotal = useMemo(() => {
+    const returnFee = isRebook && returnFeeRequired ? RETURN_FEE_CUSTOMER : 0;
 
-  const customerReturnFee = useMemo(() => {
-    return isRebook && returnFeeRequired ? RETURN_FEE_CUSTOMER : 0;
-  }, [isRebook, returnFeeRequired]);
-
-  const customerSubtotal = useMemo(() => {
-    return round2(
-      servicePrice +
+    return Number(
+      (
+        servicePrice +
         customerAddOnTotal +
         customerJustServiceTotal +
         mileageCharge +
-        timelineCharge +
-        customerReturnFee
+        returnFee
+      ).toFixed(2)
     );
   }, [
     servicePrice,
     customerAddOnTotal,
     customerJustServiceTotal,
     mileageCharge,
-    timelineCharge,
-    customerReturnFee,
+    isRebook,
+    returnFeeRequired,
   ]);
 
-  const customerHst = useMemo(() => round2(customerSubtotal * HST_RATE), [customerSubtotal]);
-  const customerTotal = useMemo(() => round2(customerSubtotal + customerHst), [customerSubtotal, customerHst]);
-
-  const secondJobCustomerSubtotal = useMemo(() => {
-    return round2(
-      secondJobServicePrice +
+  const secondJobCustomerTotal = useMemo(() => {
+    return Number(
+      (
+        secondJobServicePrice +
         secondJobAddOnTotal +
         secondJobJustServiceTotal +
-        secondJobMileageCharge +
-        secondJobTimelineCharge
+        secondJobMileageCharge
+      ).toFixed(2)
     );
   }, [
     secondJobServicePrice,
@@ -1049,230 +838,59 @@ function CheckoutPageContent() {
     secondJobMileageCharge,
   ]);
 
-  const secondJobCustomerHst = useMemo(
-    () => round2(secondJobCustomerSubtotal * HST_RATE),
-    [secondJobCustomerSubtotal]
-  );
+  const installerPay = useMemo(() => {
+    const basePay = calculateInstallerPay({
+      serviceType,
+      sqft,
+      oneWayKm,
+      addOns: selectedAddOns,
+      justServices: selectedJustServices,
+      waterfallQuantity: waterfallQtyNumber,
+      outletPlugCutoutQuantity: outletPlugCutoutQtyNumber,
+      disposalResponsibility,
+      isRebookMileage: isRebook,
+    });
 
-  const secondJobCustomerTotal = useMemo(
-    () => round2(secondJobCustomerSubtotal + secondJobCustomerHst),
-    [secondJobCustomerSubtotal, secondJobCustomerHst]
-  );
+    const returnPay =
+      isRebook && returnFeeRequired ? RETURN_FEE_INSTALLER_PAY : 0;
 
-  const installerBasePay = useMemo(() => round2(installerServicePayout), [installerServicePayout]);
-
-  const installerAddOnPay = useMemo(() => {
-    const addOnPay = selectedAddOns.reduce((sum, service) => {
-      return (
-        sum +
-        getInstallerAddOnPrice({
-          service,
-          waterfallQuantity: waterfallQtyNumber,
-          outletPlugCutoutQuantity: outletPlugCutoutQtyNumber,
-          disposalResponsibility,
-        })
-      );
-    }, 0);
-
-    return round2(addOnPay);
+    return Number((basePay + returnPay).toFixed(2));
   }, [
+    serviceType,
+    sqft,
+    oneWayKm,
     selectedAddOns,
+    selectedJustServices,
     waterfallQtyNumber,
     outletPlugCutoutQtyNumber,
     disposalResponsibility,
+    isRebook,
+    returnFeeRequired,
   ]);
 
-  const installerJustServicePay = useMemo(() => {
-    const knownJustServicePrices: Record<string, number> = {
-      "extra cutting": 100,
-      "big polishing": 90,
-      "small polishing": 90,
-      "sink cutout": 100,
-      "outlet plug cutout": 25,
-      "cooktop cutout": 100,
-      "granite / marble sealing": 25,
-      "granite/marble sealing": 25,
-      plumbing: 25,
-      "drill holes": 25,
-      "silicone caulking": 25,
-      "reinstall sink": 100,
-      "fix chips": 50,
-      "fix seam": 50,
-      polishing: 90,
-    };
-
-    const normalized = selectedJustServices.map(normalizeServiceName);
-    let subtotal = 0;
-
-    normalized.forEach((service) => {
-      subtotal += knownJustServicePrices[service] || 0;
+  const secondJobInstallerPay = useMemo(() => {
+    return calculateInstallerPay({
+      serviceType: secondJobServiceType,
+      sqft: secondJobSqftNumber,
+      oneWayKm: secondJobOneWayKm,
+      addOns: secondJobAddOns,
+      justServices: secondJobJustServices,
+      waterfallQuantity: secondJobWaterfallQtyNumber,
+      outletPlugCutoutQuantity: secondJobOutletPlugCutoutQtyNumber,
+      disposalResponsibility: secondJobDisposalResponsibility,
+      isRebookMileage: isRebook,
     });
-
-    if (normalized.length > 0 && subtotal < INSTALLER_JUST_SERVICE_MINIMUM) {
-      subtotal = INSTALLER_JUST_SERVICE_MINIMUM;
-    }
-
-    return round2(subtotal);
-  }, [selectedJustServices]);
-
-  const installerCutPolishPay = 0;
-  const installerSinkPay = 0;
-  const installerOtherPay = 0;
-
-  const installerSubtotalPay = useMemo(() => {
-    return round2(
-      installerBasePay +
-        installerAddOnPay +
-        installerJustServicePay +
-        installerMileagePayout +
-        installerCutPolishPay +
-        installerSinkPay +
-        installerOtherPay
-    );
   }, [
-    installerBasePay,
-    installerAddOnPay,
-    installerJustServicePay,
-    installerMileagePayout,
-  ]);
-
-  const installerHstPay = useMemo(() => round2(installerSubtotalPay * HST_RATE), [installerSubtotalPay]);
-
-  const installerReturnPay = useMemo(() => {
-    return isRebook && returnFeeRequired ? RETURN_FEE_INSTALLER_PAY : 0;
-  }, [isRebook, returnFeeRequired]);
-
-  const installerPay = useMemo(() => {
-    return round2(installerSubtotalPay + installerHstPay + installerReturnPay);
-  }, [installerSubtotalPay, installerHstPay, installerReturnPay]);
-
-  const secondJobInstallerBasePay = useMemo(
-    () => round2(secondJobInstallerServicePayout),
-    [secondJobInstallerServicePayout]
-  );
-
-  const secondJobInstallerAddOnPay = useMemo(() => {
-    const addOnPay = secondJobAddOns.reduce((sum, service) => {
-      return (
-        sum +
-        getInstallerAddOnPrice({
-          service,
-          waterfallQuantity: secondJobWaterfallQtyNumber,
-          outletPlugCutoutQuantity: secondJobOutletPlugCutoutQtyNumber,
-          disposalResponsibility: secondJobDisposalResponsibility,
-        })
-      );
-    }, 0);
-
-    return round2(addOnPay);
-  }, [
+    secondJobServiceType,
+    secondJobSqftNumber,
+    secondJobOneWayKm,
     secondJobAddOns,
+    secondJobJustServices,
     secondJobWaterfallQtyNumber,
     secondJobOutletPlugCutoutQtyNumber,
     secondJobDisposalResponsibility,
+    isRebook,
   ]);
-
-  const secondJobInstallerJustServicePay = useMemo(() => {
-    const knownJustServicePrices: Record<string, number> = {
-      "extra cutting": 100,
-      "big polishing": 90,
-      "small polishing": 90,
-      "sink cutout": 100,
-      "outlet plug cutout": 25,
-      "cooktop cutout": 100,
-      "granite / marble sealing": 25,
-      "granite/marble sealing": 25,
-      plumbing: 25,
-      "drill holes": 25,
-      "silicone caulking": 25,
-      "reinstall sink": 100,
-      "fix chips": 50,
-      "fix seam": 50,
-      polishing: 90,
-    };
-
-    const normalized = secondJobJustServices.map(normalizeServiceName);
-    let subtotal = 0;
-
-    normalized.forEach((service) => {
-      subtotal += knownJustServicePrices[service] || 0;
-    });
-
-    if (normalized.length > 0 && subtotal < INSTALLER_JUST_SERVICE_MINIMUM) {
-      subtotal = INSTALLER_JUST_SERVICE_MINIMUM;
-    }
-
-    return round2(subtotal);
-  }, [secondJobJustServices]);
-
-  const secondJobInstallerCutPolishPay = 0;
-  const secondJobInstallerSinkPay = 0;
-  const secondJobInstallerOtherPay = 0;
-
-  const secondJobInstallerSubtotalPay = useMemo(() => {
-    return round2(
-      secondJobInstallerBasePay +
-        secondJobInstallerAddOnPay +
-        secondJobInstallerJustServicePay +
-        secondJobInstallerMileagePayout +
-        secondJobInstallerCutPolishPay +
-        secondJobInstallerSinkPay +
-        secondJobInstallerOtherPay
-    );
-  }, [
-    secondJobInstallerBasePay,
-    secondJobInstallerAddOnPay,
-    secondJobInstallerJustServicePay,
-    secondJobInstallerMileagePayout,
-  ]);
-
-  const secondJobInstallerHstPay = useMemo(
-    () => round2(secondJobInstallerSubtotalPay * HST_RATE),
-    [secondJobInstallerSubtotalPay]
-  );
-
-  const secondJobInstallerReturnPay = 0;
-
-  const secondJobInstallerPay = useMemo(() => {
-    return round2(
-      secondJobInstallerSubtotalPay +
-        secondJobInstallerHstPay +
-        secondJobInstallerReturnPay
-    );
-  }, [
-    secondJobInstallerSubtotalPay,
-    secondJobInstallerHstPay,
-  ]);
-
-  const companySubtotal = useMemo(
-    () => round2(customerSubtotal - installerSubtotalPay),
-    [customerSubtotal, installerSubtotalPay]
-  );
-
-  const companyHst = useMemo(
-    () => round2(customerHst - installerHstPay),
-    [customerHst, installerHstPay]
-  );
-
-  const companyProfit = useMemo(
-    () => round2(customerTotal - installerPay),
-    [customerTotal, installerPay]
-  );
-
-  const secondJobCompanySubtotal = useMemo(
-    () => round2(secondJobCustomerSubtotal - secondJobInstallerSubtotalPay),
-    [secondJobCustomerSubtotal, secondJobInstallerSubtotalPay]
-  );
-
-  const secondJobCompanyHst = useMemo(
-    () => round2(secondJobCustomerHst - secondJobInstallerHstPay),
-    [secondJobCustomerHst, secondJobInstallerHstPay]
-  );
-
-  const secondJobCompanyProfit = useMemo(
-    () => round2(secondJobCustomerTotal - secondJobInstallerPay),
-    [secondJobCustomerTotal, secondJobInstallerPay]
-  );
 
   const formattedSelectedAddOns = useMemo(() => {
     return selectedAddOns.map((service) =>
@@ -1306,49 +924,68 @@ function CheckoutPageContent() {
     secondJobDisposalResponsibility,
   ]);
 
+  const showDisposalOption = useMemo(() => {
+    return selectedAddOns.some((service) => {
+      const normalized = normalizeServiceName(service);
+      return (
+        normalized === "remove and dispose laminate" ||
+        normalized === "remove and dispose stone" ||
+        normalized === "vanity removal" ||
+        normalized === "backsplash tile removal"
+      );
+    });
+  }, [selectedAddOns]);
+
+  const showSecondJobDisposalOption = useMemo(() => {
+    return secondJobAddOns.some((service) => {
+      const normalized = normalizeServiceName(service);
+      return (
+        normalized === "remove and dispose laminate" ||
+        normalized === "remove and dispose stone" ||
+        normalized === "vanity removal" ||
+        normalized === "backsplash tile removal"
+      );
+    });
+  }, [secondJobAddOns]);
+
+  const showWaterfallQuantity = useMemo(() => {
+    return selectedAddOns.some(
+      (service) => normalizeServiceName(service) === "waterfall"
+    );
+  }, [selectedAddOns]);
+
+  const showOutletQuantity = useMemo(() => {
+    return selectedAddOns.some(
+      (service) => normalizeServiceName(service) === "outlet plug cutout"
+    );
+  }, [selectedAddOns]);
+
+  const showSecondJobWaterfallQuantity = useMemo(() => {
+    return secondJobAddOns.some(
+      (service) => normalizeServiceName(service) === "waterfall"
+    );
+  }, [secondJobAddOns]);
+
+  const showSecondJobOutletQuantity = useMemo(() => {
+    return secondJobAddOns.some(
+      (service) => normalizeServiceName(service) === "outlet plug cutout"
+    );
+  }, [secondJobAddOns]);
+
   const maxOneWayKm = useMemo(() => {
     const primary = oneWayKm || 0;
     const secondary = showSecondJob ? secondJobOneWayKm || 0 : 0;
     return Math.max(primary, secondary);
   }, [oneWayKm, secondJobOneWayKm, showSecondJob]);
 
-  const combinedCustomerSubtotal = useMemo(() => {
-    return round2(customerSubtotal + (showSecondJob ? secondJobCustomerSubtotal : 0));
-  }, [customerSubtotal, secondJobCustomerSubtotal, showSecondJob]);
-
-  const combinedCustomerHst = useMemo(() => {
-    return round2(customerHst + (showSecondJob ? secondJobCustomerHst : 0));
-  }, [customerHst, secondJobCustomerHst, showSecondJob]);
-
   const combinedCustomerTotal = useMemo(() => {
-    return round2(customerTotal + (showSecondJob ? secondJobCustomerTotal : 0));
-  }, [customerTotal, secondJobCustomerTotal, showSecondJob]);
-
-  const combinedInstallerSubtotalPay = useMemo(() => {
-    return round2(
-      installerSubtotalPay + (showSecondJob ? secondJobInstallerSubtotalPay : 0)
+    return Number(
+      (
+        (customerTotal || 0) +
+        (showSecondJob ? secondJobCustomerTotal || 0 : 0)
+      ).toFixed(2)
     );
-  }, [installerSubtotalPay, secondJobInstallerSubtotalPay, showSecondJob]);
-
-  const combinedInstallerHstPay = useMemo(() => {
-    return round2(installerHstPay + (showSecondJob ? secondJobInstallerHstPay : 0));
-  }, [installerHstPay, secondJobInstallerHstPay, showSecondJob]);
-
-  const combinedInstallerPay = useMemo(() => {
-    return round2(installerPay + (showSecondJob ? secondJobInstallerPay : 0));
-  }, [installerPay, secondJobInstallerPay, showSecondJob]);
-
-  const combinedCompanySubtotal = useMemo(() => {
-    return round2(companySubtotal + (showSecondJob ? secondJobCompanySubtotal : 0));
-  }, [companySubtotal, secondJobCompanySubtotal, showSecondJob]);
-
-  const combinedCompanyHst = useMemo(() => {
-    return round2(companyHst + (showSecondJob ? secondJobCompanyHst : 0));
-  }, [companyHst, secondJobCompanyHst, showSecondJob]);
-
-  const combinedCompanyProfit = useMemo(() => {
-    return round2(companyProfit + (showSecondJob ? secondJobCompanyProfit : 0));
-  }, [companyProfit, secondJobCompanyProfit, showSecondJob]);
+  }, [customerTotal, secondJobCustomerTotal, showSecondJob]);
 
   const combinedSqft = useMemo(() => {
     return sqft + (showSecondJob ? secondJobSqftNumber : 0);
@@ -1370,350 +1007,421 @@ function CheckoutPageContent() {
       hasSecondJob: showSecondJob,
       total: combinedCustomerTotal,
     });
-  }, [maxOneWayKm, combinedSqft, serviceType, showSecondJob, combinedCustomerTotal]);
+  }, [
+    maxOneWayKm,
+    combinedSqft,
+    serviceType,
+    showSecondJob,
+    combinedCustomerTotal,
+  ]);
 
-  const allowedPayments = useMemo(() => {
-    return getAllowedPaymentOptions({
-      oneWayKm: maxOneWayKm,
-      total: combinedCustomerTotal,
-      companyName,
-    });
-  }, [maxOneWayKm, combinedCustomerTotal, companyName]);
-
-  useEffect(() => {
-    if (paymentMethod && !allowedPayments[paymentMethod]) {
-      setPaymentMethod("");
-    }
-  }, [allowedPayments, paymentMethod]);
-
-  const serviceLabel = useMemo(() => {
-    if (pricingConfig.label) return pricingConfig.label;
-    if (serviceType === "justServices") return "Just Services";
-    return "-";
-  }, [pricingConfig.label, serviceType]);
-
-  const showMainServiceFields = serviceType !== "" && serviceType !== "justServices";
-  const showSecondJobMainServiceFields =
-    secondJobServiceType !== "" && secondJobServiceType !== "justServices";
-
-  async function saveBookingToDatabase() {
-    if (bookingSaved && savedBookingId) return savedBookingId;
-
-    const bookingNumber = originalJobId || `JOB-${Date.now()}`;
-
-    const bookingPayload = {
-      job_id: bookingNumber,
-      customer_name: customerName,
-      customer_email: customerEmail,
-      company_name: companyName,
-      phone_number: phoneNumber,
-      pickup_address: pickupAddress,
-      dropoff_address: dropoffAddress,
-      timeline,
-      scheduled_date: scheduledDate || null,
-      pickup_time_slot: pickupTimeSlot,
-      service_type: serviceType || null,
-      service_type_label: serviceLabel,
-      job_size: sqft || 0,
-      sqft: sqft || 0,
-      payment_method: paymentMethod,
-      status: getBookingStatusFromPaymentMethod(paymentMethod),
-      payment_status: paymentMethod === "creditDebit" ? "pending" : "unpaid",
-      notes: sideNote || null,
-      side_note: sideNote || null,
-      subtotal: combinedCustomerSubtotal,
-      hst: combinedCustomerHst,
-      hst_amount: combinedCustomerHst,
-      final_total: combinedCustomerTotal,
-      add_on_services: formattedSelectedAddOns,
-      just_services: selectedJustServices,
-      waterfall_quantity: waterfallQtyNumber,
-      outlet_plug_cutout_quantity: outletPlugCutoutQtyNumber,
-      disposal_responsibility: disposalResponsibility,
-      installer_base_pay: installerBasePay,
-      installer_mileage_pay: installerMileagePayout,
-      installer_addon_pay: installerAddOnPay,
-      installer_cut_polish_pay: 0,
-      installer_sink_pay: 0,
-      installer_other_pay: 0,
-      installer_subtotal_pay: combinedInstallerSubtotalPay,
-      installer_hst_pay: combinedInstallerHstPay,
-      installer_pay: combinedInstallerPay,
-      company_profit: combinedCompanyProfit,
-      mileage_fee: mileageCharge + secondJobMileageCharge,
-      return_fee: returnFeeRequired ? RETURN_FEE_CUSTOMER : 0,
-      return_fee_charged: returnFeeRequired ? RETURN_FEE_CUSTOMER : 0,
-      return_fee_installer_pay: returnFeeRequired ? RETURN_FEE_INSTALLER_PAY : 0,
-      ai_distance_tier: distanceTierLabel,
-      ai_recommended_installer_type: recommendedInstallerType,
-      ai_route_hint: showSecondJob
-        ? "Multi-job checkout - review grouped route."
-        : "Single job checkout.",
-      admin_fee_note: showSecondJob ? "Includes grouped second job." : null,
-    };
-
-    const { data, error } = await supabase
-      .from("bookings")
-      .insert([bookingPayload])
-      .select("id")
-      .single();
-
-    if (error) {
-      throw new Error(error.message || "Could not save booking.");
+  const calculateMileage = async () => {
+    if (!pickupAddress.trim() || !dropoffAddress.trim()) {
+      setMileageError("Please enter both pick up and drop off address.");
+      return;
     }
 
-    const savedId = String(data?.id || bookingNumber);
-    setBookingSaved(true);
-    setSavedBookingId(savedId);
-    return savedId;
-  }
+    setMileageLoading(true);
+    setMileageError("");
 
-  async function sendConfirmationEmails(bookingId: string) {
-    const paymentLabel = getPaymentMethodLabel(paymentMethod);
-
-    await Promise.all([
-      sendEmail({
-        to: customerEmail,
-        subject: `1800TOPS Booking Confirmation - ${originalJobId || bookingId}`,
-        html: buildCustomerConfirmationHtml({
-          customerName,
-          customerEmail,
-          companyName,
-          bookingNumber: originalJobId || bookingId,
-          paymentMethod: paymentLabel,
-          total: combinedCustomerTotal,
-          timeline,
-          scheduledDate,
-          pickupTimeSlot,
-          pickupAddress,
-          dropoffAddress,
-          serviceLabel,
-        }),
-      }),
-      sendEmail({
-        to: ADMIN_EMAIL,
-        subject: `New 1800TOPS Booking - ${originalJobId || bookingId}`,
-        html: buildAdminConfirmationHtml({
-          customerName,
-          customerEmail,
-          companyName,
-          bookingNumber: originalJobId || bookingId,
-          paymentMethod: paymentLabel,
-          total: combinedCustomerTotal,
-          timeline,
-          scheduledDate,
-          pickupTimeSlot,
-          pickupAddress,
-          dropoffAddress,
-          serviceLabel,
-          notes: sideNote,
-        }),
-      }),
-    ]);
-  }
-
-  async function handleOfflineConfirmation() {
     try {
-      if (!paymentMethod) {
-        alert("Please select a payment method.");
-        return;
-      }
-
-      if (paymentMethod === "creditDebit") {
-        alert("Please use the card payment button for Stripe.");
-        return;
-      }
-
-      setSubmitting(true);
-
-      const bookingId = await saveBookingToDatabase();
-      await sendConfirmationEmails(bookingId);
-
-      sessionStorage.removeItem("checkoutDraft");
-      setConfirmationReady(true);
-      setCheckoutStep("review");
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Could not confirm booking.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function handleStripeCheckout() {
-    try {
-      if (!paymentMethod) {
-        alert("Please select a payment method.");
-        return;
-      }
-
-      if (paymentMethod !== "creditDebit") {
-        alert("Please use Confirm Booking for non-card payment methods.");
-        return;
-      }
-
-      if (!customerName.trim()) {
-        alert("Please enter customer name.");
-        return;
-      }
-
-      if (!customerEmail.trim()) {
-        alert("Please enter customer email.");
-        return;
-      }
-
-      if (combinedCustomerTotal <= 0) {
-        alert("Invalid checkout total.");
-        return;
-      }
-
-      setStripeLoading(true);
-
-      const bookingId = await saveBookingToDatabase();
-
-      const res = await fetch("/api/stripe/checkout", {
+      const res = await fetch("/api/mileage", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          amount: Math.round(combinedCustomerTotal * 100),
-          customerName,
-          customerEmail,
-          jobGroupId: originalJobId || bookingId,
+          pickupAddress,
+          dropoffAddress,
         }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data?.error || "Could not start Stripe checkout.");
+        throw new Error(data.error || "Mileage calculation failed");
       }
 
-      const stripe = await stripePromise;
+      const safeOneWayKm = Number(data.oneWayKm) || 0;
+      const mileageResult = getChargeableKm(safeOneWayKm);
+      const customerMileageCharge =
+        mileageResult.chargeableKm * effectiveCustomerMileageRate;
 
-      if (!stripe) {
-        throw new Error("Stripe failed to load.");
-      }
+      setOneWayKm(safeOneWayKm);
+      setRoundTripKm(mileageResult.roundTripKm);
+      setChargeableKm(mileageResult.chargeableKm);
+      setMileageCharge(Number(customerMileageCharge.toFixed(2)));
+    } catch (error) {
+      setMileageError(
+        error instanceof Error ? error.message : "Mileage calculation failed"
+      );
+      setOneWayKm(null);
+      setRoundTripKm(null);
+      setChargeableKm(0);
+      setMileageCharge(0);
+    } finally {
+      setMileageLoading(false);
+    }
+  };
 
-      const result = await stripe.redirectToCheckout({
-        sessionId: data.id,
+  const calculateSecondJobMileage = async () => {
+    if (!pickupAddress.trim() || !secondJobAddress.trim()) {
+      setSecondJobMileageError(
+        "Please enter first job pick up address and second job address."
+      );
+      return;
+    }
+
+    setSecondJobMileageLoading(true);
+    setSecondJobMileageError("");
+
+    try {
+      const res = await fetch("/api/mileage", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          pickupAddress,
+          dropoffAddress: secondJobAddress,
+        }),
       });
 
-      if (result.error) {
-        throw new Error(result.error.message);
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Mileage calculation failed");
       }
+
+      const safeOneWayKm = Number(data.oneWayKm) || 0;
+      const mileageResult = getChargeableKm(safeOneWayKm);
+      const customerMileageCharge =
+        mileageResult.chargeableKm * effectiveCustomerMileageRate;
+
+      setSecondJobOneWayKm(safeOneWayKm);
+      setSecondJobRoundTripKm(mileageResult.roundTripKm);
+      setSecondJobChargeableKm(mileageResult.chargeableKm);
+      setSecondJobMileageCharge(Number(customerMileageCharge.toFixed(2)));
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Stripe checkout failed.");
+      setSecondJobMileageError(
+        error instanceof Error ? error.message : "Mileage calculation failed"
+      );
+      setSecondJobOneWayKm(null);
+      setSecondJobRoundTripKm(null);
+      setSecondJobChargeableKm(0);
+      setSecondJobMileageCharge(0);
     } finally {
-      setStripeLoading(false);
+      setSecondJobMileageLoading(false);
     }
-  }
+  };
+
+  const handleContinueToCheckout = () => {
+    if (!customerName.trim()) {
+      alert("Please enter customer name.");
+      return;
+    }
+
+    if (!customerEmail.trim()) {
+      alert("Please enter customer email.");
+      return;
+    }
+
+    if (!phoneNumber.trim()) {
+      alert("Please enter phone number.");
+      return;
+    }
+
+    if (!pickupAddress.trim()) {
+      alert("Please enter pick up address.");
+      return;
+    }
+
+    if (!dropoffAddress.trim()) {
+      alert("Please enter drop off address.");
+      return;
+    }
+
+    if (!timeline) {
+      alert("Please select a timeline.");
+      return;
+    }
+
+    if (timeline === "scheduled" && !scheduledDate) {
+      alert("Please select a scheduled date.");
+      return;
+    }
+
+    if (!pickupTimeSlot) {
+      alert("Please select a pickup time window.");
+      return;
+    }
+
+    if (!serviceType) {
+      alert("Please select a service type.");
+      return;
+    }
+
+    if (serviceType !== "justServices" && sqft <= 0) {
+      alert("Please enter job square footage.");
+      return;
+    }
+
+    if (serviceType === "justServices" && selectedJustServices.length === 0) {
+      alert("Please select at least one just service.");
+      return;
+    }
+
+    if (oneWayKm === null) {
+      alert("Please calculate mileage for the first job.");
+      return;
+    }
+
+    if (showSecondJob) {
+      if (!secondJobAddress.trim()) {
+        alert("Please enter second job address.");
+        return;
+      }
+
+      if (!secondJobDate) {
+        alert("Please select second job date.");
+        return;
+      }
+
+      if (!secondJobPickupTimeSlot) {
+        alert("Please select second job pickup time window.");
+        return;
+      }
+
+      if (!secondJobServiceType) {
+        alert("Please select second job service type.");
+        return;
+      }
+
+      if (
+        secondJobServiceType !== "justServices" &&
+        secondJobSqftNumber <= 0
+      ) {
+        alert("Please enter second job square footage.");
+        return;
+      }
+
+      if (
+        secondJobServiceType === "justServices" &&
+        secondJobJustServices.length === 0
+      ) {
+        alert("Please select at least one second job just service.");
+        return;
+      }
+
+      if (secondJobOneWayKm === null) {
+        alert("Please calculate mileage for the second job.");
+        return;
+      }
+    }
+
+    if (maxOneWayKm > MAX_SERVICE_DISTANCE_KM) {
+      alert(
+        `This booking is outside the current service limit of ${MAX_SERVICE_DISTANCE_KM} km one-way.`
+      );
+      return;
+    }
+
+    saveCustomerProfile({
+      customerName,
+      customerEmail,
+      companyName,
+      phoneNumber,
+    });
+
+    const allAdditionalServices = [
+      ...selectedAddOns.map(normalizeServiceName),
+      ...selectedJustServices.map(normalizeServiceName),
+      ...secondJobAddOns.map(normalizeServiceName),
+      ...secondJobJustServices.map(normalizeServiceName),
+    ];
+
+    const params = new URLSearchParams({
+      customerName,
+      customerEmail,
+      companyName,
+      phoneNumber,
+      pickupAddress,
+      dropoffAddress,
+      timeline,
+      scheduledDate,
+      pickupTimeSlot,
+      serviceType,
+      jobSize,
+      sqft: String(sqft),
+      sideNote,
+      oneWayKm: oneWayKm !== null ? String(oneWayKm) : "",
+      roundTripKm: roundTripKm !== null ? String(roundTripKm) : "",
+      chargeableKm: String(chargeableKm),
+      mileageCharge: String(mileageCharge),
+      addOnServices: formattedSelectedAddOns.join(" | "),
+      justServices: selectedJustServices.join(" | "),
+      additionalServices: allAdditionalServices.join(" | "),
+      customerAddOnTotal: String(customerAddOnTotal),
+      customerJustServiceTotal: String(customerJustServiceTotal),
+      customerSqftRate: String(pricingConfig.customerRate),
+      installerSqftRate: String(pricingConfig.installerRate),
+      servicePrice: String(servicePrice),
+      installerServicePayout: String(installerServicePayout),
+      installerMileagePayout: String(installerMileagePayout),
+      platformMileageProfit: String(platformMileageProfit),
+      customerTotal: String(customerTotal),
+      installerTotalPayout: String(installerPay),
+      waterfallQuantity: String(waterfallQtyNumber),
+      outletPlugCutoutQuantity: String(outletPlugCutoutQtyNumber),
+      disposalResponsibility,
+
+      showSecondJob: String(showSecondJob),
+      secondJobAddress,
+      secondJobDate,
+      secondJobPickupTimeSlot,
+      secondJobSqft,
+      secondJobServiceType,
+      secondJobSideNote,
+      secondJobAddOns: formattedSecondJobAddOns.join(" | "),
+      secondJobJustServices: secondJobJustServices.join(" | "),
+      secondJobOneWayKm:
+        secondJobOneWayKm !== null ? String(secondJobOneWayKm) : "",
+      secondJobRoundTripKm:
+        secondJobRoundTripKm !== null ? String(secondJobRoundTripKm) : "",
+      secondJobChargeableKm: String(secondJobChargeableKm),
+      secondJobMileageCharge: String(secondJobMileageCharge),
+      secondJobAddOnTotal: String(secondJobAddOnTotal),
+      secondJobJustServiceTotal: String(secondJobJustServiceTotal),
+      secondJobCustomerSqftRate: String(secondJobPricingConfig.customerRate),
+      secondJobInstallerSqftRate: String(secondJobPricingConfig.installerRate),
+      secondJobServicePrice: String(secondJobServicePrice),
+      secondJobInstallerServicePayout: String(secondJobInstallerServicePayout),
+      secondJobInstallerMileagePayout: String(secondJobInstallerMileagePayout),
+      secondJobPlatformMileageProfit: String(secondJobPlatformMileageProfit),
+      secondJobCustomerTotal: String(secondJobCustomerTotal),
+      secondJobInstallerTotalPayout: String(secondJobInstallerPay),
+      secondJobWaterfallQuantity: String(secondJobWaterfallQtyNumber),
+      secondJobOutletPlugCutoutQuantity: String(
+        secondJobOutletPlugCutoutQtyNumber
+      ),
+      secondJobDisposalResponsibility,
+
+      rebook: String(isRebook),
+      originalJobId,
+      rebookReason,
+      returnFeeRequired: String(returnFeeRequired),
+      returnFeeCharged:
+        isRebook && returnFeeRequired ? String(RETURN_FEE_CUSTOMER) : "0",
+      returnFeeInstallerPay:
+        isRebook && returnFeeRequired ? String(RETURN_FEE_INSTALLER_PAY) : "0",
+      discountedMileageMode: String(isRebook),
+      discountedCustomerMileageRate: String(effectiveCustomerMileageRate),
+      discountedInstallerMileageRate: String(effectiveInstallerMileageRate),
+      discountedCompanyMileageRate: String(effectiveCompanyMileageRate),
+
+      bookingDistanceTier: distanceTierLabel,
+      recommendedInstallerType,
+      maxServiceDistanceKm: String(MAX_SERVICE_DISTANCE_KM),
+    });
+
+    window.location.href = "/checkout?" + params.toString();
+  };
+
+  const showMainServiceFields =
+    serviceType !== "" && serviceType !== "justServices";
+
+  const showSecondJobMainServiceFields =
+    secondJobServiceType !== "" && secondJobServiceType !== "justServices";
 
   return (
     <main className="min-h-screen bg-black px-4 py-8 text-white md:px-6 md:py-10">
       <div className="mx-auto max-w-5xl">
         <div className="mb-8">
           <h1 className="mb-2 text-3xl font-bold text-yellow-500 md:text-4xl">
-            Checkout
+            {isRebook ? "Rebook Job" : "Book Installation / Services"}
           </h1>
+
           <p className="text-zinc-300">
-            Review your booking, choose payment, and confirm.
+            {isRebook
+              ? "Review the return visit details, discounted mileage, and continue to checkout."
+              : "Enter your project details, get smart booking guidance, and continue to checkout."}
           </p>
         </div>
 
-        {cancelled ? (
-          <div className="mb-6 rounded-2xl border border-red-500 bg-zinc-900 p-5 text-red-300">
-            Payment was cancelled. Your booking review is still here.
-          </div>
-        ) : null}
-
-        {loadError ? (
-          <div className="mb-6 rounded-2xl border border-red-500 bg-zinc-900 p-5 text-red-300">
-            {loadError}
-          </div>
-        ) : null}
-
-        {confirmationReady ? (
-          <div className="mb-6 rounded-2xl border border-green-500 bg-zinc-900 p-5">
-            <h2 className="text-xl font-semibold text-green-400">
-              Booking Confirmed
+        {isRebook ? (
+          <div className="mb-6 rounded-2xl border border-yellow-500 bg-zinc-900 p-5">
+            <h2 className="text-xl font-semibold text-yellow-400">
+              Return Visit / Rebook
             </h2>
             <div className="mt-3 space-y-2 text-sm text-gray-300">
-              <p>Booking ID: {originalJobId || savedBookingId || "-"}</p>
-              <p>Customer: {customerName}</p>
-              <p>Email: {customerEmail}</p>
-              <p>Payment Method: {getPaymentMethodLabel(paymentMethod)}</p>
-              <p>Total: {money(combinedCustomerTotal)}</p>
-              <p>Customer confirmation email sent.</p>
-              <p>Admin confirmation email sent.</p>
+              <p>Original Job ID: {originalJobId || "-"}</p>
+              <p>Reason: {rebookReason || "-"}</p>
+              <p>Customer Mileage Discount: 40%</p>
+              <p>Customer Pays: 60% of mileage</p>
+              <p>Installer Gets: 50% of mileage</p>
+              <p>Company Keeps: 10% of mileage</p>
+              {returnFeeRequired ? (
+                <p className="font-semibold text-yellow-400">
+                  Return Trip Fee: ${RETURN_FEE_CUSTOMER.toFixed(2)}
+                </p>
+              ) : null}
             </div>
           </div>
         ) : null}
 
         <div className="space-y-6 rounded-2xl border border-zinc-800 bg-zinc-900 p-5 md:p-6">
-          {isRebook ? (
-            <div className="rounded-2xl border border-yellow-500 bg-zinc-900 p-5">
-              <h2 className="text-xl font-semibold text-yellow-400">Return Visit / Rebook</h2>
-              <div className="mt-3 space-y-2 text-sm text-gray-300">
-                <p>Original Job ID: {originalJobId || "-"}</p>
-                <p>Reason: {rebookReason || "-"}</p>
-                <p>Customer Mileage Discount: 40%</p>
-                <p>Customer Pays: 60% of mileage</p>
-                <p>Installer Gets: 50% of installer mileage</p>
-                <p>Company Keeps: customer mileage minus installer mileage</p>
-                {returnFeeRequired ? (
-                  <p className="font-semibold text-yellow-400">
-                    Return Trip Fee: ${RETURN_FEE_CUSTOMER.toFixed(2)}
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-
           <div>
             <SectionTitle title="Customer Details" />
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <input
                 type="text"
+                placeholder="Your Name"
                 value={customerName}
-                readOnly
+                onChange={(e) => setCustomerName(e.target.value)}
                 className="w-full rounded-xl border border-zinc-700 bg-black p-3"
               />
               <input
                 type="email"
+                placeholder="Customer Email"
                 value={customerEmail}
-                readOnly
+                onChange={(e) => setCustomerEmail(e.target.value)}
                 className="w-full rounded-xl border border-zinc-700 bg-black p-3"
               />
               <input
                 type="text"
+                placeholder="Company Name"
                 value={companyName}
-                readOnly
+                onChange={(e) => setCompanyName(e.target.value)}
                 className="w-full rounded-xl border border-zinc-700 bg-black p-3"
               />
               <input
                 type="tel"
+                placeholder="Phone Number"
                 value={phoneNumber}
-                readOnly
+                onChange={(e) => setPhoneNumber(e.target.value)}
                 className="w-full rounded-xl border border-zinc-700 bg-black p-3"
               />
               <input
                 type="text"
+                placeholder="Drop Off Address"
                 value={dropoffAddress}
-                readOnly
+                onChange={(e) => setDropoffAddress(e.target.value)}
                 className="w-full rounded-xl border border-zinc-700 bg-black p-3"
               />
               <input
                 type="text"
+                placeholder="Pick Up Address"
                 value={pickupAddress}
-                readOnly
+                onChange={(e) => setPickupAddress(e.target.value)}
                 className="w-full rounded-xl border border-zinc-700 bg-black p-3"
               />
             </div>
           </div>
 
           <div className="rounded-xl border border-zinc-700 bg-black p-4">
-            <h3 className="mb-3 text-lg font-semibold text-yellow-500">Smart Booking Notes</h3>
+            <h3 className="mb-3 text-lg font-semibold text-yellow-500">
+              Smart Booking Notes
+            </h3>
             <div className="space-y-2 text-sm text-gray-300">
               <p>• Distance Tier: {distanceTierLabel}</p>
               <p>• AI Recommended Installer: {recommendedInstallerType}</p>
@@ -1725,321 +1433,666 @@ function CheckoutPageContent() {
           </div>
 
           <div>
-            <SectionTitle title="Mileage Summary" />
-            <div className="mt-4 rounded-xl border border-zinc-700 bg-black p-4 text-sm text-gray-300">
-              <p>• One-Way Distance: {oneWayKm ?? 0} km</p>
-              <p>• Round-Trip Distance: {roundTripKm ?? 0} km</p>
-              <p>• Chargeable Distance: {chargeableKm} km</p>
-              <p>• Customer Mileage Charge: {money(mileageCharge)}</p>
-              <p>• Installer Mileage Pay: {money(installerMileagePayout)}</p>
-              <p>• Company Mileage Profit: {money(platformMileageProfit)}</p>
-            </div>
-          </div>
+            <SectionTitle
+              title="Mileage Calculation"
+              subtitle={
+                isRebook
+                  ? `Round-trip mileage rules: first 120 km total is free. Over 120 km up to 320 km is charged only on the extra km. Rebook mileage rate is discounted to $${effectiveCustomerMileageRate.toFixed(
+                      2
+                    )}/km for the customer.`
+                  : `Round-trip mileage rules: first 120 km total is free. Over 120 km up to 320 km is charged only on the extra km. Standard customer mileage rate is $${CUSTOMER_MILEAGE_RATE.toFixed(
+                      2
+                    )}/km.`
+              }
+            />
 
-          <div>
-            <SectionTitle title="Primary Job Summary" />
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <SummaryBox title="Booking Details">
-                <p>Timeline: {timeline || "-"}</p>
-                <p>Scheduled Date: {scheduledDate || "-"}</p>
-                <p>Pickup Window: {pickupTimeSlot || "-"}</p>
-                <p>Service: {serviceLabel}</p>
-                {showMainServiceFields ? <p>Square Footage: {sqft}</p> : null}
-                <p>Notes: {sideNote || "-"}</p>
-              </SummaryBox>
-
-              <SummaryBox title="Primary Job Pricing">
-                <p>Service Price: {money(servicePrice)}</p>
-                <p>Add-On Total: {money(customerAddOnTotal)}</p>
-                <p>Just Service Total: {money(customerJustServiceTotal)}</p>
-                <p>Timeline Charge: {money(timelineCharge)}</p>
-                <p>Subtotal: {money(customerSubtotal)}</p>
-                <p>HST: {money(customerHst)}</p>
-                <p className="font-semibold text-yellow-400">
-                  Total: {money(customerTotal)}
-                </p>
-              </SummaryBox>
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={calculateMileage}
+                className="rounded-xl bg-yellow-500 px-6 py-3 font-semibold text-black transition hover:bg-yellow-400"
+              >
+                {mileageLoading ? "Calculating..." : "Calculate Distance"}
+              </button>
             </div>
 
-            {formattedSelectedAddOns.length > 0 ? (
-              <div className="mt-4 rounded-xl border border-zinc-700 bg-black p-4">
-                <p className="mb-2 font-semibold text-yellow-400">
-                  Selected Add-On Services
-                </p>
-                <div className="space-y-1 text-sm text-gray-300">
-                  {formattedSelectedAddOns.map((service) => (
-                    <p key={service}>• {service}</p>
-                  ))}
-                </div>
+            {mileageError ? (
+              <div className="mt-4 rounded-xl border border-red-500 bg-black p-3 text-sm text-red-400">
+                {mileageError}
               </div>
             ) : null}
 
-            {selectedJustServices.length > 0 ? (
-              <div className="mt-4 rounded-xl border border-zinc-700 bg-black p-4">
-                <p className="mb-2 font-semibold text-yellow-400">
-                  Selected Just Services
-                </p>
-                <div className="space-y-1 text-sm text-gray-300">
-                  {selectedJustServices.map((service) => (
-                    <p key={service}>• {service}</p>
-                  ))}
-                </div>
+            {oneWayKm !== null && roundTripKm !== null ? (
+              <div className="mt-4 space-y-2 rounded-xl border border-zinc-700 bg-black p-4 text-sm text-gray-300">
+                <p>• One-Way Distance: {oneWayKm} km</p>
+                <p>• Round-Trip Distance: {roundTripKm} km</p>
+                <p>• Chargeable Distance: {chargeableKm} km</p>
+                <p>• Customer Mileage Charge: ${mileageCharge.toFixed(2)}</p>
+                {isRebook ? (
+                  <>
+                    <p>
+                      • Installer Mileage Pay: $
+                      {(chargeableKm * effectiveInstallerMileageRate).toFixed(2)}
+                    </p>
+                    <p>
+                      • Company Mileage Profit: $
+                      {(chargeableKm * effectiveCompanyMileageRate).toFixed(2)}
+                    </p>
+                  </>
+                ) : null}
               </div>
             ) : null}
           </div>
 
-          {showSecondJob ? (
-            <div>
-              <SectionTitle title="Second Job Summary" />
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <SummaryBox title="Second Job Details">
-                  <p>Address: {secondJobAddress || "-"}</p>
-                  <p>Date: {secondJobDate || "-"}</p>
-                  <p>Pickup Window: {secondJobPickupTimeSlot || "-"}</p>
-                  <p>
-                    Service:{" "}
-                    {secondJobPricingConfig.label || secondJobServiceType || "-"}
-                  </p>
-                  {showSecondJobMainServiceFields ? (
-                    <p>Square Footage: {secondJobSqftNumber}</p>
-                  ) : null}
-                  <p>Notes: {secondJobSideNote || "-"}</p>
-                </SummaryBox>
+          <div>
+            <SectionTitle title="Timeline" />
+            <select
+              value={timeline}
+              onChange={(e) => setTimeline(e.target.value)}
+              className="mt-4 w-full rounded-xl border border-zinc-700 bg-black p-3"
+            >
+              <option value="">Select Timeline</option>
+              <option value="sameDay">Same Day — $210</option>
+              <option value="nextDay">Next Day — $150</option>
+              <option value="scheduled">Scheduled — $0</option>
+            </select>
 
-                <SummaryBox title="Second Job Pricing">
-                  <p>Service Price: {money(secondJobServicePrice)}</p>
-                  <p>Add-On Total: {money(secondJobAddOnTotal)}</p>
-                  <p>Just Service Total: {money(secondJobJustServiceTotal)}</p>
-                  <p>Mileage Charge: {money(secondJobMileageCharge)}</p>
-                  <p>Subtotal: {money(secondJobCustomerSubtotal)}</p>
-                  <p>HST: {money(secondJobCustomerHst)}</p>
-                  <p className="font-semibold text-yellow-400">
-                    Total: {money(secondJobCustomerTotal)}
-                  </p>
-                </SummaryBox>
+            {timeline === "scheduled" ? (
+              <div className="mt-4">
+                <label className="mb-2 block text-sm text-gray-300">
+                  Select Date
+                </label>
+                <input
+                  type="date"
+                  value={scheduledDate}
+                  onChange={(e) => setScheduledDate(e.target.value)}
+                  className="w-full rounded-xl border border-zinc-700 bg-black p-3"
+                />
               </div>
-
-              {formattedSecondJobAddOns.length > 0 ? (
-                <div className="mt-4 rounded-xl border border-zinc-700 bg-black p-4">
-                  <p className="mb-2 font-semibold text-yellow-400">
-                    Second Job Selected Add-On Services
-                  </p>
-                  <div className="space-y-1 text-sm text-gray-300">
-                    {formattedSecondJobAddOns.map((service) => (
-                      <p key={service}>• {service}</p>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-
-              {secondJobJustServices.length > 0 ? (
-                <div className="mt-4 rounded-xl border border-zinc-700 bg-black p-4">
-                  <p className="mb-2 font-semibold text-yellow-400">
-                    Second Job Selected Just Services
-                  </p>
-                  <div className="space-y-1 text-sm text-gray-300">
-                    {secondJobJustServices.map((service) => (
-                      <p key={service}>• {service}</p>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="mt-4 rounded-xl border border-zinc-700 bg-black p-4 text-sm text-gray-300">
-                <p>Second Job One-Way Distance: {secondJobOneWayKm ?? 0} km</p>
-                <p>Second Job Round-Trip Distance: {secondJobRoundTripKm ?? 0} km</p>
-                <p>Second Job Chargeable Distance: {secondJobChargeableKm} km</p>
-                <p>Second Job Customer Mileage Charge: {money(secondJobMileageCharge)}</p>
-                <p>Second Job Installer Mileage Pay: {money(secondJobInstallerMileagePayout)}</p>
-                <p>Second Job Company Mileage Profit: {money(secondJobPlatformMileageProfit)}</p>
-              </div>
-            </div>
-          ) : null}
-
-          <div className="rounded-xl border border-zinc-700 bg-black p-4 text-sm text-gray-300">
-            <p className="font-semibold text-yellow-400">Combined Math Check</p>
-            <p>Combined Customer Subtotal: {money(combinedCustomerSubtotal)}</p>
-            <p>Combined Customer HST: {money(combinedCustomerHst)}</p>
-            <p>Combined Customer Total: {money(combinedCustomerTotal)}</p>
-            <p>Combined Installer Subtotal: {money(combinedInstallerSubtotalPay)}</p>
-            <p>Combined Installer HST: {money(combinedInstallerHstPay)}</p>
-            <p>Combined Installer Pay: {money(combinedInstallerPay)}</p>
-            <p>Combined Company Subtotal: {money(combinedCompanySubtotal)}</p>
-            <p>Combined Company HST Portion: {money(combinedCompanyHst)}</p>
-            <p className="font-semibold text-yellow-400">
-              Combined Company Profit: {money(combinedCompanyProfit)}
-            </p>
+            ) : null}
           </div>
 
           <div>
-            <SectionTitle title="Payment Method" />
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <label className="rounded-xl border border-zinc-700 bg-black p-4">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="radio"
-                    checked={paymentMethod === "creditDebit"}
-                    onChange={() => setPaymentMethod("creditDebit")}
-                    disabled={!allowedPayments.creditDebit || confirmationReady}
-                  />
-                  <div>
-                    <p className="font-semibold text-white">Credit / Debit</p>
-                    <p className="text-sm text-gray-400">Pay online with Stripe</p>
-                  </div>
-                </div>
-              </label>
-
-              <label className="rounded-xl border border-zinc-700 bg-black p-4">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="radio"
-                    checked={paymentMethod === "etransfer"}
-                    onChange={() => setPaymentMethod("etransfer")}
-                    disabled={!allowedPayments.etransfer || confirmationReady}
-                  />
-                  <div>
-                    <p className="font-semibold text-white">E-Transfer</p>
-                    <p className="text-sm text-gray-400">Book now and pay after confirmation</p>
-                  </div>
-                </div>
-              </label>
-
-              <label className="rounded-xl border border-zinc-700 bg-black p-4">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="radio"
-                    checked={paymentMethod === "cashPickup"}
-                    onChange={() => setPaymentMethod("cashPickup")}
-                    disabled={!allowedPayments.cashPickup || confirmationReady}
-                  />
-                  <div>
-                    <p className="font-semibold text-white">Cash Pickup</p>
-                    <p className="text-sm text-gray-400">
-                      {allowedPayments.cashPickup
-                        ? "Available for this booking"
-                        : "Not available for this distance / total"}
-                    </p>
-                  </div>
-                </div>
-              </label>
-
-              <label className="rounded-xl border border-zinc-700 bg-black p-4">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="radio"
-                    checked={paymentMethod === "chequePickup"}
-                    onChange={() => setPaymentMethod("chequePickup")}
-                    disabled={!allowedPayments.chequePickup || confirmationReady}
-                  />
-                  <div>
-                    <p className="font-semibold text-white">Cheque Pickup</p>
-                    <p className="text-sm text-gray-400">
-                      {allowedPayments.chequePickup
-                        ? "Available for this booking"
-                        : "Not available for this distance / total"}
-                    </p>
-                  </div>
-                </div>
-              </label>
-
-              <label className="rounded-xl border border-zinc-700 bg-black p-4 md:col-span-2">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="radio"
-                    checked={paymentMethod === "weeklyInvoice"}
-                    onChange={() => setPaymentMethod("weeklyInvoice")}
-                    disabled={!allowedPayments.weeklyInvoice || confirmationReady}
-                  />
-                  <div>
-                    <p className="font-semibold text-white">Weekly Invoice</p>
-                    <p className="text-sm text-gray-400">
-                      {allowedPayments.weeklyInvoice
-                        ? "Available for qualified company bookings"
-                        : "Requires company name and minimum total"}
-                    </p>
-                  </div>
-                </div>
-              </label>
-            </div>
+            <SectionTitle title="Pickup Time Window" />
+            <select
+              value={pickupTimeSlot}
+              onChange={(e) => setPickupTimeSlot(e.target.value)}
+              className="mt-4 w-full rounded-xl border border-zinc-700 bg-black p-3"
+            >
+              <option value="">Select Time Window</option>
+              <option value="8:00 AM - 11:00 AM">8:00 AM – 11:00 AM</option>
+              <option value="11:00 AM - 2:00 PM">11:00 AM – 2:00 PM</option>
+              <option value="2:00 PM - 5:00 PM">2:00 PM – 5:00 PM</option>
+              <option value="5:00 PM - 8:00 PM">5:00 PM – 8:00 PM</option>
+            </select>
           </div>
 
-          {checkoutStep === "review" ? (
-            <div className="rounded-xl border border-yellow-500 bg-black p-4 text-sm text-gray-300">
-              <p className="mb-2 text-lg font-semibold text-yellow-400">Checkout Review</p>
-              <p>Customer: {customerName}</p>
-              <p>Email: {customerEmail}</p>
-              <p>Phone: {phoneNumber}</p>
-              <p>Pickup: {pickupAddress}</p>
-              <p>Dropoff: {dropoffAddress}</p>
-              <p>
-                Timeline:{" "}
-                {timeline === "sameDay"
-                  ? "Same Day"
-                  : timeline === "nextDay"
-                  ? "Next Day"
-                  : "Scheduled"}
-              </p>
-              <p>Distance Tier: {distanceTierLabel}</p>
-              <p>Recommended Installer: {recommendedInstallerType}</p>
-              <p>Payment Method: {getPaymentMethodLabel(paymentMethod)}</p>
-              <p>Combined Customer Subtotal: {money(combinedCustomerSubtotal)}</p>
-              <p>Combined Customer HST: {money(combinedCustomerHst)}</p>
-              <p className="font-semibold text-yellow-400">
-                Combined Customer Total: {money(combinedCustomerTotal)}
-              </p>
-            </div>
-          ) : null}
+          <div>
+            <SectionTitle title="Service Type" />
+            <select
+              value={serviceType}
+              onChange={(e) => {
+                const value = e.target.value as MainServiceType;
+                setServiceType(value);
 
-          {!confirmationReady ? (
+                if (value === "justServices") {
+                  setJobSize("");
+                  setSelectedAddOns([]);
+                } else {
+                  setSelectedJustServices([]);
+                }
+              }}
+              className="mt-4 w-full rounded-xl border border-zinc-700 bg-black p-3"
+            >
+              <option value="">Select Service Type</option>
+              <option value="full_height_backsplash">
+                Full Height Backsplash — $10/sqft
+              </option>
+              <option value="installation_3cm">
+                3cm Installation — $10/sqft
+              </option>
+              <option value="installation_2cm_standard">
+                2cm Standard Installation — $9/sqft
+              </option>
+              <option value="backsplash_tiling">
+                Backsplash Tiling — $21/sqft
+              </option>
+              <option value="justServices">Just Services</option>
+            </select>
+          </div>
+
+          {showMainServiceFields ? (
             <>
-              {checkoutStep === "form" ? (
-                <button
-                  type="button"
-                  onClick={() => setCheckoutStep("review")}
-                  className="w-full rounded-xl bg-yellow-500 py-4 font-semibold text-black transition hover:bg-yellow-400"
-                >
-                  Continue to Review
-                </button>
-              ) : (
-                <div className="grid gap-3 md:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={handleOfflineConfirmation}
-                    disabled={
-                      submitting ||
-                      stripeLoading ||
-                      !paymentMethod ||
-                      paymentMethod === "creditDebit"
-                    }
-                    className="w-full rounded-xl border border-zinc-700 bg-black py-4 font-semibold text-white transition hover:border-yellow-500 disabled:opacity-50"
-                  >
-                    {submitting ? "Confirming..." : "Confirm Booking"}
-                  </button>
+              <div>
+                <SectionTitle title="Job Size (Square Footage)" />
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Enter Square Footage"
+                  value={jobSize}
+                  onChange={(e) => setJobSize(e.target.value)}
+                  className="mt-4 w-full rounded-xl border border-zinc-700 bg-black p-3"
+                />
+              </div>
 
-                  <button
-                    type="button"
-                    onClick={handleStripeCheckout}
-                    disabled={
-                      submitting ||
-                      stripeLoading ||
-                      paymentMethod !== "creditDebit"
-                    }
-                    className="w-full rounded-xl bg-yellow-500 py-4 font-semibold text-black transition hover:bg-yellow-400 disabled:opacity-50"
-                  >
-                    {stripeLoading
-                      ? "Redirecting to Payment..."
-                      : `Pay ${money(combinedCustomerTotal)}`}
-                  </button>
+              <div className="rounded-xl border border-zinc-700 bg-black p-4">
+                <h3 className="mb-3 text-lg font-semibold text-yellow-500">
+                  Service Pricing Summary
+                </h3>
+                <div className="space-y-2 text-sm text-gray-300">
+                  <p>• Service: {pricingConfig.label || "-"}</p>
+                  <p>• Square Footage: {sqft}</p>
+                  <p>
+                    • Customer Rate: ${pricingConfig.customerRate.toFixed(2)}
+                    /sqft
+                  </p>
+                  <p className="font-semibold text-yellow-400">
+                    • Service Price: ${servicePrice.toFixed(2)}
+                  </p>
                 </div>
-              )}
+              </div>
+
+              <div>
+                <SectionTitle title="Add-On Services" />
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  {ADD_ON_SERVICES.map((service) => (
+                    <label
+                      key={service}
+                      className="flex items-center justify-between rounded-xl border border-zinc-700 bg-black p-4"
+                    >
+                      <span className="pr-4 text-sm text-gray-300">
+                        {service}
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={selectedAddOns.includes(service)}
+                        onChange={() => toggleAddOn(service)}
+                      />
+                    </label>
+                  ))}
+                </div>
+
+                {showWaterfallQuantity ? (
+                  <div className="mt-4">
+                    <label className="mb-2 block text-sm text-gray-300">
+                      Waterfall Quantity
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={waterfallQuantity}
+                      onChange={(e) => setWaterfallQuantity(e.target.value)}
+                      className="w-full rounded-xl border border-zinc-700 bg-black p-3"
+                    />
+                  </div>
+                ) : null}
+
+                {showOutletQuantity ? (
+                  <div className="mt-4">
+                    <label className="mb-2 block text-sm text-gray-300">
+                      Outlet Plug Cutout Quantity
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={outletPlugCutoutQuantity}
+                      onChange={(e) => setOutletPlugCutoutQuantity(e.target.value)}
+                      className="w-full rounded-xl border border-zinc-700 bg-black p-3"
+                    />
+                  </div>
+                ) : null}
+
+                {showDisposalOption ? (
+                  <div className="mt-4 rounded-xl border border-zinc-700 bg-black p-4">
+                    <p className="mb-2 font-semibold text-yellow-400">
+                      Disposal Responsibility
+                    </p>
+                    <div className="space-y-2 text-sm text-gray-300">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="disposalResponsibility"
+                          checked={disposalResponsibility === "customer"}
+                          onChange={() => setDisposalResponsibility("customer")}
+                        />
+                        <span>Customer / Shop Responsible for Disposal</span>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="disposalResponsibility"
+                          checked={disposalResponsibility === "installer"}
+                          onChange={() => setDisposalResponsibility("installer")}
+                        />
+                        <span>Installer Responsible for Disposal</span>
+                      </label>
+                    </div>
+                  </div>
+                ) : null}
+
+                {formattedSelectedAddOns.length > 0 ? (
+                  <div className="mt-4 rounded-xl border border-zinc-700 bg-black p-4">
+                    <p className="mb-2 font-semibold text-yellow-400">
+                      Selected Add-On Services
+                    </p>
+                    <div className="space-y-1 text-sm text-gray-300">
+                      {formattedSelectedAddOns.map((service) => (
+                        <p key={service}>• {service}</p>
+                      ))}
+                    </div>
+                    <p className="mt-3 font-semibold text-yellow-400">
+                      Add-On Service Total: ${customerAddOnTotal.toFixed(2)}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
             </>
           ) : null}
+
+          {serviceType === "justServices" ? (
+            <div>
+              <SectionTitle title="Just Services" />
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {JUST_SERVICES.map((service) => (
+                  <label
+                    key={service}
+                    className="flex items-center justify-between rounded-xl border border-zinc-700 bg-black p-4"
+                  >
+                    <span className="pr-4 text-sm text-gray-300">{service}</span>
+                    <input
+                      type="checkbox"
+                      checked={selectedJustServices.includes(service)}
+                      onChange={() => toggleJustService(service)}
+                    />
+                  </label>
+                ))}
+              </div>
+
+              {selectedJustServices.length > 0 ? (
+                <div className="mt-4 rounded-xl border border-zinc-700 bg-black p-4">
+                  <p className="mb-2 font-semibold text-yellow-400">
+                    Selected Just Services
+                  </p>
+                  <div className="space-y-1 text-sm text-gray-300">
+                    {selectedJustServices.map((service) => (
+                      <p key={service}>• {service}</p>
+                    ))}
+                  </div>
+                  <p className="mt-3 font-semibold text-yellow-400">
+                    Just Service Minimum: ${customerJustServiceTotal.toFixed(2)}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          <div>
+            <SectionTitle title="Side Note" />
+            <textarea
+              placeholder="Add any side note or extra request"
+              value={sideNote}
+              onChange={(e) => setSideNote(e.target.value)}
+              className="mt-4 min-h-[120px] w-full rounded-xl border border-zinc-700 bg-black p-3 text-white outline-none"
+            />
+          </div>
+
+          <div className="rounded-xl border border-zinc-800 bg-black p-4 text-sm text-gray-400">
+            Final pricing, including mileage, timeline, services, return trip fee,
+            and payment method, will be shown at checkout.
+          </div>
+
+          {!showSecondJob ? (
+            <button
+              type="button"
+              onClick={() => setShowSecondJob(true)}
+              className="w-full rounded-xl border border-yellow-500 py-3 font-semibold text-yellow-500 transition hover:bg-yellow-500 hover:text-black"
+            >
+              + Add Another Job
+            </button>
+          ) : null}
+
+          {showSecondJob ? (
+            <div className="space-y-4 rounded-2xl border border-zinc-700 bg-black p-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-yellow-500">
+                  Second Job
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSecondJob(false);
+                    setSecondJobAddress("");
+                    setSecondJobDate("");
+                    setSecondJobPickupTimeSlot("");
+                    setSecondJobSqft("");
+                    setSecondJobServiceType("");
+                    setSecondJobSideNote("");
+                    setSecondJobAddOns([]);
+                    setSecondJobJustServices([]);
+                    setSecondJobWaterfallQuantity("1");
+                    setSecondJobOutletPlugCutoutQuantity("1");
+                    setSecondJobDisposalResponsibility("customer");
+                    setSecondJobMileageError("");
+                    setSecondJobOneWayKm(null);
+                    setSecondJobRoundTripKm(null);
+                    setSecondJobChargeableKm(0);
+                    setSecondJobMileageCharge(0);
+                  }}
+                  className="text-sm text-red-400"
+                >
+                  Remove
+                </button>
+              </div>
+
+              <input
+                type="text"
+                placeholder="Second Job Address"
+                value={secondJobAddress}
+                onChange={(e) => setSecondJobAddress(e.target.value)}
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-900 p-3"
+              />
+
+              <input
+                type="date"
+                value={secondJobDate}
+                onChange={(e) => setSecondJobDate(e.target.value)}
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-900 p-3"
+              />
+
+              <select
+                value={secondJobPickupTimeSlot}
+                onChange={(e) => setSecondJobPickupTimeSlot(e.target.value)}
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-900 p-3"
+              >
+                <option value="">Select Time Window</option>
+                <option value="8:00 AM - 11:00 AM">8:00 AM – 11:00 AM</option>
+                <option value="11:00 AM - 2:00 PM">11:00 AM – 2:00 PM</option>
+                <option value="2:00 PM - 5:00 PM">2:00 PM – 5:00 PM</option>
+                <option value="5:00 PM - 8:00 PM">5:00 PM – 8:00 PM</option>
+              </select>
+
+              <select
+                value={secondJobServiceType}
+                onChange={(e) => {
+                  const value = e.target.value as MainServiceType;
+                  setSecondJobServiceType(value);
+
+                  if (value === "justServices") {
+                    setSecondJobSqft("");
+                    setSecondJobAddOns([]);
+                  } else {
+                    setSecondJobJustServices([]);
+                  }
+                }}
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-900 p-3"
+              >
+                <option value="">Select Service Type</option>
+                <option value="full_height_backsplash">
+                  Full Height Backsplash — $10/sqft
+                </option>
+                <option value="installation_3cm">
+                  3cm Installation — $10/sqft
+                </option>
+                <option value="installation_2cm_standard">
+                  2cm Standard Installation — $9/sqft
+                </option>
+                <option value="backsplash_tiling">
+                  Backsplash Tiling — $21/sqft
+                </option>
+                <option value="justServices">Just Services</option>
+              </select>
+
+              {showSecondJobMainServiceFields ? (
+                <>
+                  <input
+                    type="number"
+                    placeholder="Second Job Square Footage"
+                    value={secondJobSqft}
+                    onChange={(e) => setSecondJobSqft(e.target.value)}
+                    className="w-full rounded-xl border border-zinc-700 bg-zinc-900 p-3"
+                  />
+
+                  <div className="rounded-xl border border-zinc-700 bg-zinc-900 p-4">
+                    <h3 className="mb-3 text-lg font-semibold text-yellow-500">
+                      Second Job Pricing Summary
+                    </h3>
+                    <div className="space-y-2 text-sm text-gray-300">
+                      <p>• Service: {secondJobPricingConfig.label || "-"}</p>
+                      <p>• Square Footage: {secondJobSqftNumber}</p>
+                      <p>
+                        • Customer Rate: $
+                        {secondJobPricingConfig.customerRate.toFixed(2)}/sqft
+                      </p>
+                      <p className="font-semibold text-yellow-400">
+                        • Service Price: ${secondJobServicePrice.toFixed(2)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="mb-3 text-lg font-semibold text-yellow-500">
+                      Second Job Add-On Services
+                    </h3>
+
+                    <div className="grid gap-3 md:grid-cols-2">
+                      {ADD_ON_SERVICES.map((service) => (
+                        <label
+                          key={`second-job-${service}`}
+                          className="flex items-center justify-between rounded-xl border border-zinc-700 bg-zinc-900 p-4"
+                        >
+                          <span className="pr-4 text-sm text-gray-300">
+                            {service}
+                          </span>
+                          <input
+                            type="checkbox"
+                            checked={secondJobAddOns.includes(service)}
+                            onChange={() => toggleSecondJobAddOn(service)}
+                          />
+                        </label>
+                      ))}
+                    </div>
+
+                    {showSecondJobWaterfallQuantity ? (
+                      <div className="mt-4">
+                        <label className="mb-2 block text-sm text-gray-300">
+                          Second Job Waterfall Quantity
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={secondJobWaterfallQuantity}
+                          onChange={(e) =>
+                            setSecondJobWaterfallQuantity(e.target.value)
+                          }
+                          className="w-full rounded-xl border border-zinc-700 bg-zinc-900 p-3"
+                        />
+                      </div>
+                    ) : null}
+
+                    {showSecondJobOutletQuantity ? (
+                      <div className="mt-4">
+                        <label className="mb-2 block text-sm text-gray-300">
+                          Second Job Outlet Plug Cutout Quantity
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={secondJobOutletPlugCutoutQuantity}
+                          onChange={(e) =>
+                            setSecondJobOutletPlugCutoutQuantity(e.target.value)
+                          }
+                          className="w-full rounded-xl border border-zinc-700 bg-zinc-900 p-3"
+                        />
+                      </div>
+                    ) : null}
+
+                    {showSecondJobDisposalOption ? (
+                      <div className="mt-4 rounded-xl border border-zinc-700 bg-zinc-900 p-4">
+                        <p className="mb-2 font-semibold text-yellow-400">
+                          Second Job Disposal Responsibility
+                        </p>
+
+                        <div className="space-y-2 text-sm text-gray-300">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="secondJobDisposalResponsibility"
+                              checked={
+                                secondJobDisposalResponsibility === "customer"
+                              }
+                              onChange={() =>
+                                setSecondJobDisposalResponsibility("customer")
+                              }
+                            />
+                            <span>Customer / Shop Responsible for Disposal</span>
+                          </label>
+
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="secondJobDisposalResponsibility"
+                              checked={
+                                secondJobDisposalResponsibility === "installer"
+                              }
+                              onChange={() =>
+                                setSecondJobDisposalResponsibility("installer")
+                              }
+                            />
+                            <span>Installer Responsible for Disposal</span>
+                          </label>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {formattedSecondJobAddOns.length > 0 ? (
+                      <div className="mt-4 rounded-xl border border-zinc-700 bg-zinc-900 p-4">
+                        <p className="mb-2 font-semibold text-yellow-400">
+                          Selected Second Job Add-On Services
+                        </p>
+
+                        <div className="space-y-1 text-sm text-gray-300">
+                          {formattedSecondJobAddOns.map((service) => (
+                            <p key={`second-job-selected-${service}`}>
+                              • {service}
+                            </p>
+                          ))}
+                        </div>
+
+                        <p className="mt-3 font-semibold text-yellow-400">
+                          Add-On Service Total: ${secondJobAddOnTotal.toFixed(2)}
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                </>
+              ) : null}
+
+              {secondJobServiceType === "justServices" ? (
+                <div>
+                  <h3 className="mb-3 text-lg font-semibold text-yellow-500">
+                    Second Job Just Services
+                  </h3>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {JUST_SERVICES.map((service) => (
+                      <label
+                        key={`second-job-just-${service}`}
+                        className="flex items-center justify-between rounded-xl border border-zinc-700 bg-zinc-900 p-4"
+                      >
+                        <span className="pr-4 text-sm text-gray-300">
+                          {service}
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={secondJobJustServices.includes(service)}
+                          onChange={() => toggleSecondJobJustService(service)}
+                        />
+                      </label>
+                    ))}
+                  </div>
+
+                  {secondJobJustServices.length > 0 ? (
+                    <div className="mt-4 rounded-xl border border-zinc-700 bg-zinc-900 p-4">
+                      <p className="mb-2 font-semibold text-yellow-400">
+                        Selected Second Job Just Services
+                      </p>
+
+                      <div className="space-y-1 text-sm text-gray-300">
+                        {secondJobJustServices.map((service) => (
+                          <p key={`second-job-just-selected-${service}`}>
+                            • {service}
+                          </p>
+                        ))}
+                      </div>
+
+                      <p className="mt-3 font-semibold text-yellow-400">
+                        Just Service Minimum: $
+                        {secondJobJustServiceTotal.toFixed(2)}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div>
+                <h3 className="mb-3 text-lg font-semibold text-yellow-500">
+                  Second Job Mileage Calculation
+                </h3>
+
+                <button
+                  type="button"
+                  onClick={calculateSecondJobMileage}
+                  className="rounded-xl bg-yellow-500 px-6 py-3 font-semibold text-black transition hover:bg-yellow-400"
+                >
+                  {secondJobMileageLoading
+                    ? "Calculating..."
+                    : "Calculate Second Job Distance"}
+                </button>
+
+                {secondJobMileageError ? (
+                  <div className="mt-4 rounded-xl border border-red-500 bg-zinc-900 p-3 text-sm text-red-400">
+                    {secondJobMileageError}
+                  </div>
+                ) : null}
+
+                {secondJobOneWayKm !== null && secondJobRoundTripKm !== null ? (
+                  <div className="mt-4 space-y-2 rounded-xl border border-zinc-700 bg-zinc-900 p-4 text-sm text-gray-300">
+                    <p>• One-Way Distance: {secondJobOneWayKm} km</p>
+                    <p>• Round-Trip Distance: {secondJobRoundTripKm} km</p>
+                    <p>• Chargeable Distance: {secondJobChargeableKm} km</p>
+                    <p className="font-semibold text-yellow-400">
+                      • Mileage Charge: ${secondJobMileageCharge.toFixed(2)}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+
+              <textarea
+                placeholder="Second Job Side Note"
+                value={secondJobSideNote}
+                onChange={(e) => setSecondJobSideNote(e.target.value)}
+                className="min-h-[120px] w-full rounded-xl border border-zinc-700 bg-zinc-900 p-3 text-white outline-none"
+              />
+            </div>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={handleContinueToCheckout}
+            className="w-full rounded-xl bg-yellow-500 py-4 font-semibold text-black transition hover:bg-yellow-400"
+          >
+            Continue to Checkout
+          </button>
         </div>
       </div>
     </main>
   );
 }
-
 export default function CheckoutPage() {
   return (
     <Suspense
