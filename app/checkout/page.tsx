@@ -1532,11 +1532,9 @@ function CheckoutPageContent() {
         throw new Error("Stripe checkout URL was not returned.");
       }
 
-      router.push(
-        `/confirmation?jobGroupId=${encodeURIComponent(
-          jobGroupId
-        )}&paymentMethod=${encodeURIComponent(paymentMethod)}`
-      );
+      window.location.href = `/confirmation?jobGroupId=${encodeURIComponent(
+        jobGroupId
+      )}&paymentMethod=${encodeURIComponent(paymentMethod)}`;
     } catch (error) {
       console.error(error);
       alert(error instanceof Error ? error.message : "Failed to confirm booking.");
