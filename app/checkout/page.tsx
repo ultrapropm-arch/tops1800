@@ -2,2271 +2,1253 @@
 
 export const dynamic = "force-dynamic";
 
-import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { Suspense, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { loadStripe } from "@stripe/stripe-js";
 import { createClient } from "@/utils/supabase/client";
 
-const ADMIN_EMAIL = "ultrapropm@gmail.com";
-const RETURN_FEE_CUSTOMER = 200;
-const RETURN_FEE_INSTALLER_PAY = 180;
-const BASE_MILEAGE_RATE = 1.5;
-const REBOOK_CUSTOMER_MILEAGE_PERCENT = 0.6;
-const INSTALLER_MILEAGE_RATE = 1.0;
-const INSTALLER_HST_RATE = 0.13;
-
-/** INSTALLER PAY RATES */
-const INSTALLER_RATE_3CM = 7;
-const INSTALLER_RATE_2CM = 6.5;
-const INSTALLER_RATE_FULL_HEIGHT_BS = 7;
-
-const ADDON_RATE_WATERFALL = 60;
-const ADDON_RATE_OUTLET_CUTOUT = 25;
-const ADDON_RATE_DIFFICULT = 100;
-const ADDON_RATE_REMEASURE_FH = 100;
-const ADDON_RATE_REMEASURE_LH = 50;
-const ADDON_RATE_EXTRA_HELPER = 110;
-const ADDON_RATE_CONDO = 50;
-const ADDON_RATE_SINK_CUTOUT_ONSITE = 100;
-const ADDON_RATE_COOKTOP_CUTOUT = 100;
-const ADDON_RATE_SEALING = 25;
-const ADDON_RATE_PLUMBING_REMOVAL = 25;
-const ADDON_RATE_VANITY_REMOVAL_CUSTOMER_DISPOSAL = 40;
-const ADDON_RATE_VANITY_REMOVAL_INSTALLER_DISPOSAL = 110;
-const ADDON_RATE_TILE_REMOVAL_CUSTOMER_DISPOSAL = 190;
-const ADDON_RATE_TILE_REMOVAL_INSTALLER_DISPOSAL = 320;
-const ADDON_RATE_ONSITE_CUTTING = 100;
-const ADDON_RATE_ONSITE_POLISHING = 90;
-const ADDON_RATE_REATTACH_SINK = 25;
-
-type Booking = {
-  id: string;
-  job_id?: string | null;
-
-  customer_name?: string | null;
-  customer_email?: string | null;
-  company_name?: string | null;
-  phone_number?: string | null;
-
-  pickup_address?: string | null;
-  dropoff_address?: string | null;
-  pickup_city?: string | null;
-  dropoff_city?: string | null;
-
-  service_type?: string | null;
-  service_type_label?: string | null;
-  material_type?: string | null;
-  material_size?: string | null;
-  job_size?: number | null;
-  sqft?: number | null;
-
-  scheduled_date?: string | null;
-  scheduled_time?: string | null;
-  pickup_time_slot?: string | null;
-  pickup_time_from?: string | null;
-  pickup_time_to?: string | null;
-
-  installer_name?: string | null;
-  reassigned_installer_name?: string | null;
-  installer_pay?: number | null;
-  installer_pay_status?: string | null;
-
-  status?: string | null;
-  job_group_id?: string | number | null;
-  job_number?: number | null;
-
-  accepted_at?: string | null;
-  created_at?: string | null;
-  completed_at?: string | null;
-  incomplete_at?: string | null;
-
-  incomplete_reason?: string | null;
-  incomplete_note?: string | null;
-  incomplete_notes?: string | null;
-  incomplete_photo_url?: string | null;
-  incomplete_photo_path?: string | null;
-  incomplete_reported_at?: string | null;
-
-  completion_photo_url?: string | null;
-  completion_photo_path?: string | null;
-  completed_photo_url?: string | null;
-  completed_photo_path?: string | null;
-  completion_marked_at?: string | null;
-
-  homeowner_signed_completion_required?: boolean | null;
-  homeowner_signed_completion_url?: string | null;
-  homeowner_signed_completion_path?: string | null;
-
-  completion_signature_url?: string | null;
-  completion_signature_path?: string | null;
-  has_signing_form?: boolean | null;
-
-  return_fee?: number | null;
-  return_fee_charged?: number | null;
-  return_fee_installer_pay?: number | null;
-
-  mileage_fee?: number | null;
-  customer_sqft_rate?: number | null;
-  service_price?: number | null;
-  one_way_km?: number | null;
-  round_trip_km?: number | null;
-  chargeable_km?: number | null;
-  customer_mileage_charge?: number | null;
-
-  add_on_services?: string[] | string | null;
-  just_services?: string[] | string | null;
-  side_note?: string | null;
-
-  waterfall_quantity?: number | null;
-  outlet_plug_cutout_quantity?: number | null;
-  disposal_responsibility?: string | null;
-
-  installer_base_pay?: number | null;
-  installer_mileage_pay?: number | null;
-  installer_addon_pay?: number | null;
-  installer_cut_polish_pay?: number | null;
-  installer_sink_pay?: number | null;
-  installer_other_pay?: number | null;
-  installer_subtotal_pay?: number | null;
-  installer_hst_pay?: number | null;
-  installer_payout_lines?:
-    | {
-        label?: string;
-        amount?: number;
-      }[]
-    | null;
-};
-
-type EmailAttachment = {
-  filename: string;
-  path: string;
-};
-
-type DerivedPayoutLine = {
-  label: string;
-  amount: number;
-};
-
-type DerivedPayout = {
-  basePay: number;
-  mileagePay: number;
-  addonPay: number;
-  cutPolishPay: number;
-  sinkPay: number;
-  otherPay: number;
-  subtotalPay: number;
-  hstPay: number;
-  totalPay: number;
-  lines: DerivedPayoutLine[];
-};
-
-function num(value?: number | string | null) {
-  const parsed = Number(value || 0);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function money(value?: number | null) {
-  return "$" + num(value).toFixed(2);
-}
-
-function round2(value: number) {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
-
-function safeText(value?: string | null) {
-  return String(value || "").trim();
-}
-
-function getPickupWindow(job: Booking) {
-  if (job.pickup_time_slot) return job.pickup_time_slot;
-
-  const from = safeText(job.pickup_time_from);
-  const to = safeText(job.pickup_time_to);
-
-  if (from || to) return [from, to].filter(Boolean).join(" - ");
-
-  return job.scheduled_time || "-";
-}
-
-function getHoursUntilJob(scheduledDate?: string | null) {
-  if (!scheduledDate) return null;
-
-  const target = new Date(`${scheduledDate}T09:00:00`);
-  const now = new Date();
-  const diffMs = target.getTime() - now.getTime();
-
-  return diffMs / (1000 * 60 * 60);
-}
-
-function getServiceTypeLabel(value?: string | null) {
-  if (!value) return "-";
-  if (value === "full_height_backsplash") return "Full Height Backsplash";
-  if (value === "installation_3cm") return "3cm Installation";
-  if (value === "installation_2cm_standard") return "2cm Standard Installation";
-  if (value === "installation_2cm") return "2cm Installation";
-  if (value === "backsplash_tiling") return "Backsplash Tiling";
-  if (value === "justServices") return "Just Services";
-  return value;
-}
-
-function getDisposalResponsibilityLabel(value?: string | null) {
-  if (!value) return "-";
-  if (value === "customer") return "Customer / Shop Responsible";
-  if (value === "installer") return "Installer Responsible";
-  return value;
-}
-
-function toArray(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.filter(Boolean).map(String);
-  }
-
-  if (typeof value === "string") {
-    return value
-      .split(" | ")
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-
-  return [];
-}
-
-function normalizeCompactText(value: string) {
-  return value.toLowerCase().replace(/\s+/g, "").trim();
-}
-
-function normalizeStatus(value?: string | null) {
-  const status = safeText(value).toLowerCase();
-  if (!status) return "new";
-  if (status === "confirmed") return "pending";
-  if (status === "assigned") return "accepted";
-  if (status === "accepted_by_installer") return "accepted";
-  if (status === "in progress") return "in_progress";
-  if (status === "canceled") return "cancelled";
-  return status;
-}
-
-function getQuantityFromText(label: string) {
-  const normalized = normalizeCompactText(label);
-
-  const xMatch = normalized.match(/(\d+)x/);
-  if (xMatch) return Number(xMatch[1]);
-
-  const eachMatch = normalized.match(/(\d+)(pc|pcs|piece|pieces|qty|quantity)/);
-  if (eachMatch) return Number(eachMatch[1]);
-
-  return 1;
-}
-
-function getSqft(job: Booking) {
-  const value = num(job.job_size || job.sqft);
-  return value > 0 ? value : 0;
-}
-
-function extractVisibleArea(address?: string | null, city?: string | null) {
-  const safeCity = safeText(city);
-  if (safeCity) return safeCity;
-
-  const raw = safeText(address);
-  if (!raw) return "-";
-
-  const parts = raw
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  if (parts.length >= 3) {
-    if (/\d/.test(parts[0])) return parts[1] || parts[0];
-    return parts[0];
-  }
-
-  if (parts.length === 2) {
-    if (/\d/.test(parts[0])) return parts[1] || parts[0];
-    return parts[0];
-  }
-
-  return raw;
-}
-
-function getVisibleAddress(
-  address?: string | null,
-  city?: string | null,
-  canSeeFull?: boolean
-) {
-  return canSeeFull ? safeText(address) || "-" : extractVisibleArea(address, city);
-}
-
-function isAssignedToInstaller(job: Booking, installerName: string) {
-  const current = safeText(installerName).toLowerCase();
-  if (!current) return false;
-
-  return (
-    safeText(job.installer_name).toLowerCase() === current ||
-    safeText(job.reassigned_installer_name).toLowerCase() === current
-  );
-}
-
-function isAvailableJob(job: Booking) {
-  const status = normalizeStatus(job.status);
-  const hasInstaller =
-    safeText(job.installer_name).length > 0 ||
-    safeText(job.reassigned_installer_name).length > 0;
-
-  if (hasInstaller) return false;
-  if (job.accepted_at) return false;
-  if (job.completed_at) return false;
-  if (job.incomplete_at) return false;
-
-  return status === "available" || status === "pending" || status === "new";
-}
-
-function buildDerivedInstallerPayout(job: Booking): DerivedPayout {
-  const explicitLines =
-    Array.isArray(job.installer_payout_lines) && job.installer_payout_lines.length > 0
-      ? job.installer_payout_lines
-          .map((line) => ({
-            label: line.label || "Payout Line",
-            amount: round2(num(line.amount)),
-          }))
-          .filter((line) => line.amount > 0)
-      : [];
-
-  if (explicitLines.length > 0) {
-    const subtotalFromLines =
-      num(job.installer_subtotal_pay) > 0
-        ? num(job.installer_subtotal_pay)
-        : round2(explicitLines.reduce((sum, line) => sum + line.amount, 0));
-
-    const hstFromLines = num(job.installer_hst_pay);
-
-    const totalFromLines =
-      num(job.installer_pay) > 0
-        ? num(job.installer_pay)
-        : round2(subtotalFromLines + hstFromLines + num(job.return_fee_installer_pay));
-
-    return {
-      basePay: num(job.installer_base_pay),
-      mileagePay: num(job.installer_mileage_pay),
-      addonPay: num(job.installer_addon_pay),
-      cutPolishPay: num(job.installer_cut_polish_pay),
-      sinkPay: num(job.installer_sink_pay),
-      otherPay: num(job.installer_other_pay),
-      subtotalPay: subtotalFromLines,
-      hstPay: hstFromLines,
-      totalPay: totalFromLines,
-      lines: explicitLines,
-    };
-  }
-
-  const sqft = getSqft(job);
-  const serviceType = safeText(job.service_type).toLowerCase();
-
-  let derivedBasePay = 0;
-  if (num(job.installer_base_pay) > 0) {
-    derivedBasePay = num(job.installer_base_pay);
-  } else if (serviceType === "installation_3cm") {
-    derivedBasePay = round2(sqft * INSTALLER_RATE_3CM);
-  } else if (
-    serviceType === "installation_2cm_standard" ||
-    serviceType === "installation_2cm"
-  ) {
-    derivedBasePay = round2(sqft * INSTALLER_RATE_2CM);
-  } else if (serviceType === "full_height_backsplash") {
-    derivedBasePay = round2(sqft * INSTALLER_RATE_FULL_HEIGHT_BS);
-  }
-
-  const addOnLabels = toArray(job.add_on_services);
-  const justServiceLabels = toArray(job.just_services);
-
-  let derivedAddonPay = num(job.installer_addon_pay);
-  let derivedCutPolishPay = num(job.installer_cut_polish_pay);
-  let derivedSinkPay = num(job.installer_sink_pay);
-  let derivedOtherPay = num(job.installer_other_pay);
-
-  const derivedMileagePay =
-    num(job.installer_mileage_pay) > 0
-      ? num(job.installer_mileage_pay)
-      : round2(num(job.chargeable_km || 0) * INSTALLER_MILEAGE_RATE);
-
-  const derivedLines: DerivedPayoutLine[] = [];
-
-  if (derivedBasePay > 0) {
-    derivedLines.push({ label: "Base Install Pay", amount: derivedBasePay });
-  }
-
-  function addLine(
-    target: "addon" | "cutpolish" | "sink" | "other",
-    label: string,
-    amount: number
-  ) {
-    if (amount <= 0) return;
-
-    const safeAmount = round2(amount);
-
-    if (target === "addon") derivedAddonPay += safeAmount;
-    if (target === "cutpolish") derivedCutPolishPay += safeAmount;
-    if (target === "sink") derivedSinkPay += safeAmount;
-    if (target === "other") derivedOtherPay += safeAmount;
-
-    derivedLines.push({ label, amount: safeAmount });
-  }
-
-  if (num(job.installer_addon_pay) <= 0) {
-    if (num(job.waterfall_quantity) > 0) {
-      addLine(
-        "addon",
-        `Waterfall x${num(job.waterfall_quantity)}`,
-        num(job.waterfall_quantity) * ADDON_RATE_WATERFALL
-      );
-    }
-
-    if (num(job.outlet_plug_cutout_quantity) > 0) {
-      addLine(
-        "addon",
-        `Outlet Plug Cutout x${num(job.outlet_plug_cutout_quantity)}`,
-        num(job.outlet_plug_cutout_quantity) * ADDON_RATE_OUTLET_CUTOUT
-      );
-    }
-
-    addOnLabels.forEach((raw) => {
-      const label = normalizeCompactText(raw);
-      const qty = getQuantityFromText(raw);
-
-      if (label.includes("waterfall")) {
-        if (num(job.waterfall_quantity) <= 0) {
-          addLine("addon", `Waterfall x${qty}`, qty * ADDON_RATE_WATERFALL);
-        }
-        return;
-      }
-
-      if (
-        label.includes("outlet") ||
-        label.includes("plugcutout") ||
-        label.includes("plug-cutout")
-      ) {
-        if (num(job.outlet_plug_cutout_quantity) <= 0) {
-          addLine("addon", `Outlet Plug Cutout x${qty}`, qty * ADDON_RATE_OUTLET_CUTOUT);
-        }
-        return;
-      }
-
-      if (
-        label.includes("difficult") ||
-        label.includes("stairs") ||
-        label.includes("basement")
-      ) {
-        addLine("addon", "Difficult / Stairs / Basement", ADDON_RATE_DIFFICULT);
-        return;
-      }
-
-      if (label.includes("extrahelper")) {
-        addLine("addon", `Extra Helper x${qty}`, qty * ADDON_RATE_EXTRA_HELPER);
-        return;
-      }
-
-      if (label.includes("condo") || label.includes("high-rise") || label.includes("highrise")) {
-        addLine("addon", "Condo / High-Rise", ADDON_RATE_CONDO);
-        return;
-      }
-
-      if (label.includes("plumbingremoval")) {
-        addLine("other", "Plumbing Removal", ADDON_RATE_PLUMBING_REMOVAL);
-        return;
-      }
-
-      if (
-        label.includes("sealing") ||
-        label.includes("marble") ||
-        label.includes("granite")
-      ) {
-        addLine("other", "Marble / Granite Sealing", ADDON_RATE_SEALING);
-        return;
-      }
-
-      if (label.includes("cooktop")) {
-        addLine("other", "Cooktop Cutout", ADDON_RATE_COOKTOP_CUTOUT);
-        return;
-      }
-
-      if (label.includes("sinkcutout")) {
-        addLine("other", "Sink Cutout Onsite", ADDON_RATE_SINK_CUTOUT_ONSITE);
-        return;
-      }
-
-      if (label.includes("reattachsink") || label.includes("sinkreattach")) {
-        addLine("sink", "Reattach Sink", ADDON_RATE_REATTACH_SINK);
-        return;
-      }
-
-      if (label.includes("onsitecutting") || label.includes("on-sitecutting")) {
-        addLine("cutpolish", "Onsite Cutting", ADDON_RATE_ONSITE_CUTTING);
-        return;
-      }
-
-      if (label.includes("onsitepolishing") || label.includes("on-sitepolishing")) {
-        addLine("cutpolish", "Onsite Polishing", ADDON_RATE_ONSITE_POLISHING);
-        return;
-      }
-    });
-  } else {
-    derivedLines.push({
-      label: "Add-On Pay",
-      amount: num(job.installer_addon_pay),
-    });
-  }
-
-  if (num(job.installer_cut_polish_pay) > 0) {
-    derivedLines.push({
-      label: "Cut / Polish Pay",
-      amount: num(job.installer_cut_polish_pay),
-    });
-  }
-
-  if (num(job.installer_sink_pay) > 0) {
-    derivedLines.push({
-      label: "Sink / Reattach Pay",
-      amount: num(job.installer_sink_pay),
-    });
-  }
-
-  if (num(job.installer_other_pay) <= 0) {
-    justServiceLabels.forEach((raw) => {
-      const label = normalizeCompactText(raw);
-      const qty = getQuantityFromText(raw);
-
-      if (label.includes("remeasurebacksplashfh")) {
-        addLine("other", "Remeasure Backsplash FH", ADDON_RATE_REMEASURE_FH);
-        return;
-      }
-
-      if (label.includes("remeasurebacksplashlh")) {
-        addLine("other", "Remeasure Backsplash LH", ADDON_RATE_REMEASURE_LH);
-        return;
-      }
-
-      if (label.includes("vanityremoval") && label.includes("installerdisposal")) {
-        addLine(
-          "other",
-          `Vanity Removal Installer Disposal x${qty}`,
-          qty * ADDON_RATE_VANITY_REMOVAL_INSTALLER_DISPOSAL
-        );
-        return;
-      }
-
-      if (label.includes("vanityremoval")) {
-        addLine(
-          "other",
-          `Vanity Removal Customer Disposal x${qty}`,
-          qty * ADDON_RATE_VANITY_REMOVAL_CUSTOMER_DISPOSAL
-        );
-        return;
-      }
-
-      if (label.includes("backsplashtileremoval") && label.includes("installerdisposal")) {
-        addLine(
-          "other",
-          "Backsplash Tile Removal Installer Disposal",
-          ADDON_RATE_TILE_REMOVAL_INSTALLER_DISPOSAL
-        );
-        return;
-      }
-
-      if (label.includes("backsplashtileremoval")) {
-        addLine(
-          "other",
-          "Backsplash Tile Removal Customer Disposal",
-          ADDON_RATE_TILE_REMOVAL_CUSTOMER_DISPOSAL
-        );
-        return;
-      }
-
-      if (label.includes("sinkcutout")) {
-        addLine("other", "Sink Cutout Onsite", ADDON_RATE_SINK_CUTOUT_ONSITE);
-        return;
-      }
-
-      if (label.includes("cooktop")) {
-        addLine("other", "Cooktop Cutout", ADDON_RATE_COOKTOP_CUTOUT);
-        return;
-      }
-
-      if (label.includes("plumbingremoval")) {
-        addLine("other", "Plumbing Removal", ADDON_RATE_PLUMBING_REMOVAL);
-        return;
-      }
-
-      if (label.includes("sealing")) {
-        addLine("other", "Marble / Granite Sealing", ADDON_RATE_SEALING);
-        return;
-      }
-
-      if (label.includes("onsitecutting") || label.includes("on-sitecutting")) {
-        addLine("cutpolish", "Onsite Cutting", ADDON_RATE_ONSITE_CUTTING);
-        return;
-      }
-
-      if (label.includes("onsitepolishing") || label.includes("on-sitepolishing")) {
-        addLine("cutpolish", "Onsite Polishing", ADDON_RATE_ONSITE_POLISHING);
-        return;
-      }
-
-      if (label.includes("reattachsink") || label.includes("sinkreattach")) {
-        addLine("sink", "Reattach Sink", ADDON_RATE_REATTACH_SINK);
-      }
-    });
-  } else {
-    derivedLines.push({
-      label: "Other Service Pay",
-      amount: num(job.installer_other_pay),
-    });
-  }
-
-  if (derivedMileagePay > 0) {
-    derivedLines.push({ label: "Mileage Pay", amount: derivedMileagePay });
-  }
-
-  const subtotalPay =
-    num(job.installer_subtotal_pay) > 0
-      ? num(job.installer_subtotal_pay)
-      : round2(
-          derivedBasePay +
-            derivedMileagePay +
-            derivedAddonPay +
-            derivedCutPolishPay +
-            derivedSinkPay +
-            derivedOtherPay
-        );
-
-  const hstPay =
-    num(job.installer_hst_pay) > 0
-      ? num(job.installer_hst_pay)
-      : round2(subtotalPay * INSTALLER_HST_RATE);
-
-  const totalPay =
-    num(job.installer_pay) > 0
-      ? num(job.installer_pay)
-      : round2(subtotalPay + hstPay + num(job.return_fee_installer_pay));
-
-  return {
-    basePay: derivedBasePay,
-    mileagePay: derivedMileagePay,
-    addonPay: round2(derivedAddonPay),
-    cutPolishPay: round2(derivedCutPolishPay),
-    sinkPay: round2(derivedSinkPay),
-    otherPay: round2(derivedOtherPay),
-    subtotalPay,
-    hstPay,
-    totalPay,
-    lines: derivedLines.filter((line) => line.amount > 0),
-  };
-}
-
-function getDiscountedIncompleteMileage(job: Booking) {
-  const discountedMileage =
-    num(job.chargeable_km) * BASE_MILEAGE_RATE * REBOOK_CUSTOMER_MILEAGE_PERCENT;
-
-  return Number(discountedMileage.toFixed(2));
-}
-
-function getIncompleteTotalDue(job: Booking, returnFee: number) {
-  const discountedMileage = getDiscountedIncompleteMileage(job);
-  return Number((Number(returnFee || 0) + discountedMileage).toFixed(2));
-}
-
-function getRebookUrl(job: Booking) {
-  return `https://www.1800tops.com/rebook/${job.id}`;
-}
-
-async function sendEmail(params: {
-  to: string;
+const stripeKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+const stripePromise = stripeKey ? loadStripe(stripeKey) : null;
+
+const HST_RATE = 0.13;
+const CUSTOMER_JOB_MINIMUM = 210;
+
+const PAYMENT_EMAIL = "info@1800tops.com";
+const ADMIN_NOTIFICATION_EMAIL = "ultrapropm@gmail.com";
+const ADMIN_PHONE = "647-913-0480";
+
+type PaymentMethod =
+  | ""
+  | "creditDebit"
+  | "etransfer"
+  | "cashPickup"
+  | "chequePickup"
+  | "weeklyInvoice";
+
+type SendEmailParams = {
+  to?: string | string[];
+  cc?: string | string[];
+  bcc?: string | string[];
   subject: string;
   html: string;
-  type?: "assignment" | "completion" | "incomplete" | "installer_accepted";
-  attachments?: EmailAttachment[];
+  text?: string;
+  type?:
+    | "assignment"
+    | "completion"
+    | "incomplete"
+    | "resume_request"
+    | "installer_accepted"
+    | "new_job_available"
+    | "standard";
+  sendAdminCopy?: boolean;
+  sendApprovedInstallers?: boolean;
+  jobId?: string;
+};
+
+function parseNumber(value: string | null, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseList(value: string | null) {
+  if (!value) return [];
+  return value
+    .split(" | ")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function getFirstParam(
+  searchParams: ReturnType<typeof useSearchParams>,
+  keys: string[],
+  fallback = ""
+) {
+  for (const key of keys) {
+    const value = searchParams.get(key);
+    if (value && value.trim()) return value.trim();
+  }
+  return fallback;
+}
+
+function resolvePickupWindow(
+  pickupTimeSlot?: string,
+  pickupTimeFrom?: string,
+  pickupTimeTo?: string
+) {
+  if (pickupTimeSlot) return pickupTimeSlot;
+  if (pickupTimeFrom && pickupTimeTo) return `${pickupTimeFrom} - ${pickupTimeTo}`;
+  return pickupTimeFrom || pickupTimeTo || "";
+}
+
+function formatMoney(value: number) {
+  return value.toFixed(2);
+}
+
+function getTimelineLabel(params: {
+  timeline: string;
+  scheduledDate?: string;
+  pickupTimeSlot?: string;
+  pickupTimeFrom?: string;
+  pickupTimeTo?: string;
 }) {
-  const response = await fetch("/api/send-email", {
+  const resolvedWindow = resolvePickupWindow(
+    params.pickupTimeSlot,
+    params.pickupTimeFrom,
+    params.pickupTimeTo
+  );
+
+  if (params.timeline === "sameDay") {
+    return `Same Day${resolvedWindow ? ` • ${resolvedWindow}` : ""}`;
+  }
+
+  if (params.timeline === "nextDay") {
+    return `Next Day${resolvedWindow ? ` • ${resolvedWindow}` : ""}`;
+  }
+
+  if (params.timeline === "scheduled") {
+    const pieces = ["Scheduled"];
+    if (params.scheduledDate) pieces.push(params.scheduledDate);
+    if (resolvedWindow) pieces.push(resolvedWindow);
+    return pieces.join(" • ");
+  }
+
+  return "Not provided";
+}
+
+function getPaymentLabel(method: PaymentMethod) {
+  switch (method) {
+    case "creditDebit":
+      return "Credit / Debit Card";
+    case "etransfer":
+      return "E-Transfer";
+    case "cashPickup":
+      return "Cash Pickup";
+    case "chequePickup":
+      return "Cheque Pickup";
+    case "weeklyInvoice":
+      return "Weekly Invoice";
+    default:
+      return "Not selected";
+  }
+}
+
+function getStatusFromPaymentMethod(method: PaymentMethod) {
+  if (method === "creditDebit") return "pending_payment";
+  if (method === "weeklyInvoice") return "available";
+  return "available";
+}
+
+function buildConfirmationUrl(params: {
+  jobGroupId: number;
+  finalTotal: number;
+  paymentMethod: PaymentMethod;
+  customerName: string;
+  customerEmail: string;
+  companyName: string;
+  phoneNumber: string;
+  jobsCount: number;
+}) {
+  const qs = new URLSearchParams({
+    group: String(params.jobGroupId),
+    total: formatMoney(params.finalTotal),
+    payment: params.paymentMethod,
+    paymentLabel: getPaymentLabel(params.paymentMethod),
+    customerName: params.customerName || "",
+    customerEmail: params.customerEmail || "",
+    companyName: params.companyName || "",
+    phoneNumber: params.phoneNumber || "",
+    jobsCount: String(params.jobsCount),
+  });
+
+  return `/confirmation?${qs.toString()}`;
+}
+
+async function sendEmail(params: SendEmailParams) {
+  const res = await fetch("/api/send-email", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
   });
 
-  const result = await response.json().catch(() => null);
+  const data = await res.json().catch(() => null);
 
-  if (!response.ok) {
-    throw new Error(result?.error || "Failed to send email");
+  if (!res.ok) {
+    throw new Error(data?.error || "Email failed");
   }
 
-  return result;
+  return data;
 }
 
-async function sendAdminEmail(params: {
-  subject: string;
-  html: string;
-  type?: "assignment" | "completion" | "incomplete" | "installer_accepted";
-  attachments?: EmailAttachment[];
+function bookedConfirmationHtml(params: {
+  customerName: string;
+  paymentLabel: string;
+  jobsHtml: string;
+  finalTotal: string;
 }) {
-  return sendEmail({
-    to: ADMIN_EMAIL,
-    subject: params.subject,
-    html: params.html,
-    type: params.type,
-    attachments: params.attachments,
-  });
-}
-
-async function uploadJobFile(
-  file: File,
-  folder: "completed-jobs" | "completion-signatures" | "incomplete-jobs",
-  jobId: string
-) {
-  const supabase = createClient();
-  const safeFileName = file.name.replace(/\s+/g, "-");
-  const filePath = `${folder}/${jobId}-${Date.now()}-${safeFileName}`;
-
-  const { error } = await supabase.storage
-    .from("job-photos")
-    .upload(filePath, file, {
-      upsert: true,
-    });
-
-  if (error) {
-    throw new Error(error.message || "Failed to upload file.");
-  }
-
-  const { data } = supabase.storage.from("job-photos").getPublicUrl(filePath);
-
-  return {
-    filePath,
-    publicUrl: data.publicUrl,
-    filename: file.name,
-  };
-}
-
-function assignmentEmailHtml(job: Booking, installerName?: string) {
   return `
-    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
-      <p>Hello ${job.customer_name || "Customer"},</p>
-      <p>An installer has been assigned to your booking with 1-800TOPS.</p>
-      <div style="margin: 16px 0; padding: 14px; border: 1px solid #ddd; border-radius: 10px;">
-        <p><strong>Job ID:</strong> ${job.job_id || job.id}</p>
-        <p><strong>Installer:</strong> ${installerName || job.installer_name || "-"}</p>
-        <p><strong>Company / Customer:</strong> ${job.company_name || job.customer_name || "-"}</p>
-        <p><strong>Service:</strong> ${getServiceTypeLabel(
-          job.service_type_label || job.service_type
-        )}</p>
-        <p><strong>Date:</strong> ${job.scheduled_date || "-"}</p>
-        <p><strong>Pickup Window:</strong> ${getPickupWindow(job)}</p>
-        <p><strong>Pick Up:</strong> ${job.pickup_address || "-"}</p>
-        <p><strong>Drop Off:</strong> ${job.dropoff_address || "-"}</p>
-      </div>
-    </div>
-  `;
-}
-
-function completionEmailHtml(
-  job: Booking,
-  completedPhotoUrl: string,
-  signatureUrl?: string
-) {
-  return `
-    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
-      <p>Hello ${job.customer_name || "Customer"},</p>
-      <p>Your job has been completed successfully.</p>
-      <div style="margin: 16px 0; padding: 14px; border: 1px solid #ddd; border-radius: 10px;">
-        <p><strong>Job ID:</strong> ${job.job_id || job.id}</p>
-        <p><strong>Company / Customer:</strong> ${job.company_name || job.customer_name || "-"}</p>
-        <p><strong>Service:</strong> ${getServiceTypeLabel(
-          job.service_type_label || job.service_type
-        )}</p>
-        <p><strong>Date:</strong> ${job.scheduled_date || "-"}</p>
-        <p><strong>Pickup Window:</strong> ${getPickupWindow(job)}</p>
-        <p><strong>Pick Up:</strong> ${job.pickup_address || "-"}</p>
-        <p><strong>Drop Off:</strong> ${job.dropoff_address || "-"}</p>
-        <p><strong>Completion Photo:</strong> <a href="${completedPhotoUrl}">View Photo</a></p>
-        ${
-          signatureUrl
-            ? `<p><strong>Signed Completion:</strong> <a href="${signatureUrl}">View Signed Form</a></p>`
-            : `<p><strong>Signed Completion:</strong> No customer signing form was provided.</p>`
-        }
-      </div>
-      <p>Thank you for choosing 1-800TOPS.</p>
-    </div>
-  `;
-}
-
-function incompleteEmailHtml(
-  job: Booking,
-  reason: string,
-  note: string,
-  returnFee: number,
-  incompletePhotoUrl: string
-) {
-  const reasonLabel =
-    reason === "customer"
-      ? "Customer / Homeowner Issue"
-      : reason === "shop"
-      ? "Shop Issue"
-      : reason === "installer"
-      ? "Installer Issue"
-      : reason || "-";
-
-  const discountedMileageCharge = getDiscountedIncompleteMileage(job);
-  const totalDue = getIncompleteTotalDue(job, returnFee);
-  const rebookUrl = getRebookUrl(job);
-
-  return `
-    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
-      <p>Hello ${job.customer_name || "Customer"},</p>
-      <p>Your job could not be completed at this time.</p>
-      <div style="margin: 16px 0; padding: 14px; border: 1px solid #ddd; border-radius: 10px;">
-        <p><strong>Job ID:</strong> ${job.job_id || job.id}</p>
-        <p><strong>Company / Customer:</strong> ${job.company_name || job.customer_name || "-"}</p>
-        <p><strong>Reason:</strong> ${reasonLabel}</p>
-        <p><strong>Note:</strong> ${note || "-"}</p>
-        <p><strong>Date:</strong> ${job.scheduled_date || "-"}</p>
-        <p><strong>Pickup Window:</strong> ${getPickupWindow(job)}</p>
-        <p><strong>Pick Up:</strong> ${job.pickup_address || "-"}</p>
-        <p><strong>Drop Off:</strong> ${job.dropoff_address || "-"}</p>
-        <p><strong>Photo Proof:</strong> <a href="${incompletePhotoUrl}">View Photo</a></p>
-      </div>
+    <div style="font-family: Arial, sans-serif; color: #111;">
+      <h2>Booking Confirmed</h2>
+      <p>Hello ${params.customerName || "Customer"},</p>
+      <p>Your booking has been received.</p>
+      <p><strong>Payment Method:</strong> ${params.paymentLabel}</p>
+      ${params.jobsHtml}
+      <h3 style="margin-top: 18px;">Final Total: $${params.finalTotal}</h3>
       ${
-        returnFee > 0
-          ? `
-        <div style="margin: 16px 0; padding: 14px; border: 1px solid #ddd; border-radius: 10px; background: #fafafa;">
-          <p><strong>Return Visit Fee:</strong> ${money(returnFee)}</p>
-          <p><strong>Discounted Mileage Charge:</strong> ${money(discountedMileageCharge)}</p>
-          <p><strong>Total Due For Return Visit:</strong> ${money(totalDue)}</p>
-        </div>
-      `
+        params.paymentLabel === "E-Transfer"
+          ? `<p><strong>E-Transfer Email:</strong> ${PAYMENT_EMAIL}</p>`
           : ""
       }
       ${
-        returnFee > 0
-          ? `<p>A return visit fee has been applied because this was marked as a customer or shop-related issue.</p>`
+        params.paymentLabel === "Weekly Invoice"
+          ? `<p><strong>Billing Email:</strong> ${PAYMENT_EMAIL}</p>`
           : ""
       }
-      <p><strong>Please do not create a new booking.</strong></p>
-      <p>Use the link below to continue this existing job when you are ready.</p>
-      ${
-        returnFee > 0
-          ? `
-        <div style="margin: 24px 0;">
-          <a
-            href="${rebookUrl}"
-            style="
-              display: inline-block;
-              background: #d4af37;
-              color: #000;
-              text-decoration: none;
-              padding: 14px 22px;
-              border-radius: 10px;
-              font-weight: bold;
-            "
-          >
-            Request Return Visit
-          </a>
-        </div>
-        <p><strong>Payment options on the return-visit page:</strong></p>
-        <ul>
-          <li>Credit / Debit</li>
-          <li>E-Transfer</li>
-          <li>Pay Later</li>
-        </ul>
-      `
-          : ""
-      }
-      <hr style="margin: 24px 0; border: none; border-top: 1px solid #ddd;" />
-      <p><strong>Important Job Policies:</strong></p>
-      <ul>
-        <li>Installer waiting time may be subject to additional charges.</li>
-        <li>Please ensure all countertop pieces are counted and organized before pickup.</li>
-        <li>If paperwork requires homeowner signature, provide it to the installer at pickup.</li>
-      </ul>
+      <p style="margin-top: 18px;">Thank you for booking with 1800TOPS.</p>
     </div>
   `;
 }
 
-function adminAcceptedEmailHtml(job: Booking, installerName: string, payout: DerivedPayout) {
-  return `
-    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
-      <p><strong>Job ID:</strong> ${job.job_id || job.id}</p>
-      <p><strong>Installer:</strong> ${installerName || "-"}</p>
-      <p><strong>Customer / Company:</strong> ${job.company_name || job.customer_name || "-"}</p>
-      <p><strong>Service:</strong> ${getServiceTypeLabel(
-        job.service_type_label || job.service_type
-      )}</p>
-      <p><strong>Date:</strong> ${job.scheduled_date || "-"}</p>
-      <p><strong>Pickup Window:</strong> ${getPickupWindow(job)}</p>
-      <p><strong>Pick Up:</strong> ${job.pickup_address || "-"}</p>
-      <p><strong>Drop Off:</strong> ${job.dropoff_address || "-"}</p>
-      <p><strong>Status:</strong> accepted</p>
-      <p><strong>Installer Payout:</strong> ${money(payout.totalPay)}</p>
-    </div>
-  `;
-}
-
-function adminCompletionEmailHtml(
-  job: Booking,
-  installerName: string,
-  completedPhotoUrl: string,
-  hasSigningForm: boolean,
-  signatureUrl?: string
-) {
-  return `
-    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
-      <h2>Job Completed</h2>
-      <p><strong>Job ID:</strong> ${job.job_id || job.id}</p>
-      <p><strong>Installer:</strong> ${installerName || "-"}</p>
-      <p><strong>Customer / Company:</strong> ${job.company_name || job.customer_name || "-"}</p>
-      <p><strong>Service:</strong> ${getServiceTypeLabel(
-        job.service_type_label || job.service_type
-      )}</p>
-      <p><strong>Date:</strong> ${job.scheduled_date || "-"}</p>
-      <p><strong>Pickup Window:</strong> ${getPickupWindow(job)}</p>
-      <p><strong>Pick Up:</strong> ${job.pickup_address || "-"}</p>
-      <p><strong>Drop Off:</strong> ${job.dropoff_address || "-"}</p>
-      <p><strong>Completion Photo:</strong> <a href="${completedPhotoUrl}">View Photo</a></p>
-      <p><strong>Customer Provided Signing Form:</strong> ${hasSigningForm ? "Yes" : "No"}</p>
-      ${
-        signatureUrl
-          ? `<p><strong>Signed Completion:</strong> <a href="${signatureUrl}">View Signed Form</a></p>`
-          : ""
-      }
-      <p><strong>Status:</strong> completed</p>
-    </div>
-  `;
-}
-
-function adminIncompleteEmailHtml(
-  job: Booking,
-  installerName: string,
-  reason: string,
-  note: string,
-  returnFee: number,
-  installerPayStatus: string,
-  incompletePhotoUrl: string
-) {
-  const reasonLabel =
-    reason === "customer"
-      ? "Customer / Homeowner Issue"
-      : reason === "shop"
-      ? "Shop Issue"
-      : reason === "installer"
-      ? "Installer Issue"
-      : reason || "-";
-
-  const discountedMileageCharge = getDiscountedIncompleteMileage(job);
-  const totalDue = getIncompleteTotalDue(job, returnFee);
-  const rebookUrl = getRebookUrl(job);
-
-  return `
-    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
-      <h2>Job Incomplete</h2>
-      <p><strong>Job ID:</strong> ${job.job_id || job.id}</p>
-      <p><strong>Installer:</strong> ${installerName || "-"}</p>
-      <p><strong>Customer / Company:</strong> ${job.company_name || job.customer_name || "-"}</p>
-      <p><strong>Service:</strong> ${getServiceTypeLabel(
-        job.service_type_label || job.service_type
-      )}</p>
-      <p><strong>Date:</strong> ${job.scheduled_date || "-"}</p>
-      <p><strong>Pickup Window:</strong> ${getPickupWindow(job)}</p>
-      <p><strong>Reason:</strong> ${reasonLabel}</p>
-      <p><strong>Note:</strong> ${note || "-"}</p>
-      <p><strong>Photo Proof:</strong> <a href="${incompletePhotoUrl}">View Photo</a></p>
-      <p><strong>Customer Return Fee:</strong> ${money(returnFee)}</p>
-      <p><strong>Discounted Mileage Charge:</strong> ${money(discountedMileageCharge)}</p>
-      <p><strong>Total Due For Return Visit:</strong> ${money(totalDue)}</p>
-      <p><strong>Installer Return Pay:</strong> ${money(
-        returnFee > 0 ? RETURN_FEE_INSTALLER_PAY : 0
-      )}</p>
-      <p><strong>Installer Pay Status:</strong> ${installerPayStatus}</p>
-      <p><strong>Rebook Link:</strong> <a href="${rebookUrl}">${rebookUrl}</a></p>
-      <p><strong>Status:</strong> incomplete</p>
-    </div>
-  `;
-}
-
-function adminCancelRequestEmailHtml(
-  job: Booking,
-  installerName: string,
-  reason: string,
-  hoursNotice: number | null
-) {
-  const lateCancel = hoursNotice !== null && hoursNotice < 48;
-
-  return `
-    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111;">
-      <p><strong>Installer Cancel Request</strong></p>
-      <p><strong>Job ID:</strong> ${job.job_id || job.id}</p>
-      <p><strong>Installer:</strong> ${installerName || "-"}</p>
-      <p><strong>Customer / Company:</strong> ${job.company_name || job.customer_name || "-"}</p>
-      <p><strong>Service:</strong> ${getServiceTypeLabel(
-        job.service_type_label || job.service_type
-      )}</p>
-      <p><strong>Date:</strong> ${job.scheduled_date || "-"}</p>
-      <p><strong>Pickup Window:</strong> ${getPickupWindow(job)}</p>
-      <p><strong>Pick Up:</strong> ${job.pickup_address || "-"}</p>
-      <p><strong>Drop Off:</strong> ${job.dropoff_address || "-"}</p>
-      <p><strong>Cancel Reason:</strong> ${reason || "-"}</p>
-      <p><strong>Notice Given:</strong> ${
-        hoursNotice === null ? "-" : `${hoursNotice.toFixed(1)} hours`
-      }</p>
-      <p><strong>Policy Result:</strong> ${
-        lateCancel
-          ? "Late cancellation request (under 48 hours notice)"
-          : "Within policy (48+ hours notice)"
-      }</p>
-      <p><strong>Next Step:</strong> Review and reassign if approved.</p>
-    </div>
-  `;
-}
-
-function Info({
-  label,
-  value,
-  highlight,
-}: {
-  label: string;
-  value?: string | null;
-  highlight?: boolean;
+function cardPendingEmailHtml(params: {
+  customerName: string;
+  jobsHtml: string;
+  finalTotal: string;
 }) {
-  return (
-    <div className="rounded-xl border border-zinc-800 bg-black p-4">
-      <p className="text-sm text-gray-400">{label}</p>
-      <p className={highlight ? "mt-1 font-semibold text-yellow-400" : "mt-1 text-white"}>
-        {value || "-"}
-      </p>
+  return `
+    <div style="font-family: Arial, sans-serif; color: #111;">
+      <h2>Booking Started</h2>
+      <p>Hello ${params.customerName || "Customer"},</p>
+      <p>Your booking has been created and is waiting for card payment.</p>
+      ${params.jobsHtml}
+      <h3 style="margin-top: 18px;">Final Total: $${params.finalTotal}</h3>
+      <p>Please complete your payment on the Stripe checkout page.</p>
     </div>
-  );
+  `;
 }
 
-function ServiceBox({
-  title,
-  items,
-}: {
+function adminNotificationHtml(params: {
+  customerName: string;
+  customerEmail: string;
+  companyName: string;
+  phoneNumber: string;
+  paymentLabel: string;
+  jobsHtml: string;
+  finalTotal: string;
+  jobGroupId: number;
+  status: string;
+}) {
+  return `
+    <div style="font-family: Arial, sans-serif; color: #111;">
+      <h2>New Booking Received</h2>
+      <p><strong>Customer:</strong> ${params.customerName || "-"}</p>
+      <p><strong>Email:</strong> ${params.customerEmail || "-"}</p>
+      <p><strong>Phone:</strong> ${params.phoneNumber || "-"}</p>
+      <p><strong>Company:</strong> ${params.companyName || "-"}</p>
+      <p><strong>Payment Method:</strong> ${params.paymentLabel}</p>
+      <p><strong>Status:</strong> ${params.status}</p>
+      <p><strong>Job Group ID:</strong> ${params.jobGroupId}</p>
+      ${params.jobsHtml}
+      <h3 style="margin-top: 18px;">Final Total: $${params.finalTotal}</h3>
+    </div>
+  `;
+}
+
+function installerNewJobHtml(params: {
+  customerName: string;
+  companyName: string;
+  paymentLabel: string;
+  jobsHtml: string;
+  finalTotal: string;
+  jobGroupId: number;
+}) {
+  return `
+    <div style="font-family: Arial, sans-serif; color: #111;">
+      <h2>New Available Job</h2>
+      <p>A new job is now available in the installer portal.</p>
+      <p><strong>Customer:</strong> ${params.customerName || "-"}</p>
+      <p><strong>Company:</strong> ${params.companyName || "-"}</p>
+      <p><strong>Payment Method:</strong> ${params.paymentLabel}</p>
+      <p><strong>Job Group ID:</strong> ${params.jobGroupId}</p>
+      ${params.jobsHtml}
+      <h3 style="margin-top: 18px;">Booking Value: $${params.finalTotal}</h3>
+      <p>Please log in to the installer portal to review and accept this job if it fits your route.</p>
+    </div>
+  `;
+}
+
+function buildEmailJobHtml(params: {
   title: string;
-  items: string[];
+  timelineLabel: string;
+  serviceTypeLabel: string;
+  pickupAddress: string;
+  dropoffAddress?: string;
+  addOnServices: string[];
+  justServices: string[];
+  total: number;
 }) {
-  if (items.length === 0) return null;
+  const addOnsHtml =
+    params.addOnServices.length > 0
+      ? `<p><strong>Add-Ons:</strong> ${params.addOnServices.join(", ")}</p>`
+      : "";
 
-  return (
-    <div className="rounded-xl border border-zinc-800 bg-black p-4">
-      <p className="mb-3 text-lg font-semibold text-yellow-400">{title}</p>
-      <div className="space-y-2 text-sm text-gray-300">
-        {items.map((item) => (
-          <p key={item}>• {item}</p>
-        ))}
-      </div>
+  const justServicesHtml =
+    params.justServices.length > 0
+      ? `<p><strong>Just Services:</strong> ${params.justServices.join(", ")}</p>`
+      : "";
+
+  const dropoffHtml = params.dropoffAddress
+    ? `<p><strong>Drop Off:</strong> ${params.dropoffAddress}</p>`
+    : "";
+
+  return `
+    <div style="margin: 16px 0; padding: 14px; border: 1px solid #ddd; border-radius: 8px;">
+      <h3 style="margin-top: 0;">${params.title}</h3>
+      <p><strong>Timeline:</strong> ${params.timelineLabel}</p>
+      <p><strong>Service:</strong> ${params.serviceTypeLabel || "-"}</p>
+      <p><strong>Pick Up:</strong> ${params.pickupAddress || "-"}</p>
+      ${dropoffHtml}
+      ${addOnsHtml}
+      ${justServicesHtml}
+      <p><strong>Total:</strong> $${formatMoney(params.total)}</p>
     </div>
-  );
+  `;
 }
 
-export default function InstallerJobDetailsPage() {
-  const params = useParams();
+function CheckoutContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = useMemo(() => createClient(), []);
 
-  const routeParams = params as Record<string, string | string[] | undefined>;
-  const jobId = String(routeParams?.jobId || routeParams?.id || "");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("");
+  const [isSaving, setIsSaving] = useState(false);
 
-  const [loading, setLoading] = useState(true);
-  const [job, setJob] = useState<Booking | null>(null);
-  const [groupJobs, setGroupJobs] = useState<Booking[]>([]);
-  const [installerName, setInstallerName] = useState("");
-  const [actionLoading, setActionLoading] = useState("");
+  const customerName = searchParams.get("customerName") || "";
+  const customerEmail = searchParams.get("customerEmail") || "";
+  const companyName = searchParams.get("companyName") || "";
+  const phoneNumber = searchParams.get("phoneNumber") || "";
 
-  const [showIncompleteBox, setShowIncompleteBox] = useState(false);
-  const [incompleteReason, setIncompleteReason] = useState("");
-  const [incompleteNote, setIncompleteNote] = useState("");
-  const [incompletePhoto, setIncompletePhoto] = useState<File | null>(null);
+  const bookingDistanceTier = searchParams.get("bookingDistanceTier") || "";
+  const maxServiceDistanceKm = searchParams.get("maxServiceDistanceKm") || "200";
 
-  const [showCompleteBox, setShowCompleteBox] = useState(false);
-  const [completionPhoto, setCompletionPhoto] = useState<File | null>(null);
-  const [hasSigningForm, setHasSigningForm] = useState("");
-  const [completionSignature, setCompletionSignature] = useState<File | null>(null);
+  const timeline = getFirstParam(searchParams, ["timeline"], "");
+  const scheduledDate = getFirstParam(searchParams, [
+    "scheduledDate",
+    "scheduled_date",
+    "date",
+  ]);
+  const pickupTimeSlot = getFirstParam(searchParams, [
+    "pickupTimeSlot",
+    "pickup_time_slot",
+    "pickupWindow",
+    "pickup_window",
+  ]);
+  const pickupTimeFrom = getFirstParam(searchParams, [
+    "pickupTimeFrom",
+    "pickup_time_from",
+  ]);
+  const pickupTimeTo = getFirstParam(searchParams, [
+    "pickupTimeTo",
+    "pickup_time_to",
+  ]);
+  const pickupWindow = resolvePickupWindow(
+    pickupTimeSlot,
+    pickupTimeFrom,
+    pickupTimeTo
+  );
 
-  const [showCancelBox, setShowCancelBox] = useState(false);
-  const [cancelReason, setCancelReason] = useState("");
+  const pickupAddress = searchParams.get("pickupAddress") || "";
+  const dropoffAddress = searchParams.get("dropoffAddress") || "";
 
-  useEffect(() => {
-    const savedName = localStorage.getItem("installerPortalName") || "";
-    setInstallerName(savedName);
+  const serviceType = searchParams.get("serviceType") || "";
+  const serviceTypeLabel =
+    searchParams.get("serviceTypeLabel") || serviceType || "";
 
-    if (jobId) {
-      void loadJobDetails();
-    } else {
-      setLoading(false);
+  const sqft = parseNumber(searchParams.get("sqft"));
+  const customerSqftRate = parseNumber(searchParams.get("customerSqftRate"));
+
+  const servicePrice = parseNumber(searchParams.get("servicePrice"));
+  const mileageCharge = parseNumber(searchParams.get("mileageCharge"));
+  const customerAddOnTotal = parseNumber(searchParams.get("customerAddOnTotal"));
+  const customerJustServiceTotal = parseNumber(
+    searchParams.get("customerJustServiceTotal")
+  );
+  const returnFeeCharged = parseNumber(searchParams.get("returnFeeCharged"));
+
+  const oneWayKm = parseNumber(searchParams.get("oneWayKm"));
+  const roundTripKm = parseNumber(searchParams.get("roundTripKm"));
+  const chargeableKm = parseNumber(searchParams.get("chargeableKm"));
+
+  const sideNote = searchParams.get("sideNote") || "";
+
+  const addOnList = parseList(searchParams.get("addOnServices"));
+  const justServices = parseList(searchParams.get("justServices"));
+
+  const installerServicePayout = parseNumber(
+    searchParams.get("installerServicePayout")
+  );
+  const installerMileagePayout = parseNumber(
+    searchParams.get("installerMileagePayout")
+  );
+  const installerTotalPayout = parseNumber(
+    searchParams.get("installerTotalPayout")
+  );
+
+  const showSecondJob = searchParams.get("showSecondJob") === "true";
+
+  const secondJobTimeline = getFirstParam(
+    searchParams,
+    ["secondJobTimeline", "second_job_timeline"],
+    "scheduled"
+  );
+  const secondJobScheduledDate = getFirstParam(searchParams, [
+    "secondJobScheduledDate",
+    "second_job_scheduled_date",
+    "secondJobDate",
+  ]);
+  const secondJobPickupTimeSlot = getFirstParam(searchParams, [
+    "secondJobPickupTimeSlot",
+    "second_job_pickup_time_slot",
+    "secondJobPickupWindow",
+  ]);
+  const secondJobPickupTimeFrom = getFirstParam(searchParams, [
+    "secondJobPickupTimeFrom",
+    "second_job_pickup_time_from",
+  ]);
+  const secondJobPickupTimeTo = getFirstParam(searchParams, [
+    "secondJobPickupTimeTo",
+    "second_job_pickup_time_to",
+  ]);
+  const secondPickupWindow = resolvePickupWindow(
+    secondJobPickupTimeSlot,
+    secondJobPickupTimeFrom,
+    secondJobPickupTimeTo
+  );
+
+  const secondAddress = searchParams.get("secondJobAddress") || "";
+  const secondDropoffAddress =
+    searchParams.get("secondJobDropoffAddress") || "";
+
+  const secondJobServiceType = searchParams.get("secondJobServiceType") || "";
+  const secondJobServiceTypeLabel =
+    searchParams.get("secondJobServiceTypeLabel") || secondJobServiceType || "";
+
+  const secondJobSqft = parseNumber(searchParams.get("secondJobSqft"));
+  const secondJobCustomerSqftRate = parseNumber(
+    searchParams.get("secondJobCustomerSqftRate")
+  );
+
+  const secondServicePrice = parseNumber(
+    searchParams.get("secondJobServicePrice")
+  );
+  const secondMileageCharge = parseNumber(
+    searchParams.get("secondJobMileageCharge")
+  );
+  const secondJobAddOnTotal = parseNumber(
+    searchParams.get("secondJobAddOnTotal")
+  );
+  const secondJobJustServiceTotal = parseNumber(
+    searchParams.get("secondJobJustServiceTotal")
+  );
+
+  const secondJobOneWayKm = parseNumber(searchParams.get("secondJobOneWayKm"));
+  const secondJobRoundTripKm = parseNumber(
+    searchParams.get("secondJobRoundTripKm")
+  );
+  const secondJobChargeableKm = parseNumber(
+    searchParams.get("secondJobChargeableKm")
+  );
+
+  const secondJobSideNote = searchParams.get("secondJobSideNote") || "";
+
+  const secondAddOns = parseList(searchParams.get("secondJobAddOns"));
+  const secondJustServices = parseList(searchParams.get("secondJobJustServices"));
+
+  const secondJobInstallerServicePayout = parseNumber(
+    searchParams.get("secondJobInstallerServicePayout")
+  );
+  const secondJobInstallerMileagePayout = parseNumber(
+    searchParams.get("secondJobInstallerMileagePayout")
+  );
+  const secondJobInstallerTotalPayout = parseNumber(
+    searchParams.get("secondJobInstallerTotalPayout")
+  );
+
+  const [showMainJob, setShowMainJob] = useState(true);
+  const [showSecondJobState, setShowSecondJobState] = useState(showSecondJob);
+
+  const job1Pricing = useMemo(() => {
+    const rawSubtotal =
+      servicePrice +
+      mileageCharge +
+      customerAddOnTotal +
+      customerJustServiceTotal +
+      returnFeeCharged;
+
+    const base =
+      rawSubtotal > 0 ? Math.max(rawSubtotal, CUSTOMER_JOB_MINIMUM) : 0;
+
+    const hst = base * HST_RATE;
+
+    return {
+      rawSubtotal,
+      subtotal: base,
+      hst,
+      total: base + hst,
+    };
+  }, [
+    servicePrice,
+    mileageCharge,
+    customerAddOnTotal,
+    customerJustServiceTotal,
+    returnFeeCharged,
+  ]);
+
+  const job2Pricing = useMemo(() => {
+    if (!showSecondJobState) return null;
+
+    const rawSubtotal =
+      secondServicePrice +
+      secondMileageCharge +
+      secondJobAddOnTotal +
+      secondJobJustServiceTotal;
+
+    const base =
+      rawSubtotal > 0 ? Math.max(rawSubtotal, CUSTOMER_JOB_MINIMUM) : 0;
+
+    const hst = base * HST_RATE;
+
+    return {
+      rawSubtotal,
+      subtotal: base,
+      hst,
+      total: base + hst,
+    };
+  }, [
+    secondServicePrice,
+    secondMileageCharge,
+    secondJobAddOnTotal,
+    secondJobJustServiceTotal,
+    showSecondJobState,
+  ]);
+
+  const finalTotal =
+    (showMainJob ? job1Pricing.total : 0) +
+    (showSecondJobState && job2Pricing ? job2Pricing.total : 0);
+
+  const mainTimelineLabel = getTimelineLabel({
+    timeline,
+    scheduledDate,
+    pickupTimeSlot: pickupWindow,
+    pickupTimeFrom,
+    pickupTimeTo,
+  });
+
+  const secondTimelineLabel = getTimelineLabel({
+    timeline: secondJobTimeline,
+    scheduledDate: secondJobScheduledDate,
+    pickupTimeSlot: secondPickupWindow,
+    pickupTimeFrom: secondJobPickupTimeFrom,
+    pickupTimeTo: secondJobPickupTimeTo,
+  });
+
+  async function handleCardCheckout(jobGroupId: number) {
+    if (!stripePromise) {
+      throw new Error("Stripe publishable key is missing.");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobId]);
 
-  async function loadJobDetails() {
-    setLoading(true);
+    const stripe = await stripePromise;
 
-    try {
-      if (!jobId) {
-        throw new Error("Missing job id.");
-      }
+    if (!stripe) {
+      throw new Error("Stripe failed to load.");
+    }
 
-      let booking: Booking | null = null;
+    const res = await fetch("/api/stripe/checkout", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        amount: Math.round(finalTotal * 100),
+        jobGroupId,
+        customerName,
+        customerEmail,
+        companyName,
+        phoneNumber,
+        confirmationUrl: buildConfirmationUrl({
+          jobGroupId,
+          finalTotal,
+          paymentMethod,
+          customerName,
+          customerEmail,
+          companyName,
+          phoneNumber,
+          jobsCount: (showMainJob ? 1 : 0) + (showSecondJobState ? 1 : 0),
+        }),
+      }),
+    });
 
-      const byRowId = await supabase
-        .from("bookings")
-        .select("*")
-        .eq("id", jobId)
-        .maybeSingle();
+    const data = await res.json().catch(() => null);
 
-      if (byRowId.data) {
-        booking = byRowId.data as Booking;
-      } else {
-        const byPublicJobId = await supabase
-          .from("bookings")
-          .select("*")
-          .eq("job_id", jobId)
-          .maybeSingle();
+    if (!res.ok) {
+      throw new Error(data?.error || "Failed to create Stripe checkout session.");
+    }
 
-        if (byPublicJobId.data) {
-          booking = byPublicJobId.data as Booking;
-        }
-      }
+    if (!data?.id) {
+      throw new Error("Stripe session ID missing.");
+    }
 
-      if (!booking) {
-        throw new Error("Could not load job details.");
-      }
+    const result = await stripe.redirectToCheckout({
+      sessionId: data.id,
+    });
 
-      setJob(booking);
-      setIncompleteReason(booking.incomplete_reason || "");
-      setIncompleteNote(booking.incomplete_notes || booking.incomplete_note || "");
-      setHasSigningForm(
-        booking.homeowner_signed_completion_required === true ||
-          booking.has_signing_form === true
-          ? "yes"
-          : booking.homeowner_signed_completion_required === false ||
-            booking.has_signing_form === false
-          ? "no"
-          : ""
-      );
-
-      if (booking.job_group_id) {
-        const { data: groupData, error: groupError } = await supabase
-          .from("bookings")
-          .select("*")
-          .eq("job_group_id", booking.job_group_id)
-          .order("job_number", { ascending: true });
-
-        if (groupError) {
-          console.error("Error loading grouped jobs:", groupError);
-          setGroupJobs([booking]);
-        } else {
-          setGroupJobs((groupData as Booking[]) || [booking]);
-        }
-      } else {
-        setGroupJobs([booking]);
-      }
-    } catch (error) {
-      console.error("Error loading job:", error);
-      alert(error instanceof Error ? error.message : "Could not load job details.");
-      setJob(null);
-      setGroupJobs([]);
-    } finally {
-      setLoading(false);
+    if (result.error) {
+      throw new Error(result.error.message);
     }
   }
 
-  const normalizedInstallerName = installerName.trim().toLowerCase();
-
-  const currentJobAvailable = useMemo(() => {
-    if (!job) return false;
-    return isAvailableJob(job);
-  }, [job]);
-
-  const currentJobAssignedToMe = useMemo(() => {
-    if (!job) return false;
-    return isAssignedToInstaller(job, normalizedInstallerName);
-  }, [job, normalizedInstallerName]);
-
-  const availableJobsInGroup = useMemo(() => {
-    return groupJobs.filter((item) => isAvailableJob(item));
-  }, [groupJobs]);
-
-  const totalAvailableGroupPay = useMemo(() => {
-    return availableJobsInGroup.reduce((sum, item) => {
-      const payout = buildDerivedInstallerPayout(item);
-      return sum + payout.totalPay;
-    }, 0);
-  }, [availableJobsInGroup]);
-
-  const hoursUntilJob = useMemo(() => {
-    return getHoursUntilJob(job?.scheduled_date);
-  }, [job]);
-
-  const isLateCancel = useMemo(() => {
-    return hoursUntilJob !== null && hoursUntilJob < 48;
-  }, [hoursUntilJob]);
-
-  const payout = useMemo(() => {
-    return job ? buildDerivedInstallerPayout(job) : null;
-  }, [job]);
-
-  const addOnServices = useMemo(() => {
-    return toArray(job?.add_on_services);
-  }, [job]);
-
-  const justServices = useMemo(() => {
-    return toArray(job?.just_services);
-  }, [job]);
-
-  const canSeeFullAddresses = currentJobAssignedToMe;
-
-  async function acceptThisJob() {
-    if (!job) return;
-
-    if (!installerName.trim()) {
-      alert("Enter your installer name first.");
+  async function handleConfirmBooking() {
+    if (!paymentMethod) {
+      alert("Please select a payment method.");
       return;
     }
 
-    setActionLoading("accept-one");
+    if (!showMainJob && !showSecondJobState) {
+      alert("You must keep at least one job.");
+      return;
+    }
+
+    if (paymentMethod === "weeklyInvoice" && !companyName.trim()) {
+      alert("Weekly invoice requires a company name.");
+      return;
+    }
 
     try {
-      const { data: freshData, error: freshError } = await supabase
-        .from("bookings")
-        .select("*")
-        .eq("id", job.id)
-        .maybeSingle();
+      setIsSaving(true);
 
-      if (freshError || !freshData) {
-        throw new Error("Could not re-check job.");
-      }
+      const jobGroupId = Date.now();
+      const bookings: Record<string, any>[] = [];
+      let jobsHtml = "";
 
-      const freshJob = freshData as Booking;
+      if (showMainJob) {
+        bookings.push({
+          customer_name: customerName,
+          customer_email: customerEmail,
+          company_name: companyName,
+          phone_number: phoneNumber,
 
-      if (!isAvailableJob(freshJob)) {
-        throw new Error("This job is no longer available.");
-      }
+          pickup_address: pickupAddress,
+          dropoff_address: dropoffAddress,
 
-      const acceptedPayout = buildDerivedInstallerPayout(freshJob);
+          timeline: timeline || null,
+          scheduled_date: scheduledDate || null,
+          pickup_time_slot: pickupWindow || null,
 
-      const { error } = await supabase
-        .from("bookings")
-        .update({
-          installer_name: installerName.trim(),
-          reassigned_installer_name: null,
-          status: "accepted",
-          accepted_at: new Date().toISOString(),
-        })
-        .eq("id", job.id);
+          service_type: serviceType || null,
+          service_type_label: serviceTypeLabel || null,
 
-      if (error) throw new Error(error.message || "Failed to accept job.");
+          sqft,
+          customer_sqft_rate: customerSqftRate,
 
-      try {
-        if (freshJob.customer_email) {
-          await sendEmail({
-            to: freshJob.customer_email,
-            subject: "Your Installer Has Been Assigned",
-            type: "assignment",
-            html: assignmentEmailHtml(freshJob, installerName.trim()),
-          });
-        }
-      } catch (emailError) {
-        console.error("Assignment email error:", emailError);
-      }
+          service_price: servicePrice,
+          mileage_charge: mileageCharge,
+          add_on_services: addOnList.join(" | "),
+          just_services: justServices.join(" | "),
+          customer_add_on_total: customerAddOnTotal,
+          customer_just_service_total: customerJustServiceTotal,
+          return_fee_charged: returnFeeCharged,
 
-      try {
-        await sendAdminEmail({
-          subject: `Installer Accepted Job - ${freshJob.job_id || freshJob.id}`,
-          type: "installer_accepted",
-          html: adminAcceptedEmailHtml(
-            { ...freshJob, installer_name: installerName.trim() },
-            installerName.trim(),
-            acceptedPayout
-          ),
+          one_way_km: oneWayKm,
+          round_trip_km: roundTripKm,
+          chargeable_km: chargeableKm,
+
+          subtotal: job1Pricing.subtotal,
+          hst_amount: job1Pricing.hst,
+          final_total: Number(formatMoney(job1Pricing.total)),
+
+          installer_service_payout: installerServicePayout,
+          installer_mileage_payout: installerMileagePayout,
+          installer_total_payout: installerTotalPayout,
+
+          side_note: sideNote || null,
+          job_group_id: jobGroupId,
+          payment_method: paymentMethod,
+          payment_status: paymentMethod === "creditDebit" ? "pending" : "not_required",
+          status: getStatusFromPaymentMethod(paymentMethod),
         });
-      } catch (emailError) {
-        console.error("Admin accepted email error:", emailError);
+
+        jobsHtml += buildEmailJobHtml({
+          title: "Job 1",
+          timelineLabel: mainTimelineLabel,
+          serviceTypeLabel,
+          pickupAddress,
+          dropoffAddress,
+          addOnServices: addOnList,
+          justServices,
+          total: job1Pricing.total,
+        });
       }
 
-      alert("Job accepted");
-      await loadJobDetails();
-    } catch (error) {
-      console.error(error);
-      alert(error instanceof Error ? error.message : "Failed to accept job.");
-    } finally {
-      setActionLoading("");
-    }
-  }
+      if (showSecondJobState && job2Pricing) {
+        bookings.push({
+          customer_name: customerName,
+          customer_email: customerEmail,
+          company_name: companyName,
+          phone_number: phoneNumber,
 
-  async function acceptAllAvailableJobs() {
-    if (!installerName.trim()) {
-      alert("Enter your installer name first.");
-      return;
-    }
+          pickup_address: secondAddress,
+          dropoff_address: secondDropoffAddress || null,
 
-    if (availableJobsInGroup.length === 0) {
-      alert("No available jobs left in this group.");
-      return;
-    }
+          timeline: secondJobTimeline || null,
+          scheduled_date: secondJobScheduledDate || null,
+          pickup_time_slot: secondPickupWindow || null,
 
-    setActionLoading("accept-all");
+          service_type: secondJobServiceType || null,
+          service_type_label: secondJobServiceTypeLabel || null,
 
-    try {
-      const jobIds = availableJobsInGroup.map((item) => item.id);
+          sqft: secondJobSqft,
+          customer_sqft_rate: secondJobCustomerSqftRate,
 
-      const { data: freshGroupData, error: freshGroupError } = await supabase
+          service_price: secondServicePrice,
+          mileage_charge: secondMileageCharge,
+          add_on_services: secondAddOns.join(" | "),
+          just_services: secondJustServices.join(" | "),
+          customer_add_on_total: secondJobAddOnTotal,
+          customer_just_service_total: secondJobJustServiceTotal,
+
+          one_way_km: secondJobOneWayKm,
+          round_trip_km: secondJobRoundTripKm,
+          chargeable_km: secondJobChargeableKm,
+
+          subtotal: job2Pricing.subtotal,
+          hst_amount: job2Pricing.hst,
+          final_total: Number(formatMoney(job2Pricing.total)),
+
+          installer_service_payout: secondJobInstallerServicePayout,
+          installer_mileage_payout: secondJobInstallerMileagePayout,
+          installer_total_payout: secondJobInstallerTotalPayout,
+
+          side_note: secondJobSideNote || null,
+          job_group_id: jobGroupId,
+          payment_method: paymentMethod,
+          payment_status: paymentMethod === "creditDebit" ? "pending" : "not_required",
+          status: getStatusFromPaymentMethod(paymentMethod),
+        });
+
+        jobsHtml += buildEmailJobHtml({
+          title: "Job 2",
+          timelineLabel: secondTimelineLabel,
+          serviceTypeLabel: secondJobServiceTypeLabel,
+          pickupAddress: secondAddress,
+          dropoffAddress: secondDropoffAddress,
+          addOnServices: secondAddOns,
+          justServices: secondJustServices,
+          total: job2Pricing.total,
+        });
+      }
+
+      const { data: insertedBookings, error } = await supabase
         .from("bookings")
-        .select("*")
-        .in("id", jobIds);
-
-      if (freshGroupError) {
-        throw new Error(freshGroupError.message || "Failed to re-check grouped jobs.");
-      }
-
-      const freshJobs = ((freshGroupData as Booking[]) || []).filter((item) =>
-        isAvailableJob(item)
-      );
-
-      if (freshJobs.length !== jobIds.length) {
-        throw new Error("One or more jobs in this group are no longer available.");
-      }
-
-      const acceptedAt = new Date().toISOString();
-
-      const { error } = await supabase
-        .from("bookings")
-        .update({
-          installer_name: installerName.trim(),
-          reassigned_installer_name: null,
-          status: "accepted",
-          accepted_at: acceptedAt,
-        })
-        .in("id", jobIds);
+        .insert(bookings)
+        .select("id");
 
       if (error) {
-        throw new Error(error.message || "Failed to accept available jobs in this group.");
+        throw new Error(error.message);
       }
 
-      for (const item of freshJobs) {
-        try {
-          if (item.customer_email) {
-            await sendEmail({
-              to: item.customer_email,
-              subject: "Your Installer Has Been Assigned",
-              type: "assignment",
-              html: assignmentEmailHtml(item, installerName.trim()),
-            });
-          }
-        } catch (emailError) {
-          console.error("Assignment email error:", emailError);
-        }
+      const firstJobId =
+        insertedBookings && insertedBookings.length > 0
+          ? String(insertedBookings[0].id)
+          : String(jobGroupId);
 
-        try {
-          const itemPayout = buildDerivedInstallerPayout(item);
+      const jobsCount = (showMainJob ? 1 : 0) + (showSecondJobState ? 1 : 0);
+      const confirmationUrl = buildConfirmationUrl({
+        jobGroupId,
+        finalTotal,
+        paymentMethod,
+        customerName,
+        customerEmail,
+        companyName,
+        phoneNumber,
+        jobsCount,
+      });
 
-          await sendAdminEmail({
-            subject: `Installer Accepted Job - ${item.job_id || item.id}`,
-            type: "installer_accepted",
-            html: adminAcceptedEmailHtml(
-              { ...item, installer_name: installerName.trim(), accepted_at: acceptedAt },
-              installerName.trim(),
-              itemPayout
-            ),
-          });
-        } catch (emailError) {
-          console.error("Admin accepted email error:", emailError);
-        }
+      if (paymentMethod === "creditDebit") {
+        await Promise.all([
+          sendEmail({
+            to: ADMIN_NOTIFICATION_EMAIL,
+            subject: `New Card Booking Pending Payment${
+              customerName ? ` - ${customerName}` : ""
+            }`,
+            html: adminNotificationHtml({
+              customerName,
+              customerEmail,
+              companyName,
+              phoneNumber,
+              paymentLabel: getPaymentLabel(paymentMethod),
+              jobsHtml,
+              finalTotal: formatMoney(finalTotal),
+              jobGroupId,
+              status: "pending_payment",
+            }),
+            type: "standard",
+          }),
+          customerEmail
+            ? sendEmail({
+                to: customerEmail,
+                subject: "Booking Started - Payment Required",
+                html: cardPendingEmailHtml({
+                  customerName,
+                  jobsHtml,
+                  finalTotal: formatMoney(finalTotal),
+                }),
+                type: "standard",
+              })
+            : Promise.resolve(),
+        ]);
+
+        await handleCardCheckout(jobGroupId);
+        return;
       }
 
-      alert("Available group jobs accepted");
-      await loadJobDetails();
+      await Promise.all([
+        customerEmail
+          ? sendEmail({
+              to: customerEmail,
+              subject: "Booking Confirmed",
+              html: bookedConfirmationHtml({
+                customerName,
+                paymentLabel: getPaymentLabel(paymentMethod),
+                jobsHtml,
+                finalTotal: formatMoney(finalTotal),
+              }),
+              type: "standard",
+            })
+          : Promise.resolve(),
+        sendEmail({
+          to: ADMIN_NOTIFICATION_EMAIL,
+          subject: `New Booking Received${customerName ? ` - ${customerName}` : ""}`,
+          html: adminNotificationHtml({
+            customerName,
+            customerEmail,
+            companyName,
+            phoneNumber,
+            paymentLabel: getPaymentLabel(paymentMethod),
+            jobsHtml,
+            finalTotal: formatMoney(finalTotal),
+            jobGroupId,
+            status: "available",
+          }),
+          type: "standard",
+        }),
+        sendEmail({
+          to: ADMIN_NOTIFICATION_EMAIL,
+          subject: `New Available Job - Group ${jobGroupId}`,
+          html: installerNewJobHtml({
+            customerName,
+            companyName,
+            paymentLabel: getPaymentLabel(paymentMethod),
+            jobsHtml,
+            finalTotal: formatMoney(finalTotal),
+            jobGroupId,
+          }),
+          type: "new_job_available",
+          sendApprovedInstallers: true,
+          jobId: firstJobId,
+        }),
+      ]);
+
+      router.push(confirmationUrl);
     } catch (error) {
       console.error(error);
       alert(
-        error instanceof Error
-          ? error.message
-          : "Failed to accept available jobs in this group."
+        error instanceof Error ? error.message : "Something went wrong."
       );
     } finally {
-      setActionLoading("");
-    }
-  }
-
-  async function completeJob() {
-    if (!job) return;
-
-    if (!currentJobAssignedToMe) {
-      alert("Only the assigned installer can complete this job.");
-      return;
-    }
-
-    if (!completionPhoto) {
-      alert("Please upload a completion photo before completing the job.");
-      return;
-    }
-
-    if (!hasSigningForm) {
-      alert("Please select whether the customer provided a signing form.");
-      return;
-    }
-
-    if (hasSigningForm === "yes" && !completionSignature) {
-      alert("Please upload the signed completion form.");
-      return;
-    }
-
-    setActionLoading("complete");
-
-    try {
-      const completedPhotoUpload = await uploadJobFile(
-        completionPhoto,
-        "completed-jobs",
-        job.id
-      );
-
-      let signatureUpload:
-        | {
-            filePath: string;
-            publicUrl: string;
-            filename: string;
-          }
-        | undefined;
-
-      const signingFormProvided = hasSigningForm === "yes";
-
-      if (signingFormProvided && completionSignature) {
-        signatureUpload = await uploadJobFile(
-          completionSignature,
-          "completion-signatures",
-          job.id
-        );
-      }
-
-      const completedAt = new Date().toISOString();
-
-      const { error } = await supabase
-        .from("bookings")
-        .update({
-          status: "completed_pending_admin_review",
-          installer_pay_status: "pending_review",
-          completion_photo_url: completedPhotoUpload.publicUrl,
-          completion_photo_path: completedPhotoUpload.filePath,
-          completed_photo_url: completedPhotoUpload.publicUrl,
-          completed_photo_path: completedPhotoUpload.filePath,
-          homeowner_signed_completion_required: signingFormProvided,
-          homeowner_signed_completion_url: signatureUpload?.publicUrl || null,
-          homeowner_signed_completion_path: signatureUpload?.filePath || null,
-          completion_signature_url: signatureUpload?.publicUrl || null,
-          completion_signature_path: signatureUpload?.filePath || null,
-          completion_marked_at: completedAt,
-          completed_at: completedAt,
-          incomplete_at: null,
-        })
-        .eq("id", job.id);
-
-      if (error) {
-        console.error("COMPLETE JOB DB ERROR:", error);
-        alert(error.message || "Failed to complete job.");
-        setActionLoading("");
-        return;
-      }
-
-      const customerAttachments: EmailAttachment[] = [
-        {
-          filename: completedPhotoUpload.filename,
-          path: completedPhotoUpload.publicUrl,
-        },
-      ];
-
-      if (signatureUpload) {
-        customerAttachments.push({
-          filename: signatureUpload.filename,
-          path: signatureUpload.publicUrl,
-        });
-      }
-
-      try {
-        if (job.customer_email) {
-          await sendEmail({
-            to: job.customer_email,
-            subject: "Your Job Has Been Completed",
-            type: "completion",
-            html: completionEmailHtml(
-              job,
-              completedPhotoUpload.publicUrl,
-              signatureUpload?.publicUrl
-            ),
-            attachments: customerAttachments,
-          });
-        }
-      } catch (emailError) {
-        console.error("Completion email error:", emailError);
-      }
-
-      try {
-        await sendAdminEmail({
-          subject: `Job Completed - ${job.job_id || job.id}`,
-          type: "completion",
-          html: adminCompletionEmailHtml(
-            job,
-            installerName.trim(),
-            completedPhotoUpload.publicUrl,
-            signingFormProvided,
-            signatureUpload?.publicUrl
-          ),
-          attachments: customerAttachments,
-        });
-      } catch (emailError) {
-        console.error("Admin completion email error:", emailError);
-      }
-
-      setCompletionPhoto(null);
-      setCompletionSignature(null);
-      setHasSigningForm("");
-      setShowCompleteBox(false);
-
-      alert("Job marked complete");
-      await loadJobDetails();
-    } catch (error: any) {
-      console.error("COMPLETE JOB ERROR:", error);
-      alert(error?.message || "Failed to complete job.");
-    } finally {
-      setActionLoading("");
-    }
-  }
-
-  async function markIncomplete() {
-    if (!job) return;
-
-    if (!currentJobAssignedToMe) {
-      alert("Only the assigned installer can mark this job incomplete.");
-      return;
-    }
-
-    if (!incompleteReason.trim()) {
-      alert("Please select an incomplete reason.");
-      return;
-    }
-
-    if (!incompletePhoto) {
-      alert("Please upload a photo before confirming incomplete.");
-      return;
-    }
-
-    setActionLoading("incomplete");
-
-    try {
-      const incompletePhotoUpload = await uploadJobFile(
-        incompletePhoto,
-        "incomplete-jobs",
-        job.id
-      );
-
-      const normalizedReason = incompleteReason.trim().toLowerCase();
-      const isCustomerOrShop =
-        normalizedReason === "customer" || normalizedReason === "shop";
-
-      const returnFeeCharged = isCustomerOrShop ? RETURN_FEE_CUSTOMER : 0;
-      const returnFeeInstallerPay = isCustomerOrShop ? RETURN_FEE_INSTALLER_PAY : 0;
-      const installerPayStatus = normalizedReason === "installer" ? "hold" : "pending";
-      const incompleteAt = new Date().toISOString();
-
-      const { error } = await supabase
-        .from("bookings")
-        .update({
-          status: "incomplete",
-          incomplete_reason: normalizedReason,
-          incomplete_note: incompleteNote.trim(),
-          incomplete_notes: incompleteNote.trim(),
-          incomplete_photo_url: incompletePhotoUpload.publicUrl,
-          incomplete_photo_path: incompletePhotoUpload.filePath,
-          incomplete_reported_at: incompleteAt,
-          incomplete_at: incompleteAt,
-          completed_at: null,
-          return_fee: returnFeeCharged,
-          return_fee_charged: returnFeeCharged,
-          return_fee_installer_pay: returnFeeInstallerPay,
-          installer_pay_status: installerPayStatus,
-        })
-        .eq("id", job.id);
-
-      if (error) {
-        console.error("MARK INCOMPLETE DB ERROR:", error);
-        alert(error.message || "Failed to mark job incomplete.");
-        setActionLoading("");
-        return;
-      }
-
-      const incompleteAttachments: EmailAttachment[] = [
-        {
-          filename: incompletePhotoUpload.filename,
-          path: incompletePhotoUpload.publicUrl,
-        },
-      ];
-
-      try {
-        if (job.customer_email) {
-          await sendEmail({
-            to: job.customer_email,
-            subject: "Your Job Requires Follow-Up",
-            type: "incomplete",
-            html: incompleteEmailHtml(
-              job,
-              normalizedReason,
-              incompleteNote.trim(),
-              returnFeeCharged,
-              incompletePhotoUpload.publicUrl
-            ),
-            attachments: incompleteAttachments,
-          });
-        }
-      } catch (emailError) {
-        console.error("Incomplete email error:", emailError);
-      }
-
-      try {
-        await sendAdminEmail({
-          subject: `Job Marked Incomplete - ${job.job_id || job.id}`,
-          type: "incomplete",
-          html: adminIncompleteEmailHtml(
-            job,
-            installerName.trim(),
-            normalizedReason,
-            incompleteNote.trim(),
-            returnFeeCharged,
-            installerPayStatus,
-            incompletePhotoUpload.publicUrl
-          ),
-          attachments: incompleteAttachments,
-        });
-      } catch (emailError) {
-        console.error("Admin incomplete email error:", emailError);
-      }
-
-      setIncompletePhoto(null);
-      setShowIncompleteBox(false);
-
-      alert("Job marked incomplete");
-      await loadJobDetails();
-    } catch (error: any) {
-      console.error("INCOMPLETE JOB ERROR:", error);
-      alert(error?.message || "Failed to mark job incomplete.");
-    } finally {
-      setActionLoading("");
-    }
-  }
-
-  async function requestCancelJob() {
-    if (!job) return;
-
-    if (!currentJobAssignedToMe) {
-      alert("Only the assigned installer can request cancellation.");
-      return;
-    }
-
-    if (!cancelReason.trim()) {
-      alert("Please enter a cancellation reason.");
-      return;
-    }
-
-    setActionLoading("cancel-request");
-
-    try {
-      const noticeText =
-        hoursUntilJob === null
-          ? "Notice hours unknown"
-          : `${hoursUntilJob.toFixed(1)} hours notice`;
-
-      const policyText =
-        hoursUntilJob !== null && hoursUntilJob < 48
-          ? "Late cancellation request - under 48 hours notice."
-          : "Within cancellation policy - 48+ hours notice.";
-
-      const cancelNote = `Installer cancel request: ${cancelReason.trim()} | ${noticeText} | ${policyText}`;
-
-      const { error } = await supabase
-        .from("bookings")
-        .update({
-          status: "pending",
-          installer_name: "",
-          reassigned_installer_name: "",
-          accepted_at: null,
-          installer_pay_status: "unpaid",
-          incomplete_reason: "installer_cancel_request",
-          incomplete_note: cancelNote,
-          incomplete_notes: cancelNote,
-        })
-        .eq("id", job.id);
-
-      if (error) {
-        console.error(error);
-        alert("Failed to request cancellation.");
-        setActionLoading("");
-        return;
-      }
-
-      try {
-        await sendAdminEmail({
-          subject: `Installer Cancel Request - ${job.job_id || job.id}`,
-          type: "incomplete",
-          html: adminCancelRequestEmailHtml(
-            job,
-            installerName.trim(),
-            cancelReason.trim(),
-            hoursUntilJob
-          ),
-        });
-      } catch (emailError) {
-        console.error("Admin cancel request email error:", emailError);
-      }
-
-      setShowCancelBox(false);
-      alert("Cancellation request sent to admin");
-      await loadJobDetails();
-    } finally {
-      setActionLoading("");
+      setIsSaving(false);
     }
   }
 
   return (
-    <main className="space-y-6">
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-yellow-500">Job Details</h1>
-            <p className="mt-2 text-gray-400">
-              Installer sees city-only pickup and drop-off before acceptance, then full
-              address after accepting. Installer-facing payout is fully derived and hides
-              customer pricing.
-            </p>
-          </div>
+    <main className="min-h-screen bg-black text-white p-6">
+      <div className="mx-auto max-w-7xl">
+        <h1 className="text-4xl font-bold text-yellow-500 mb-6">Checkout</h1>
 
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="rounded-xl border border-zinc-700 px-4 py-2 text-sm font-semibold text-white hover:border-yellow-500 hover:text-yellow-400"
-          >
-            Back
-          </button>
-        </div>
-      </div>
+        <div className="grid lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 space-y-6">
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+              <h2 className="text-yellow-500 text-xl mb-4">Customer Details</h2>
 
-      {loading || !job || !payout ? (
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6 text-gray-300">
-          Loading job details...
-        </div>
-      ) : (
-        <>
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
-            <h2 className="text-2xl font-semibold text-yellow-500">
-              {job.company_name || job.customer_name || "Job"}
-            </h2>
-
-            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-              <Info label="Job ID" value={job.job_id || job.id} />
-              <Info label="Customer" value={job.customer_name} />
-              <Info label="Phone" value={job.phone_number} />
-              <Info
-                label="Service Type"
-                value={getServiceTypeLabel(job.service_type_label || job.service_type)}
-              />
-              <Info label="Material Type" value={job.material_type} />
-              <Info label="Material Size" value={job.material_size} />
-              <Info
-                label="Job Size"
-                value={
-                  job.job_size !== null && job.job_size !== undefined
-                    ? `${job.job_size} sqft`
-                    : job.sqft !== null && job.sqft !== undefined
-                    ? `${job.sqft} sqft`
-                    : "-"
-                }
-              />
-              <Info label="Date" value={job.scheduled_date} />
-              <Info label="Pickup Window" value={getPickupWindow(job)} />
-              <Info
-                label="Pick Up"
-                value={getVisibleAddress(
-                  job.pickup_address,
-                  job.pickup_city,
-                  canSeeFullAddresses
-                )}
-              />
-              <Info
-                label="Drop Off"
-                value={getVisibleAddress(
-                  job.dropoff_address,
-                  job.dropoff_city,
-                  canSeeFullAddresses
-                )}
-              />
-              <Info label="Status" value={job.status} />
-              <Info label="Installer Payout" value={money(payout.totalPay)} highlight />
-              <Info label="Installer Pay Status" value={job.installer_pay_status} />
-              <Info label="Customer Rate" value="Hidden from installer" />
-              <Info label="Service Price" value="Hidden from installer" />
-              <Info label="Installer Subtotal" value={money(payout.subtotalPay)} />
-              <Info label="Installer HST" value={money(payout.hstPay)} />
-              <Info label="Mileage Pay" value={money(payout.mileagePay)} />
-              <Info
-                label="Customer Return Fee"
-                value={money(job.return_fee_charged || job.return_fee)}
-              />
-              <Info
-                label="Installer Return Pay"
-                value={money(job.return_fee_installer_pay)}
-              />
-              <Info label="Incomplete Reason" value={job.incomplete_reason} />
-              <Info
-                label="Incomplete Note"
-                value={job.incomplete_notes || job.incomplete_note}
-              />
-              <Info
-                label="Waterfall Quantity"
-                value={num(job.waterfall_quantity) > 0 ? String(job.waterfall_quantity) : "-"}
-              />
-              <Info
-                label="Outlet Plug Cutout Quantity"
-                value={
-                  num(job.outlet_plug_cutout_quantity) > 0
-                    ? String(job.outlet_plug_cutout_quantity)
-                    : "-"
-                }
-              />
-              <Info
-                label="Disposal Responsibility"
-                value={getDisposalResponsibilityLabel(job.disposal_responsibility)}
-              />
-              <Info
-                label="Customer Provided Signing Form"
-                value={
-                  job.homeowner_signed_completion_required === true ||
-                  job.has_signing_form === true
-                    ? "Yes"
-                    : job.homeowner_signed_completion_required === false ||
-                      job.has_signing_form === false
-                    ? "No"
-                    : "-"
-                }
-              />
-            </div>
-
-            <div className="mt-6 grid gap-4 md:grid-cols-2">
-              <ServiceBox title="Add-On Services" items={addOnServices} />
-              <ServiceBox title="Just Services" items={justServices} />
-            </div>
-
-            {job.side_note ? (
-              <div className="mt-6 rounded-2xl border border-zinc-800 bg-black p-5">
-                <h3 className="text-xl font-semibold text-yellow-400">Side Note</h3>
-                <p className="mt-3 text-sm text-gray-300">{job.side_note}</p>
-              </div>
-            ) : null}
-
-            <div className="mt-6 rounded-2xl border border-zinc-800 bg-black p-5">
-              <h3 className="text-xl font-semibold text-yellow-400">Payout Breakdown</h3>
-
-              {payout.lines.length > 0 ? (
-                <div className="mt-4 space-y-3 text-sm text-gray-300">
-                  {payout.lines.map((line) => (
-                    <div
-                      key={`${line.label}-${line.amount}`}
-                      className="flex items-center justify-between border-b border-zinc-800 pb-3"
-                    >
-                      <span>{line.label}</span>
-                      <span>{money(line.amount)}</span>
-                    </div>
-                  ))}
-
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <span>Subtotal Pay</span>
-                    <span>{money(payout.subtotalPay)}</span>
-                  </div>
-
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <span>HST Pay</span>
-                    <span>{money(payout.hstPay)}</span>
-                  </div>
-
-                  {num(job.return_fee_installer_pay) > 0 ? (
-                    <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                      <span>Installer Return Pay</span>
-                      <span>{money(job.return_fee_installer_pay)}</span>
-                    </div>
-                  ) : null}
-
-                  <div className="flex items-center justify-between border-t border-zinc-700 pt-4 text-base font-semibold text-yellow-400">
-                    <span>Total Installer Payout</span>
-                    <span>{money(payout.totalPay)}</span>
-                  </div>
+              <div className="grid md:grid-cols-2 gap-4 text-sm text-gray-300">
+                <div>
+                  <p className="text-zinc-500">Name</p>
+                  <p>{customerName || "-"}</p>
                 </div>
-              ) : (
-                <div className="mt-4 space-y-3 text-sm text-gray-300">
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <span>Base Install Pay</span>
-                    <span>{money(payout.basePay)}</span>
-                  </div>
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <span>Add-On Pay</span>
-                    <span>{money(payout.addonPay)}</span>
-                  </div>
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <span>Cut / Polish Pay</span>
-                    <span>{money(payout.cutPolishPay)}</span>
-                  </div>
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <span>Sink / Reattach Pay</span>
-                    <span>{money(payout.sinkPay)}</span>
-                  </div>
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <span>Other Service Pay</span>
-                    <span>{money(payout.otherPay)}</span>
-                  </div>
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <span>Mileage Pay</span>
-                    <span>{money(payout.mileagePay)}</span>
-                  </div>
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <span>Subtotal Pay</span>
-                    <span>{money(payout.subtotalPay)}</span>
-                  </div>
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                    <span>HST Pay</span>
-                    <span>{money(payout.hstPay)}</span>
-                  </div>
+                <div>
+                  <p className="text-zinc-500">Email</p>
+                  <p>{customerEmail || "-"}</p>
+                </div>
+                <div>
+                  <p className="text-zinc-500">Company</p>
+                  <p>{companyName || "-"}</p>
+                </div>
+                <div>
+                  <p className="text-zinc-500">Phone</p>
+                  <p>{phoneNumber || "-"}</p>
+                </div>
+              </div>
 
-                  {num(job.return_fee_installer_pay) > 0 ? (
-                    <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-                      <span>Installer Return Pay</span>
-                      <span>{money(job.return_fee_installer_pay)}</span>
-                    </div>
-                  ) : null}
-
-                  <div className="flex items-center justify-between border-t border-zinc-700 pt-4 text-base font-semibold text-yellow-400">
-                    <span>Total Installer Payout</span>
-                    <span>{money(payout.totalPay)}</span>
-                  </div>
+              {(bookingDistanceTier || maxServiceDistanceKm) && (
+                <div className="mt-4 rounded-xl border border-zinc-800 bg-black p-4 text-sm text-gray-400">
+                  <p>Distance Tier: {bookingDistanceTier || "-"}</p>
+                  <p>Max Service Distance: {maxServiceDistanceKm} km</p>
                 </div>
               )}
             </div>
 
-            {availableJobsInGroup.length > 1 ? (
-              <div className="mt-6 rounded-2xl border border-zinc-800 bg-black p-5">
-                <h3 className="text-xl font-semibold text-yellow-400">Grouped Jobs</h3>
-                <p className="mt-2 text-sm text-gray-300">
-                  Available jobs in this group: {availableJobsInGroup.length}
-                </p>
-                <p className="mt-1 text-sm text-gray-300">
-                  Total available group payout:{" "}
-                  <span className="font-semibold text-yellow-400">
-                    {money(totalAvailableGroupPay)}
-                  </span>
-                </p>
-              </div>
-            ) : null}
-
-            {!canSeeFullAddresses ? (
-              <div className="mt-6 rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4 text-sm text-yellow-200">
-                Before acceptance, installer only sees the city / visible area. Full pickup
-                and drop-off addresses unlock after you accept the job.
-              </div>
-            ) : null}
-
-            {hoursUntilJob !== null ? (
-              <div
-                className={`mt-6 rounded-xl border p-4 text-sm ${
-                  isLateCancel
-                    ? "border-red-500 bg-red-950 text-red-300"
-                    : "border-zinc-700 bg-black text-gray-300"
-                }`}
-              >
-                <p>
-                  Time until scheduled job:{" "}
-                  <strong>{hoursUntilJob.toFixed(1)} hours</strong>
-                </p>
-                <p className="mt-1">
-                  Installer cancellation policy: <strong>48 hours notice</strong>.
-                </p>
-                {isLateCancel ? (
-                  <p className="mt-1">
-                    This is a <strong>late cancellation request</strong> because it is under
-                    48 hours.
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-
-            <div className="mt-6 flex flex-wrap gap-3">
-              {currentJobAvailable ? (
+            {showMainJob && (
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6 relative">
                 <button
                   type="button"
-                  onClick={() => void acceptThisJob()}
-                  disabled={actionLoading === "accept-one"}
-                  className="rounded-xl bg-yellow-500 px-5 py-3 font-semibold text-black hover:bg-yellow-400 disabled:opacity-60"
+                  onClick={() => setShowMainJob(false)}
+                  className="absolute top-4 right-4 text-red-500 text-sm"
                 >
-                  {actionLoading === "accept-one" ? "Accepting..." : "Accept This Job"}
+                  Remove
                 </button>
-              ) : null}
 
-              {availableJobsInGroup.length > 1 ? (
-                <button
-                  type="button"
-                  onClick={() => void acceptAllAvailableJobs()}
-                  disabled={actionLoading === "accept-all"}
-                  className="rounded-xl border border-yellow-500 px-5 py-3 font-semibold text-yellow-400 hover:bg-yellow-500 hover:text-black disabled:opacity-60"
-                >
-                  {actionLoading === "accept-all"
-                    ? "Accepting..."
-                    : `Accept All Available Jobs (${availableJobsInGroup.length})`}
-                </button>
-              ) : null}
+                <h2 className="text-yellow-500 text-xl mb-4">Job 1</h2>
 
-              {currentJobAssignedToMe &&
-              safeText(job.status).toLowerCase() !== "completed" &&
-              safeText(job.status).toLowerCase() !== "completed_pending_admin_review" ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setShowCompleteBox((prev) => !prev)}
-                    className="rounded-xl bg-green-600 px-5 py-3 font-semibold text-white hover:bg-green-500"
-                  >
-                    {showCompleteBox ? "Close Complete" : "Complete Job"}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowIncompleteBox((prev) => !prev)}
-                    className="rounded-xl bg-red-600 px-5 py-3 font-semibold text-white hover:bg-red-500"
-                  >
-                    {showIncompleteBox ? "Close Incomplete" : "Mark Incomplete"}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowCancelBox((prev) => !prev)}
-                    className="rounded-xl border border-red-500 px-5 py-3 font-semibold text-red-400 hover:bg-red-500 hover:text-white"
-                  >
-                    {showCancelBox ? "Close Cancel Request" : "Request Cancel Job"}
-                  </button>
-                </>
-              ) : null}
-            </div>
-
-            {showCompleteBox ? (
-              <div className="mt-6 rounded-2xl border border-green-500 bg-black p-5">
-                <h3 className="text-xl font-semibold text-green-400">Complete Job</h3>
-
-                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block text-sm text-gray-300">
-                      Completion Photo <span className="text-red-400">*</span>
-                    </label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => setCompletionPhoto(e.target.files?.[0] || null)}
-                      className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none file:mr-4 file:rounded-lg file:border-0 file:bg-yellow-500 file:px-4 file:py-2 file:font-semibold file:text-black"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm text-gray-300">
-                      Did customer provide a signing form?{" "}
-                      <span className="text-red-400">*</span>
-                    </label>
-                    <select
-                      value={hasSigningForm}
-                      onChange={(e) => setHasSigningForm(e.target.value)}
-                      className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
-                    >
-                      <option value="">Select</option>
-                      <option value="no">No</option>
-                      <option value="yes">Yes</option>
-                    </select>
-                  </div>
-
-                  {hasSigningForm === "yes" ? (
-                    <div className="md:col-span-2">
-                      <label className="mb-2 block text-sm text-gray-300">
-                        Upload Signed Completion Form{" "}
-                        <span className="text-red-400">*</span>
-                      </label>
-                      <input
-                        type="file"
-                        accept="image/*,.pdf"
-                        onChange={(e) =>
-                          setCompletionSignature(e.target.files?.[0] || null)
-                        }
-                        className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none file:mr-4 file:rounded-lg file:border-0 file:bg-yellow-500 file:px-4 file:py-2 file:font-semibold file:text-black"
-                      />
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-sm text-gray-300">
-                  <p>
-                    Completion photo is <strong>required</strong>.
-                  </p>
-                  <p className="mt-1">
-                    Signed completion upload is only required if the customer provided a
-                    signing form.
-                  </p>
-                  <p className="mt-1">
-                    Completion photo and signed form are sent to admin and customer.
-                  </p>
-                </div>
-
-                <div className="mt-4 flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    onClick={() => void completeJob()}
-                    disabled={actionLoading === "complete"}
-                    className="rounded-xl bg-green-600 px-5 py-3 font-semibold text-white hover:bg-green-500 disabled:opacity-60"
-                  >
-                    {actionLoading === "complete" ? "Completing..." : "Confirm Complete"}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowCompleteBox(false)}
-                    className="rounded-xl border border-zinc-700 px-5 py-3 font-semibold text-white hover:border-green-400 hover:text-green-400"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {showIncompleteBox ? (
-              <div className="mt-6 rounded-2xl border border-red-500 bg-black p-5">
-                <h3 className="text-xl font-semibold text-red-400">Mark Job Incomplete</h3>
-
-                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <div>
-                    <label className="mb-2 block text-sm text-gray-300">
-                      Reason <span className="text-red-400">*</span>
-                    </label>
-                    <select
-                      value={incompleteReason}
-                      onChange={(e) => setIncompleteReason(e.target.value)}
-                      className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
-                    >
-                      <option value="">Select reason</option>
-                      <option value="customer">Customer / Homeowner Issue</option>
-                      <option value="shop">Shop Issue</option>
-                      <option value="installer">Installer Issue</option>
-                      <option value="other">Other</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="mb-2 block text-sm text-gray-300">
-                      Photo <span className="text-red-400">*</span>
-                    </label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => setIncompletePhoto(e.target.files?.[0] || null)}
-                      className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none file:mr-4 file:rounded-lg file:border-0 file:bg-yellow-500 file:px-4 file:py-2 file:font-semibold file:text-black"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <label className="mb-2 block text-sm text-gray-300">Notes</label>
-                    <textarea
-                      value={incompleteNote}
-                      onChange={(e) => setIncompleteNote(e.target.value)}
-                      rows={4}
-                      className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
-                      placeholder="Enter what happened..."
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-sm text-gray-300">
-                  <p>
-                    If reason is <strong>customer</strong> or <strong>shop</strong>, a{" "}
-                    <strong>return fee will be applied</strong>.
-                  </p>
-                  <p className="mt-1">
-                    If reason is <strong>installer</strong>, installer pay status will move
-                    to <strong>hold</strong>.
-                  </p>
-                </div>
-
-                <div className="mt-4 flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    onClick={() => void markIncomplete()}
-                    disabled={actionLoading === "incomplete"}
-                    className="rounded-xl bg-red-600 px-5 py-3 font-semibold text-white hover:bg-red-500 disabled:opacity-60"
-                  >
-                    {actionLoading === "incomplete" ? "Saving..." : "Confirm Incomplete"}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowIncompleteBox(false)}
-                    className="rounded-xl border border-zinc-700 px-5 py-3 font-semibold text-white hover:border-red-400 hover:text-red-400"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {showCancelBox ? (
-              <div className="mt-6 rounded-2xl border border-red-500 bg-black p-5">
-                <h3 className="text-xl font-semibold text-red-400">Request Cancel Job</h3>
-
-                <div className="mt-4">
-                  <label className="mb-2 block text-sm text-gray-300">
-                    Cancellation Reason <span className="text-red-400">*</span>
-                  </label>
-                  <textarea
-                    value={cancelReason}
-                    onChange={(e) => setCancelReason(e.target.value)}
-                    rows={4}
-                    className="w-full rounded-xl border border-zinc-700 bg-black px-4 py-3 text-white outline-none"
-                    placeholder="Enter your cancellation reason..."
-                  />
-                </div>
-
-                <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-sm text-gray-300">
-                  <p>
-                    Installer cancellation policy requires <strong>48 hours notice</strong>.
-                  </p>
-                  {hoursUntilJob !== null ? (
-                    <p className="mt-1">
-                      Current notice: <strong>{hoursUntilJob.toFixed(1)} hours</strong>
+                <div className="space-y-2 text-sm text-gray-300">
+                  <p>Timeline: {timeline || "-"}</p>
+                  <p>Scheduled Date: {scheduledDate || "-"}</p>
+                  <p>Pickup Window: {pickupWindow || "-"}</p>
+                  <p>Service: {serviceTypeLabel || "-"}</p>
+                  <p>Pick Up: {pickupAddress || "-"}</p>
+                  <p>Drop Off: {dropoffAddress || "-"}</p>
+                  {sqft > 0 && (
+                    <p>
+                      Size: {sqft} sqft
+                      {customerSqftRate > 0
+                        ? ` @ $${formatMoney(customerSqftRate)}/sqft`
+                        : ""}
                     </p>
-                  ) : null}
+                  )}
                 </div>
 
-                <div className="mt-4 flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    onClick={() => void requestCancelJob()}
-                    disabled={actionLoading === "cancel-request"}
-                    className="rounded-xl border border-red-500 px-5 py-3 font-semibold text-red-400 hover:bg-red-500 hover:text-white disabled:opacity-60"
-                  >
-                    {actionLoading === "cancel-request"
-                      ? "Sending..."
-                      : "Submit Cancel Request"}
-                  </button>
+                <div className="mt-4 space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span>Service</span>
+                    <span>${formatMoney(servicePrice)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Mileage</span>
+                    <span>${formatMoney(mileageCharge)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Add-ons</span>
+                    <span>${formatMoney(customerAddOnTotal)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Just Services</span>
+                    <span>${formatMoney(customerJustServiceTotal)}</span>
+                  </div>
+                  {returnFeeCharged > 0 && (
+                    <div className="flex justify-between">
+                      <span>Return Fee</span>
+                      <span>${formatMoney(returnFeeCharged)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span>Subtotal</span>
+                    <span>${formatMoney(job1Pricing.subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>HST</span>
+                    <span>${formatMoney(job1Pricing.hst)}</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-yellow-400">
+                    <span>Total</span>
+                    <span>${formatMoney(job1Pricing.total)}</span>
+                  </div>
+                </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setShowCancelBox(false)}
-                    className="rounded-xl border border-zinc-700 px-5 py-3 font-semibold text-white hover:border-red-400 hover:text-red-400"
-                  >
-                    Cancel
-                  </button>
+                {addOnList.length > 0 && (
+                  <div className="mt-4 rounded-xl border border-zinc-800 bg-black p-4">
+                    <p className="text-yellow-400 font-semibold mb-2">Add-Ons</p>
+                    <div className="space-y-1 text-sm text-gray-300">
+                      {addOnList.map((item) => (
+                        <p key={item}>• {item}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {justServices.length > 0 && (
+                  <div className="mt-4 rounded-xl border border-zinc-800 bg-black p-4">
+                    <p className="text-yellow-400 font-semibold mb-2">
+                      Just Services
+                    </p>
+                    <div className="space-y-1 text-sm text-gray-300">
+                      {justServices.map((item) => (
+                        <p key={item}>• {item}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {sideNote && (
+                  <div className="mt-4 rounded-xl border border-zinc-800 bg-black p-4">
+                    <p className="text-yellow-400 font-semibold mb-2">Side Note</p>
+                    <p className="text-sm text-gray-300 whitespace-pre-wrap">
+                      {sideNote}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {showSecondJobState && job2Pricing && (
+              <div className="rounded-2xl border border-yellow-500/30 bg-black p-6 relative">
+                <button
+                  type="button"
+                  onClick={() => setShowSecondJobState(false)}
+                  className="absolute top-4 right-4 text-red-500 text-sm"
+                >
+                  Remove
+                </button>
+
+                <h2 className="text-yellow-500 text-xl mb-4">Job 2</h2>
+
+                <div className="space-y-2 text-sm text-gray-300">
+                  <p>Timeline: {secondJobTimeline || "-"}</p>
+                  <p>Scheduled Date: {secondJobScheduledDate || "-"}</p>
+                  <p>Pickup Window: {secondPickupWindow || "-"}</p>
+                  <p>Service: {secondJobServiceTypeLabel || "-"}</p>
+                  <p>Address: {secondAddress || "-"}</p>
+                  {secondDropoffAddress && <p>Drop Off: {secondDropoffAddress}</p>}
+                  {secondJobSqft > 0 && (
+                    <p>
+                      Size: {secondJobSqft} sqft
+                      {secondJobCustomerSqftRate > 0
+                        ? ` @ $${formatMoney(secondJobCustomerSqftRate)}/sqft`
+                        : ""}
+                    </p>
+                  )}
+                </div>
+
+                <div className="mt-4 space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span>Service</span>
+                    <span>${formatMoney(secondServicePrice)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Mileage</span>
+                    <span>${formatMoney(secondMileageCharge)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Add-ons</span>
+                    <span>${formatMoney(secondJobAddOnTotal)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Just Services</span>
+                    <span>${formatMoney(secondJobJustServiceTotal)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Subtotal</span>
+                    <span>${formatMoney(job2Pricing.subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>HST</span>
+                    <span>${formatMoney(job2Pricing.hst)}</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-yellow-400">
+                    <span>Total</span>
+                    <span>${formatMoney(job2Pricing.total)}</span>
+                  </div>
+                </div>
+
+                {secondAddOns.length > 0 && (
+                  <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+                    <p className="text-yellow-400 font-semibold mb-2">Add-Ons</p>
+                    <div className="space-y-1 text-sm text-gray-300">
+                      {secondAddOns.map((item) => (
+                        <p key={item}>• {item}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {secondJustServices.length > 0 && (
+                  <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+                    <p className="text-yellow-400 font-semibold mb-2">
+                      Just Services
+                    </p>
+                    <div className="space-y-1 text-sm text-gray-300">
+                      {secondJustServices.map((item) => (
+                        <p key={item}>• {item}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {secondJobSideNote && (
+                  <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+                    <p className="text-yellow-400 font-semibold mb-2">Side Note</p>
+                    <p className="text-sm text-gray-300 whitespace-pre-wrap">
+                      {secondJobSideNote}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+              <h2 className="text-yellow-500 mb-4 text-xl">Payment Method</h2>
+
+              <select
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
+                className="w-full bg-black border border-zinc-700 p-3 rounded-xl"
+              >
+                <option value="">Select Payment</option>
+                <option value="creditDebit">Credit / Debit Card</option>
+                <option value="etransfer">E-Transfer</option>
+                <option value="cashPickup">Cash Pickup</option>
+                <option value="chequePickup">Cheque Pickup</option>
+                <option value="weeklyInvoice">Weekly Invoice</option>
+              </select>
+
+              <div className="mt-4 text-sm text-gray-400 space-y-2">
+                <p>• Card redirects to secure Stripe checkout.</p>
+                <p>• Weekly Invoice is best for approved company accounts.</p>
+                <p>• Cash and cheque pickup depend on your distance and order tier.</p>
+
+                {paymentMethod === "etransfer" && (
+                  <div className="rounded-xl border border-yellow-500/30 bg-black p-4 text-sm">
+                    <p className="text-yellow-400 font-semibold mb-2">
+                      E-Transfer Instructions
+                    </p>
+                    <p>
+                      Send payment to:{" "}
+                      <span className="text-white font-medium">{PAYMENT_EMAIL}</span>
+                    </p>
+                    <p className="mt-1">
+                      Please include your name and phone number in the e-transfer note.
+                    </p>
+                  </div>
+                )}
+
+                {paymentMethod === "cashPickup" && (
+                  <div className="rounded-xl border border-yellow-500/30 bg-black p-4 text-sm">
+                    <p className="text-yellow-400 font-semibold mb-2">Cash Pickup</p>
+                    <p>Our team will confirm pickup details before the job is scheduled.</p>
+                    <p className="mt-1">
+                      Support: <span className="text-white font-medium">{ADMIN_PHONE}</span>
+                    </p>
+                  </div>
+                )}
+
+                {paymentMethod === "chequePickup" && (
+                  <div className="rounded-xl border border-yellow-500/30 bg-black p-4 text-sm">
+                    <p className="text-yellow-400 font-semibold mb-2">Cheque Pickup</p>
+                    <p>Please have the cheque ready for pickup when confirmed by our team.</p>
+                    <p className="mt-1">
+                      Support: <span className="text-white font-medium">{ADMIN_PHONE}</span>
+                    </p>
+                  </div>
+                )}
+
+                {paymentMethod === "weeklyInvoice" && (
+                  <div className="rounded-xl border border-yellow-500/30 bg-black p-4 text-sm">
+                    <p className="text-yellow-400 font-semibold mb-2">Weekly Invoice</p>
+                    <p>Approved company accounts will be billed weekly.</p>
+                    <p className="mt-1">
+                      Billing email:{" "}
+                      <span className="text-white font-medium">{PAYMENT_EMAIL}</span>
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="sticky top-10 h-fit">
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6">
+              <h2 className="text-yellow-500 text-xl mb-4">Final Total</h2>
+
+              <div className="space-y-3 text-sm">
+                {showMainJob && (
+                  <div className="flex justify-between">
+                    <span>Job 1</span>
+                    <span>${formatMoney(job1Pricing.total)}</span>
+                  </div>
+                )}
+
+                {showSecondJobState && job2Pricing && (
+                  <div className="flex justify-between">
+                    <span>Job 2</span>
+                    <span>${formatMoney(job2Pricing.total)}</span>
+                  </div>
+                )}
+
+                <div className="border-t border-zinc-800 pt-4 flex justify-between text-2xl font-bold text-yellow-500">
+                  <span>Total</span>
+                  <span>${formatMoney(finalTotal)}</span>
                 </div>
               </div>
-            ) : null}
+
+              <div className="mt-5 rounded-xl border border-zinc-800 bg-black p-4">
+                <p className="text-sm text-zinc-500">Selected Payment</p>
+                <p className="text-base text-white mt-1">
+                  {getPaymentLabel(paymentMethod)}
+                </p>
+              </div>
+
+              {paymentMethod === "etransfer" && (
+                <div className="mt-4 rounded-xl border border-yellow-500/30 bg-black p-4">
+                  <p className="text-sm text-zinc-500">E-Transfer Email</p>
+                  <p className="text-white font-medium mt-1">{PAYMENT_EMAIL}</p>
+                </div>
+              )}
+
+              {paymentMethod === "cashPickup" && (
+                <div className="mt-4 rounded-xl border border-yellow-500/30 bg-black p-4">
+                  <p className="text-sm text-zinc-500">Pickup Support</p>
+                  <p className="text-white font-medium mt-1">{ADMIN_PHONE}</p>
+                </div>
+              )}
+
+              {paymentMethod === "weeklyInvoice" && (
+                <div className="mt-4 rounded-xl border border-yellow-500/30 bg-black p-4">
+                  <p className="text-sm text-zinc-500">Invoice Billing Email</p>
+                  <p className="text-white font-medium mt-1">{PAYMENT_EMAIL}</p>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleConfirmBooking}
+                disabled={isSaving}
+                className="w-full mt-6 bg-yellow-500 text-black py-4 rounded-xl font-semibold disabled:opacity-60"
+              >
+                {isSaving ? "Processing..." : "Confirm Booking"}
+              </button>
+            </div>
           </div>
-        </>
-      )}
+        </div>
+      </div>
     </main>
+  );
+}
+
+export default function CheckoutPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-black text-white p-6">
+          Loading checkout...
+        </main>
+      }
+    >
+      <CheckoutContent />
+    </Suspense>
   );
 }
