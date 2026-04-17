@@ -720,6 +720,26 @@ export default function HomePage() {
         </div>
       </section>
 
+      <div className="text-center py-10 border-t border-zinc-800">
+        <h3 className="text-white font-semibold mb-4">Our Services</h3>
+
+        <div className="flex flex-col items-center gap-2">
+          <Link
+            href="/countertop-installation"
+            className="text-yellow-500 hover:underline"
+          >
+            Countertop Installation
+          </Link>
+
+          <Link
+            href="/gta-countertop-installation"
+            className="text-yellow-500 hover:underline"
+          >
+            GTA Countertop Installation
+          </Link>
+        </div>
+      </div>
+
       <footer className="border-t border-zinc-800 bg-black px-6 py-8">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 text-sm text-zinc-500 md:flex-row md:items-center md:justify-between">
           <p>©️ 1-800TOPS. All rights reserved.</p>
