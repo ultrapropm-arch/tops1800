@@ -13,6 +13,12 @@ const stripePromise = stripeKey ? loadStripe(stripeKey) : null;
 const HST_RATE = 0.13;
 const CUSTOMER_JOB_MINIMUM = 210;
 
+const CUSTOMER_SAME_DAY_FEE = 210;
+const CUSTOMER_NEXT_DAY_FEE = 150;
+
+const INSTALLER_SAME_DAY_PAY = 110;
+const INSTALLER_NEXT_DAY_PAY = 50;
+
 const PAYMENT_EMAIL = "info@1800tops.com";
 const ADMIN_NOTIFICATION_EMAIL = "ultrapropm@gmail.com";
 const ADMIN_PHONE = "647-913-0480";
@@ -98,11 +104,11 @@ function getTimelineLabel(params: {
   );
 
   if (params.timeline === "sameDay") {
-    return `Same Day${resolvedWindow ? ` • ${resolvedWindow}` : ""}`;
+    return `Same Day — Extremely Urgent${resolvedWindow ? ` • ${resolvedWindow}` : ""}`;
   }
 
   if (params.timeline === "nextDay") {
-    return `Next Day${resolvedWindow ? ` • ${resolvedWindow}` : ""}`;
+    return `Next Day — Urgent${resolvedWindow ? ` • ${resolvedWindow}` : ""}`;
   }
 
   if (params.timeline === "scheduled") {
@@ -113,6 +119,25 @@ function getTimelineLabel(params: {
   }
 
   return "Not provided";
+}
+
+function getTimelinePriority(timeline: string) {
+  if (timeline === "sameDay") return "extremely_urgent";
+  if (timeline === "nextDay") return "urgent";
+  if (timeline === "scheduled") return "scheduled";
+  return "not_provided";
+}
+
+function getCustomerTimelineCharge(timeline: string) {
+  if (timeline === "sameDay") return CUSTOMER_SAME_DAY_FEE;
+  if (timeline === "nextDay") return CUSTOMER_NEXT_DAY_FEE;
+  return 0;
+}
+
+function getInstallerTimelinePay(timeline: string) {
+  if (timeline === "sameDay") return INSTALLER_SAME_DAY_PAY;
+  if (timeline === "nextDay") return INSTALLER_NEXT_DAY_PAY;
+  return 0;
 }
 
 function getPaymentLabel(method: PaymentMethod) {
@@ -475,13 +500,30 @@ function CheckoutContent() {
   const [showMainJob, setShowMainJob] = useState(true);
   const [showSecondJobState, setShowSecondJobState] = useState(showSecondJob);
 
+  const mainTimelineCharge = useMemo(() => {
+    return getCustomerTimelineCharge(timeline);
+  }, [timeline]);
+
+  const secondTimelineCharge = useMemo(() => {
+    return getCustomerTimelineCharge(secondJobTimeline);
+  }, [secondJobTimeline]);
+
+  const mainInstallerTimelinePay = useMemo(() => {
+    return getInstallerTimelinePay(timeline);
+  }, [timeline]);
+
+  const secondInstallerTimelinePay = useMemo(() => {
+    return getInstallerTimelinePay(secondJobTimeline);
+  }, [secondJobTimeline]);
+
   const job1Pricing = useMemo(() => {
     const rawSubtotal =
       servicePrice +
       mileageCharge +
       customerAddOnTotal +
       customerJustServiceTotal +
-      returnFeeCharged;
+      returnFeeCharged +
+      mainTimelineCharge;
 
     const base =
       rawSubtotal > 0 ? Math.max(rawSubtotal, CUSTOMER_JOB_MINIMUM) : 0;
@@ -500,6 +542,7 @@ function CheckoutContent() {
     customerAddOnTotal,
     customerJustServiceTotal,
     returnFeeCharged,
+    mainTimelineCharge,
   ]);
 
   const job2Pricing = useMemo(() => {
@@ -509,7 +552,8 @@ function CheckoutContent() {
       secondServicePrice +
       secondMileageCharge +
       secondJobAddOnTotal +
-      secondJobJustServiceTotal;
+      secondJobJustServiceTotal +
+      secondTimelineCharge;
 
     const base =
       rawSubtotal > 0 ? Math.max(rawSubtotal, CUSTOMER_JOB_MINIMUM) : 0;
@@ -527,8 +571,67 @@ function CheckoutContent() {
     secondMileageCharge,
     secondJobAddOnTotal,
     secondJobJustServiceTotal,
+    secondTimelineCharge,
     showSecondJobState,
   ]);
+
+  const mainInstallerSubtotal = useMemo(() => {
+    return installerTotalPayout + mainInstallerTimelinePay;
+  }, [installerTotalPayout, mainInstallerTimelinePay]);
+
+  const mainInstallerHst = useMemo(() => {
+    return mainInstallerSubtotal * HST_RATE;
+  }, [mainInstallerSubtotal]);
+
+  const mainInstallerTotal = useMemo(() => {
+    return mainInstallerSubtotal + mainInstallerHst;
+  }, [mainInstallerSubtotal, mainInstallerHst]);
+
+  const mainCompanySubtotal = useMemo(() => {
+    return job1Pricing.subtotal - mainInstallerSubtotal;
+  }, [job1Pricing.subtotal, mainInstallerSubtotal]);
+
+  const mainCompanyHst = useMemo(() => {
+    return job1Pricing.hst - mainInstallerHst;
+  }, [job1Pricing.hst, mainInstallerHst]);
+
+  const mainCompanyProfit = useMemo(() => {
+    return job1Pricing.total - mainInstallerTotal;
+  }, [job1Pricing.total, mainInstallerTotal]);
+
+  const secondInstallerSubtotal = useMemo(() => {
+    if (!showSecondJobState) return 0;
+    return secondJobInstallerTotalPayout + secondInstallerTimelinePay;
+  }, [
+    showSecondJobState,
+    secondJobInstallerTotalPayout,
+    secondInstallerTimelinePay,
+  ]);
+
+  const secondInstallerHst = useMemo(() => {
+    if (!showSecondJobState) return 0;
+    return secondInstallerSubtotal * HST_RATE;
+  }, [showSecondJobState, secondInstallerSubtotal]);
+
+  const secondInstallerTotal = useMemo(() => {
+    if (!showSecondJobState) return 0;
+    return secondInstallerSubtotal + secondInstallerHst;
+  }, [showSecondJobState, secondInstallerSubtotal, secondInstallerHst]);
+
+  const secondCompanySubtotal = useMemo(() => {
+    if (!showSecondJobState || !job2Pricing) return 0;
+    return job2Pricing.subtotal - secondInstallerSubtotal;
+  }, [showSecondJobState, job2Pricing, secondInstallerSubtotal]);
+
+  const secondCompanyHst = useMemo(() => {
+    if (!showSecondJobState || !job2Pricing) return 0;
+    return job2Pricing.hst - secondInstallerHst;
+  }, [showSecondJobState, job2Pricing, secondInstallerHst]);
+
+  const secondCompanyProfit = useMemo(() => {
+    if (!showSecondJobState || !job2Pricing) return 0;
+    return job2Pricing.total - secondInstallerTotal;
+  }, [showSecondJobState, job2Pricing, secondInstallerTotal]);
 
   const finalTotal =
     (showMainJob ? job1Pricing.total : 0) +
@@ -639,6 +742,9 @@ function CheckoutContent() {
           dropoff_address: dropoffAddress,
 
           timeline: timeline || null,
+          timeline_label: mainTimelineLabel,
+          timeline_priority: getTimelinePriority(timeline),
+          priority_install: timeline === "sameDay" || timeline === "nextDay",
           scheduled_date: scheduledDate || null,
           pickup_time_slot: pickupWindow || null,
 
@@ -650,6 +756,7 @@ function CheckoutContent() {
 
           service_price: servicePrice,
           mileage_charge: mileageCharge,
+          timeline_charge: mainTimelineCharge,
           add_on_services: addOnList.join(" | "),
           just_services: justServices.join(" | "),
           customer_add_on_total: customerAddOnTotal,
@@ -666,7 +773,14 @@ function CheckoutContent() {
 
           installer_service_payout: installerServicePayout,
           installer_mileage_payout: installerMileagePayout,
-          installer_total_payout: installerTotalPayout,
+          installer_timeline_pay: mainInstallerTimelinePay,
+          installer_subtotal_pay: mainInstallerSubtotal,
+          installer_hst_pay: mainInstallerHst,
+          installer_total_payout: mainInstallerTotal,
+
+          company_subtotal: mainCompanySubtotal,
+          company_hst: mainCompanyHst,
+          company_profit: mainCompanyProfit,
 
           side_note: sideNote || null,
           job_group_id: jobGroupId,
@@ -698,6 +812,10 @@ function CheckoutContent() {
           dropoff_address: secondDropoffAddress || null,
 
           timeline: secondJobTimeline || null,
+          timeline_label: secondTimelineLabel,
+          timeline_priority: getTimelinePriority(secondJobTimeline),
+          priority_install:
+            secondJobTimeline === "sameDay" || secondJobTimeline === "nextDay",
           scheduled_date: secondJobScheduledDate || null,
           pickup_time_slot: secondPickupWindow || null,
 
@@ -709,6 +827,7 @@ function CheckoutContent() {
 
           service_price: secondServicePrice,
           mileage_charge: secondMileageCharge,
+          timeline_charge: secondTimelineCharge,
           add_on_services: secondAddOns.join(" | "),
           just_services: secondJustServices.join(" | "),
           customer_add_on_total: secondJobAddOnTotal,
@@ -724,7 +843,14 @@ function CheckoutContent() {
 
           installer_service_payout: secondJobInstallerServicePayout,
           installer_mileage_payout: secondJobInstallerMileagePayout,
-          installer_total_payout: secondJobInstallerTotalPayout,
+          installer_timeline_pay: secondInstallerTimelinePay,
+          installer_subtotal_pay: secondInstallerSubtotal,
+          installer_hst_pay: secondInstallerHst,
+          installer_total_payout: secondInstallerTotal,
+
+          company_subtotal: secondCompanySubtotal,
+          company_hst: secondCompanyHst,
+          company_profit: secondCompanyProfit,
 
           side_note: secondJobSideNote || null,
           job_group_id: jobGroupId,
@@ -917,7 +1043,7 @@ function CheckoutContent() {
                 <h2 className="text-yellow-500 text-xl mb-4">Job 1</h2>
 
                 <div className="space-y-2 text-sm text-gray-300">
-                  <p>Timeline: {timeline || "-"}</p>
+                  <p>Timeline: {mainTimelineLabel}</p>
                   <p>Scheduled Date: {scheduledDate || "-"}</p>
                   <p>Pickup Window: {pickupWindow || "-"}</p>
                   <p>Service: {serviceTypeLabel || "-"}</p>
@@ -941,6 +1067,10 @@ function CheckoutContent() {
                   <div className="flex justify-between">
                     <span>Mileage</span>
                     <span>${formatMoney(mileageCharge)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Timeline Fee</span>
+                    <span>${formatMoney(mainTimelineCharge)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Add-ons</span>
@@ -1018,7 +1148,7 @@ function CheckoutContent() {
                 <h2 className="text-yellow-500 text-xl mb-4">Job 2</h2>
 
                 <div className="space-y-2 text-sm text-gray-300">
-                  <p>Timeline: {secondJobTimeline || "-"}</p>
+                  <p>Timeline: {secondTimelineLabel}</p>
                   <p>Scheduled Date: {secondJobScheduledDate || "-"}</p>
                   <p>Pickup Window: {secondPickupWindow || "-"}</p>
                   <p>Service: {secondJobServiceTypeLabel || "-"}</p>
@@ -1042,6 +1172,10 @@ function CheckoutContent() {
                   <div className="flex justify-between">
                     <span>Mileage</span>
                     <span>${formatMoney(secondMileageCharge)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Timeline Fee</span>
+                    <span>${formatMoney(secondTimelineCharge)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Add-ons</span>
