@@ -141,12 +141,16 @@ type FilterTab =
   | "high_priority";
 
 function num(value?: number | null) {
-  const n = Number(value || 0);
+  const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
 }
 
+function roundMoney(value?: number | null) {
+  return Math.round(num(value) * 100) / 100;
+}
+
 function money(value?: number | null) {
-  return "$" + num(value).toFixed(2);
+  return "$" + roundMoney(value).toFixed(2);
 }
 
 function safeText(value?: string | null) {
@@ -204,79 +208,124 @@ function getInstallerDisplayName(profile?: InstallerProfile | null) {
   );
 }
 
+function isSummaryPayoutLabel(label?: string | null) {
+  const normalized = normalizeText(label);
+  return (
+    normalized.includes("subtotal") ||
+    normalized.includes("hst") ||
+    normalized.includes("tax") ||
+    normalized.includes("total payout") ||
+    normalized === "total" ||
+    normalized.includes("return pay")
+  );
+}
+
 function getPayoutLines(booking: Booking) {
   if (
     Array.isArray(booking.installer_payout_lines) &&
     booking.installer_payout_lines.length > 0
   ) {
-    return booking.installer_payout_lines.map((line) => ({
-      label: line.label || "Payout Line",
-      amount: num(line.amount as number),
-    }));
+    return booking.installer_payout_lines
+      .map((line) => ({
+        label: safeText(line.label) || "Payout Line",
+        amount: roundMoney(line.amount as number),
+      }))
+      .filter((line) => line.amount !== 0)
+      .filter((line) => !isSummaryPayoutLabel(line.label));
   }
 
   const lines: { label: string; amount: number }[] = [];
 
-  if (num(booking.installer_base_pay) > 0) {
+  if (roundMoney(booking.installer_base_pay) > 0) {
     lines.push({
       label: "Base Install Pay",
-      amount: num(booking.installer_base_pay),
+      amount: roundMoney(booking.installer_base_pay),
     });
   }
 
-  if (num(booking.installer_addon_pay) > 0) {
+  if (roundMoney(booking.installer_addon_pay) > 0) {
     lines.push({
       label: "Add-On Pay",
-      amount: num(booking.installer_addon_pay),
+      amount: roundMoney(booking.installer_addon_pay),
     });
   }
 
-  if (num(booking.installer_cut_polish_pay) > 0) {
+  if (roundMoney(booking.installer_cut_polish_pay) > 0) {
     lines.push({
       label: "Cut / Polish Pay",
-      amount: num(booking.installer_cut_polish_pay),
+      amount: roundMoney(booking.installer_cut_polish_pay),
     });
   }
 
-  if (num(booking.installer_sink_pay) > 0) {
+  if (roundMoney(booking.installer_sink_pay) > 0) {
     lines.push({
       label: "Sink / Reattach Pay",
-      amount: num(booking.installer_sink_pay),
+      amount: roundMoney(booking.installer_sink_pay),
     });
   }
 
-  if (num(booking.installer_other_pay) > 0) {
+  if (roundMoney(booking.installer_other_pay) > 0) {
     lines.push({
       label: "Other Service Pay",
-      amount: num(booking.installer_other_pay),
+      amount: roundMoney(booking.installer_other_pay),
     });
   }
 
-  if (num(booking.installer_mileage_pay) > 0) {
+  if (roundMoney(booking.installer_mileage_pay) > 0) {
     lines.push({
       label: "Mileage Pay",
-      amount: num(booking.installer_mileage_pay),
+      amount: roundMoney(booking.installer_mileage_pay),
     });
   }
 
   return lines;
 }
 
-function getDerivedSubtotalPay(booking: Booking, payoutLines: { label: string; amount: number }[]) {
-  if (num(booking.installer_subtotal_pay) > 0) return num(booking.installer_subtotal_pay);
+function getDerivedSubtotalPay(
+  booking: Booking,
+  payoutLines: { label: string; amount: number }[]
+) {
+  const explicitSubtotal = roundMoney(booking.installer_subtotal_pay);
+  if (explicitSubtotal > 0) return explicitSubtotal;
 
-  const derivedLinesTotal = payoutLines.reduce((sum, line) => sum + num(line.amount), 0);
+  const derivedLinesTotal = roundMoney(
+    payoutLines.reduce((sum, line) => sum + roundMoney(line.amount), 0)
+  );
   if (derivedLinesTotal > 0) return derivedLinesTotal;
 
-  const fallback =
-    num(booking.installer_base_pay) +
-    num(booking.installer_mileage_pay) +
-    num(booking.installer_addon_pay) +
-    num(booking.installer_cut_polish_pay) +
-    num(booking.installer_sink_pay) +
-    num(booking.installer_other_pay);
+  const fallback = roundMoney(
+    roundMoney(booking.installer_base_pay) +
+      roundMoney(booking.installer_mileage_pay) +
+      roundMoney(booking.installer_addon_pay) +
+      roundMoney(booking.installer_cut_polish_pay) +
+      roundMoney(booking.installer_sink_pay) +
+      roundMoney(booking.installer_other_pay)
+  );
 
   return fallback;
+}
+
+function getDerivedHstPay(
+  booking: Booking,
+  subtotalPay: number,
+  returnPay: number
+) {
+  const explicitHst = roundMoney(booking.installer_hst_pay);
+  if (explicitHst > 0) return explicitHst;
+
+  const explicitTotal = roundMoney(booking.installer_total_pay);
+  if (explicitTotal > 0) {
+    const diff = roundMoney(explicitTotal - subtotalPay - returnPay);
+    if (diff > 0) return diff;
+  }
+
+  const legacyTotal = roundMoney(booking.installer_pay);
+  if (legacyTotal > 0) {
+    const diff = roundMoney(legacyTotal - subtotalPay - returnPay);
+    if (diff > 0) return diff;
+  }
+
+  return 0;
 }
 
 function getDerivedTotalPay(
@@ -285,11 +334,25 @@ function getDerivedTotalPay(
   hstPay: number,
   returnPay: number
 ) {
-  if (num(booking.installer_total_pay) > 0) return num(booking.installer_total_pay);
-  if (num(booking.installer_pay) > 0) return num(booking.installer_pay);
+  const calculatedTotal = roundMoney(subtotalPay + hstPay + returnPay);
 
-  const total = subtotalPay + hstPay + returnPay;
-  return total;
+  const explicitTotal = roundMoney(booking.installer_total_pay);
+  if (explicitTotal > 0) {
+    const exactMatch = Math.abs(explicitTotal - calculatedTotal) < 0.01;
+    if (exactMatch) return explicitTotal;
+  }
+
+  const legacyTotal = roundMoney(booking.installer_pay);
+  if (
+    legacyTotal > 0 &&
+    subtotalPay === 0 &&
+    hstPay === 0 &&
+    returnPay === 0
+  ) {
+    return legacyTotal;
+  }
+
+  return calculatedTotal;
 }
 
 function statusColor(status: PayoutStatus) {
@@ -591,10 +654,12 @@ export default function PayoutPage() {
         .map((booking) => {
           const payoutLines = getPayoutLines(booking);
           const subtotalPay = getDerivedSubtotalPay(booking, payoutLines);
-          const hstPay = num(booking.installer_hst_pay);
-          const returnPay = num(booking.return_fee_installer_pay);
+          const returnPay = roundMoney(booking.return_fee_installer_pay);
+          const hstPay = getDerivedHstPay(booking, subtotalPay, returnPay);
           const totalPay = getDerivedTotalPay(booking, subtotalPay, hstPay, returnPay);
-          const customerReturnFee = num(booking.return_fee_charged || booking.return_fee);
+          const customerReturnFee = roundMoney(
+            booking.return_fee_charged || booking.return_fee
+          );
           const status = normalizePayoutStatus(booking.installer_pay_status);
 
           const labelParts = [
@@ -625,8 +690,8 @@ export default function PayoutPage() {
             payoutSentAt: booking.payout_sent_at || "",
             acceptedAt: booking.accepted_at || "",
             completedAt: booking.completed_at || "",
-            aiDispatchScore: num(booking.ai_dispatch_score),
-            aiPriorityScore: num(booking.ai_priority_score),
+            aiDispatchScore: roundMoney(booking.ai_dispatch_score),
+            aiPriorityScore: roundMoney(booking.ai_priority_score),
             aiGroupingLabel: booking.ai_grouping_label || "Solo Route",
             aiDistanceTier: booking.ai_distance_tier || "Standard Zone",
             aiRecommendedInstallerType:
@@ -637,8 +702,8 @@ export default function PayoutPage() {
             ai: buildAiPayoutSummary({
               status,
               totalPay,
-              aiDispatchScore: num(booking.ai_dispatch_score),
-              aiPriorityScore: num(booking.ai_priority_score),
+              aiDispatchScore: roundMoney(booking.ai_dispatch_score),
+              aiPriorityScore: roundMoney(booking.ai_priority_score),
               aiGroupingLabel: booking.ai_grouping_label || "Solo Route",
               aiDistanceTier: booking.ai_distance_tier || "Standard Zone",
               incompleteReason: booking.incomplete_reason || "",
@@ -660,29 +725,41 @@ export default function PayoutPage() {
   }
 
   const totals = useMemo(() => {
-    const unpaid = payouts
-      .filter((payout) => payout.status === "unpaid")
-      .reduce((sum, payout) => sum + payout.totalPay, 0);
+    const unpaid = roundMoney(
+      payouts
+        .filter((payout) => payout.status === "unpaid")
+        .reduce((sum, payout) => sum + payout.totalPay, 0)
+    );
 
-    const pending = payouts
-      .filter((payout) => payout.status === "pending")
-      .reduce((sum, payout) => sum + payout.totalPay, 0);
+    const pending = roundMoney(
+      payouts
+        .filter((payout) => payout.status === "pending")
+        .reduce((sum, payout) => sum + payout.totalPay, 0)
+    );
 
-    const pendingReview = payouts
-      .filter((payout) => payout.status === "pending_review")
-      .reduce((sum, payout) => sum + payout.totalPay, 0);
+    const pendingReview = roundMoney(
+      payouts
+        .filter((payout) => payout.status === "pending_review")
+        .reduce((sum, payout) => sum + payout.totalPay, 0)
+    );
 
-    const hold = payouts
-      .filter((payout) => payout.status === "hold")
-      .reduce((sum, payout) => sum + payout.totalPay, 0);
+    const hold = roundMoney(
+      payouts
+        .filter((payout) => payout.status === "hold")
+        .reduce((sum, payout) => sum + payout.totalPay, 0)
+    );
 
-    const ready = payouts
-      .filter((payout) => payout.status === "ready")
-      .reduce((sum, payout) => sum + payout.totalPay, 0);
+    const ready = roundMoney(
+      payouts
+        .filter((payout) => payout.status === "ready")
+        .reduce((sum, payout) => sum + payout.totalPay, 0)
+    );
 
-    const paid = payouts
-      .filter((payout) => payout.status === "paid")
-      .reduce((sum, payout) => sum + payout.totalPay, 0);
+    const paid = roundMoney(
+      payouts
+        .filter((payout) => payout.status === "paid")
+        .reduce((sum, payout) => sum + payout.totalPay, 0)
+    );
 
     const highPriority = payouts.filter(
       (payout) => payout.aiPriorityScore >= 80 || payout.aiDispatchScore >= 80
