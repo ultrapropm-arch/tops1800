@@ -8,7 +8,9 @@ const INSTAGRAM_URL =
   "https://www.instagram.com/ultrapro_contracting_inc?igsh=MWY5cjFnajV4ZTVlZg==";
 
 const TIKTOK_URL =
-  "https://www.tiktok.com/@ultraprocontracting?_r=1&_t=ZS-95W2GFP9xyv";
+  "https://www.tiktok.com/@1_800tops?_r=1&_t=ZS-95lfZLp56t3";
+
+const X_URL = "https://x.com/1800Tops11737";
 
 const trustStats = [
   { value: "30+", label: "Installers Across Canada" },
@@ -42,35 +44,36 @@ const coreBenefits = [
 const workFlow = [
   {
     step: "01",
-    title: "Submit Job Details",
+    title: "Click Book & Fill Out Job Info",
     description:
-      "Enter the address, timeline, square footage, and services you need in one clean flow.",
+      "Start by entering the job details, addresses, square footage, and services needed in one clean booking flow.",
     points: [
-      "Choose same-day, next-day, or scheduled install",
-      "Add square footage, service type, and add-ons",
       "Enter pickup and drop-off details",
+      "Add square footage, service type, and add-ons",
+      "Built for homeowners, contractors, builders, and stone shops",
     ],
   },
   {
     step: "02",
-    title: "Review Quote Fast",
+    title: "Choose Schedule & Continue To Checkout",
     description:
-      "See pricing, mileage, add-ons, and project details quickly without the usual back-and-forth.",
+      "Select same-day, next-day, or scheduled installation, then continue to checkout to review the job properly.",
     points: [
-      "View service pricing clearly",
-      "See mileage, add-ons, and total cost",
-      "Confirm the right job details before checkout",
+      "Choose same-day, next-day, or scheduled install",
+      "Review pricing, mileage, and add-ons",
+      "Continue through checkout with the correct job details",
     ],
   },
   {
     step: "03",
-    title: "We Dispatch The Right Crew",
+    title: "Choose Payment & Confirm Booking",
     description:
-      "We coordinate the installer based on job type, timing, distance, and availability.",
+      "Select the payment option that fits your project flow, confirm the booking, and move the job into dispatch.",
     points: [
-      "Installer gets matched to the job",
-      "Booking moves into live scheduling flow",
-      "You track progress until completion",
+      "Credit / debit",
+      "E-transfer",
+      "Weekly invoice",
+      "Cash / cheque pickup",
     ],
   },
 ];
@@ -106,12 +109,16 @@ const partnerBenefits = [
 ];
 
 const stepByStepFlow = [
-  "Submit the job",
-  "Review quote",
-  "Confirm booking",
-  "Installer dispatch",
-  "Live tracking",
-  "Job completed",
+  "Click book",
+  "Fill out job info",
+  "Choose schedule",
+  "Continue to checkout",
+  "Select payment option",
+  "Booking confirmed",
+  "Installer assigned",
+  "Installer pickup",
+  "Complete / incomplete update",
+  "Submit details + photos",
 ];
 
 function InstagramIcon() {
@@ -140,6 +147,19 @@ function TikTokIcon() {
       aria-hidden="true"
     >
       <path d="M16.8 3c.3 2.1 1.6 3.8 3.7 4v3a7.3 7.3 0 0 1-3.6-1v6.2a6.2 6.2 0 1 1-6.2-6.2c.3 0 .6 0 .9.1v3.1a3.2 3.2 0 1 0 2.3 3.1V3h2.9Z" />
+    </svg>
+  );
+}
+
+function XIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M18.9 2H21l-4.6 5.3L22 22h-4.9l-3.8-5-4.4 5H6.8l4.9-5.7L2 2h5l3.4 4.6L14.4 2h4.5Zm-1.7 18h1.4L6.3 3.9H4.8L17.2 20Z" />
     </svg>
   );
 }
@@ -359,6 +379,16 @@ export default function HomePage() {
             </a>
 
             <a
+              href={X_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="X"
+              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-zinc-700 text-zinc-300 transition hover:border-yellow-500 hover:text-yellow-400"
+            >
+              <XIcon />
+            </a>
+
+            <a
               href="#ai-assistant"
               className="rounded-full border border-zinc-700 px-4 py-2 text-sm font-medium transition hover:border-yellow-500 hover:text-yellow-400"
             >
@@ -528,6 +558,66 @@ export default function HomePage() {
         </div>
       </section>
 
+      <section className="border-t border-zinc-800 bg-black px-6 py-20">
+        <div className="mx-auto max-w-7xl">
+          <div className="mb-12 text-center">
+            <p className="text-sm font-semibold uppercase tracking-[0.25em] text-yellow-500">
+              Payment Options
+            </p>
+            <h3 className="mt-4 text-3xl font-bold text-white md:text-5xl">
+              Flexible payment options built into the booking flow
+            </h3>
+            <p className="mx-auto mt-4 max-w-3xl text-zinc-300">
+              After you click book, fill out your job info, choose your schedule,
+              continue to checkout, and select the payment option that works best
+              for your project.
+            </p>
+          </div>
+
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-[2rem] border border-zinc-800 bg-zinc-950 p-8">
+              <p className="text-2xl font-bold text-yellow-500">
+                Credit / Debit
+              </p>
+              <p className="mt-3 text-zinc-300">
+                Fast online checkout for customers who want to confirm the job
+                immediately through the website.
+              </p>
+            </div>
+
+            <div className="rounded-[2rem] border border-zinc-800 bg-zinc-950 p-8">
+              <p className="text-2xl font-bold text-yellow-500">
+                E-Transfer
+              </p>
+              <p className="mt-3 text-zinc-300">
+                A flexible payment option for customers and shops who prefer to
+                pay by transfer instead of card.
+              </p>
+            </div>
+
+            <div className="rounded-[2rem] border border-zinc-800 bg-zinc-950 p-8">
+              <p className="text-2xl font-bold text-yellow-500">
+                Weekly Invoice
+              </p>
+              <p className="mt-3 text-zinc-300">
+                Built for recurring business clients, fabricators, and partners
+                who need an easier repeat-order billing flow.
+              </p>
+            </div>
+
+            <div className="rounded-[2rem] border border-zinc-800 bg-zinc-950 p-8">
+              <p className="text-2xl font-bold text-yellow-500">
+                Cash / Cheque Pickup
+              </p>
+              <p className="mt-3 text-zinc-300">
+                Available for approved jobs where payment is handled directly at
+                pickup based on the booking flow.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section
         id="ai-assistant"
         className="border-t border-zinc-800 bg-black px-6 py-20"
@@ -584,8 +674,9 @@ export default function HomePage() {
               Simple booking. Faster installs.
             </h3>
             <p className="mx-auto mt-4 max-w-3xl text-zinc-300">
-              Built to make the process easier from first job submission to final
-              installation completion.
+              Click book, fill out your job info, choose your schedule, continue
+              to checkout, select your payment option, get booking confirmation,
+              and move into installer dispatch and completion tracking.
             </p>
           </div>
 
@@ -614,7 +705,7 @@ export default function HomePage() {
           </div>
 
           <div className="mt-8 rounded-[2rem] border border-zinc-800 bg-zinc-950 p-6">
-            <div className="grid gap-4 md:grid-cols-6">
+            <div className="grid gap-4 md:grid-cols-5 lg:grid-cols-10">
               {stepByStepFlow.map((item, index) => (
                 <div
                   key={item}
@@ -773,6 +864,16 @@ export default function HomePage() {
               className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-700 text-zinc-300 transition hover:border-yellow-500 hover:text-yellow-400"
             >
               <TikTokIcon />
+            </a>
+
+            <a
+              href={X_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="X"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-700 text-zinc-300 transition hover:border-yellow-500 hover:text-yellow-400"
+            >
+              <XIcon />
             </a>
           </div>
         </div>
