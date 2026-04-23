@@ -26,9 +26,9 @@ export default function VaughanPage() {
           </h1>
 
           <p className="mt-6 text-lg text-neutral-300 max-w-3xl">
-            1800TOPS provides fast, reliable countertop installation across
-            Vaughan. Built for homeowners, contractors, and stone shops that
-            need installs done efficiently and professionally.
+            1800TOPS provides fast, reliable countertop installation across Vaughan.
+            Built for homeowners, contractors, and stone shops that need installs
+            done efficiently and professionally.
           </p>
 
           <p className="mt-4 text-lg text-neutral-300 max-w-3xl">
@@ -102,6 +102,34 @@ export default function VaughanPage() {
               <h3 className="font-bold">Same-Day Installs</h3>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* SERVICE AREAS */}
+      <section className="py-16 max-w-7xl mx-auto px-6">
+        <h2 className="text-3xl font-bold">
+          Explore Other Service Areas
+        </h2>
+
+        <div className="mt-8 flex flex-wrap gap-4">
+          <Link href="/toronto-countertop-installation" className="underline">
+            Toronto
+          </Link>
+          <Link href="/mississauga-countertop-installation" className="underline">
+            Mississauga
+          </Link>
+          <Link href="/vaughan-countertop-installation" className="underline">
+            Vaughan
+          </Link>
+          <Link href="/brampton-countertop-installation" className="underline">
+            Brampton
+          </Link>
+          <Link href="/london-countertop-installation" className="underline">
+            London
+          </Link>
+          <Link href="/locations" className="underline font-semibold">
+            View All Locations
+          </Link>
         </div>
       </section>
 
