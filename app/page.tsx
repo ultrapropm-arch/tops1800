@@ -121,6 +121,15 @@ const stepByStepFlow = [
   "Submit details + photos",
 ];
 
+const locationPages = [
+  { label: "Toronto", href: "/toronto-countertop-installation" },
+  { label: "Mississauga", href: "/mississauga-countertop-installation" },
+  { label: "Vaughan", href: "/vaughan-countertop-installation" },
+  { label: "Brampton", href: "/brampton-countertop-installation" },
+  { label: "London", href: "/london-countertop-installation" },
+  { label: "GTA", href: "/gta-countertop-installation" },
+];
+
 function InstagramIcon() {
   return (
     <svg
@@ -778,6 +787,42 @@ export default function HomePage() {
       </section>
 
       <section className="border-t border-zinc-800 bg-zinc-950 px-6 py-20">
+        <div className="mx-auto max-w-7xl">
+          <div className="mb-12 text-center">
+            <p className="text-sm font-semibold uppercase tracking-[0.25em] text-yellow-500">
+              Service Areas
+            </p>
+            <h3 className="mt-4 text-3xl font-bold text-white md:text-5xl">
+              Countertop installation across key Ontario markets
+            </h3>
+            <p className="mx-auto mt-4 max-w-3xl text-zinc-300">
+              Explore our city pages for countertop installation coverage,
+              same-day and next-day scheduling options, and fast online booking.
+            </p>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {locationPages.map((location) => (
+              <Link
+                key={location.href}
+                href={location.href}
+                className="rounded-[1.5rem] border border-zinc-800 bg-black p-5 transition hover:border-yellow-500 hover:text-yellow-400"
+              >
+                <p className="font-semibold text-white">{location.label}</p>
+              </Link>
+            ))}
+
+            <Link
+              href="/locations"
+              className="rounded-[1.5rem] border border-yellow-500/30 bg-zinc-950 p-5 transition hover:border-yellow-500 hover:text-yellow-400"
+            >
+              <p className="font-semibold text-yellow-500">View All Locations</p>
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-t border-zinc-800 bg-zinc-950 px-6 py-20">
         <div className="mx-auto max-w-6xl rounded-[2rem] border border-yellow-500/20 bg-black p-10 text-center md:p-14">
           <p className="text-sm font-semibold uppercase tracking-[0.25em] text-yellow-500">
             Ready To Start
@@ -828,6 +873,10 @@ export default function HomePage() {
           >
             GTA Countertop Installation
           </Link>
+
+          <Link href="/locations" className="text-yellow-500 hover:underline">
+            Service Areas
+          </Link>
         </div>
       </div>
 
@@ -844,6 +893,9 @@ export default function HomePage() {
             </Link>
             <Link href="/policies" className="transition hover:text-yellow-400">
               Policies
+            </Link>
+            <Link href="/locations" className="transition hover:text-yellow-400">
+              Locations
             </Link>
 
             <a
