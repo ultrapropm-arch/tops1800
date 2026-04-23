@@ -2,9 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "GTA Countertop Installation | Toronto, Mississauga, Vaughan | 1800TOPS",
+  title:
+    "GTA Countertop Installation | Toronto, Mississauga, Vaughan | 1800TOPS",
   description:
-    "Countertop installation across the GTA including Toronto, Mississauga, Vaughan, and Brampton. Same-day service available. Built for homeowners, contractors, and stone shops.",
+    "Countertop installation across the GTA including Toronto, Mississauga, Vaughan, and Brampton. Same-day and next-day service available. Built for homeowners, contractors, builders, and stone shops.",
   keywords: [
     "GTA countertop installation",
     "Toronto countertop installers",
@@ -14,13 +15,58 @@ export const metadata: Metadata = {
     "quartz installation GTA",
     "granite installation Toronto",
     "same day countertop GTA",
+    "countertop installation contractors GTA",
+    "countertop installation stone shops Toronto",
   ],
 };
+
+const cities = ["Toronto", "Mississauga", "Vaughan", "Brampton"];
+
+const services = [
+  {
+    title: "Quartz Installation",
+    description:
+      "Professional quartz countertop installation across the GTA with fast scheduling and dependable service.",
+  },
+  {
+    title: "Granite Installation",
+    description:
+      "Experienced granite countertop installers for residential and contractor jobs throughout Toronto and surrounding cities.",
+  },
+  {
+    title: "Backsplash Installation",
+    description:
+      "Clean, accurate backsplash installation for kitchens, custom projects, and full countertop packages.",
+  },
+  {
+    title: "Same-Day Installs",
+    description:
+      "Same-day and next-day countertop installation available depending on scope, location, and scheduling.",
+  },
+];
+
+const shopFeatures = [
+  {
+    title: "Repeat Jobs",
+    description: "Built to handle ongoing installation volume.",
+  },
+  {
+    title: "Fast Turnaround",
+    description: "Same-day and next-day installs available.",
+  },
+  {
+    title: "AI Dispatch Ready",
+    description: "Positioned for smart routing and grouping of jobs.",
+  },
+  {
+    title: "Scalable Platform",
+    description: "Designed for growth across multiple cities.",
+  },
+];
 
 export default function GTACountertopPage() {
   return (
     <main className="min-h-screen bg-white text-neutral-900">
-
       {/* HERO */}
       <section className="bg-black text-white py-20">
         <div className="max-w-7xl mx-auto px-6">
@@ -29,9 +75,10 @@ export default function GTACountertopPage() {
           </h1>
 
           <p className="mt-6 text-lg text-neutral-300 max-w-3xl">
-            1800TOPS provides countertop installation across the Greater Toronto Area,
-            including Toronto, Mississauga, Vaughan, and Brampton. Built for
-            homeowners, contractors, and stone shops needing fast, reliable installs.
+            1800TOPS provides countertop installation across the Greater Toronto
+            Area, including Toronto, Mississauga, Vaughan, and Brampton. Built
+            for homeowners, contractors, and stone shops needing fast, reliable
+            installs.
           </p>
 
           <p className="mt-4 text-lg text-neutral-300 max-w-3xl">
@@ -39,17 +86,17 @@ export default function GTACountertopPage() {
             location, and schedule.
           </p>
 
-          <div className="mt-8 flex gap-4">
+          <div className="mt-8 flex flex-wrap gap-4">
             <Link
               href="/book"
-              className="bg-yellow-500 text-black px-6 py-3 rounded-xl font-semibold hover:bg-yellow-400"
+              className="bg-yellow-500 text-black px-6 py-3 rounded-xl font-semibold hover:bg-yellow-400 transition"
             >
               Book Installation
             </Link>
 
             <Link
               href="/countertop-installation"
-              className="border border-white/20 px-6 py-3 rounded-xl hover:bg-white/10"
+              className="border border-white/20 px-6 py-3 rounded-xl hover:bg-white/10 transition"
             >
               View All Services
             </Link>
@@ -60,11 +107,11 @@ export default function GTACountertopPage() {
       {/* COVERAGE */}
       <section className="py-16 max-w-7xl mx-auto px-6">
         <h2 className="text-3xl font-bold">
-          Serving the entire GTA
+          Serving the Entire GTA Countertop Installation Market
         </h2>
 
         <div className="mt-8 grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {["Toronto", "Mississauga", "Vaughan", "Brampton"].map((city) => (
+          {cities.map((city) => (
             <div key={city} className="border p-6 rounded-2xl">
               <h3 className="font-bold text-lg">{city}</h3>
               <p className="mt-2 text-neutral-600">
@@ -84,19 +131,56 @@ export default function GTACountertopPage() {
           </h2>
 
           <div className="mt-10 grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div className="bg-white p-6 rounded-2xl border">
-              <h3 className="font-bold">Quartz Installation</h3>
-            </div>
-            <div className="bg-white p-6 rounded-2xl border">
-              <h3 className="font-bold">Granite Installation</h3>
-            </div>
-            <div className="bg-white p-6 rounded-2xl border">
-              <h3 className="font-bold">Backsplash Installation</h3>
-            </div>
-            <div className="bg-white p-6 rounded-2xl border">
-              <h3 className="font-bold">Same-Day Installs</h3>
-            </div>
+            {services.map((service) => (
+              <div key={service.title} className="bg-white p-6 rounded-2xl border">
+                <h3 className="font-bold">{service.title}</h3>
+                <p className="mt-2 text-neutral-600 text-sm leading-6">
+                  {service.description}
+                </p>
+              </div>
+            ))}
           </div>
+        </div>
+      </section>
+
+      {/* SEO CONTENT */}
+      <section className="py-16 max-w-7xl mx-auto px-6">
+        <div className="max-w-4xl">
+          <h2 className="text-3xl font-bold">
+            GTA Countertop Installation Experts
+          </h2>
+
+          <p className="mt-6 text-lg text-neutral-700 leading-8">
+            1800TOPS provides professional countertop installation services
+            across the Greater Toronto Area, serving homeowners, contractors,
+            builders, and stone fabrication shops. Our team specializes in
+            quartz, granite, and custom stone installations, delivering fast,
+            reliable results with a focus on precision and efficiency.
+          </p>
+
+          <p className="mt-6 text-lg text-neutral-700 leading-8">
+            We understand the demands of the GTA market, where timing and
+            coordination are critical. That is why our platform is built to
+            handle both single residential jobs and high-volume installation
+            needs for contractors and businesses. Whether you need a one-time
+            install or ongoing daily scheduling, 1800TOPS helps keep projects
+            moving on time and with less back-and-forth.
+          </p>
+
+          <p className="mt-6 text-lg text-neutral-700 leading-8">
+            Our installers are experienced, vetted, and equipped to handle a
+            wide range of installation types, including full kitchen installs,
+            backsplash installations, and on-site adjustments. We work across
+            Toronto, Mississauga, Brampton, Vaughan, and surrounding GTA areas,
+            providing consistent service across the region.
+          </p>
+
+          <p className="mt-6 text-lg text-neutral-700 leading-8">
+            If you are looking for dependable countertop installers in the GTA,
+            1800TOPS offers a streamlined booking process, transparent service
+            flow, and fast turnaround times for both residential and commercial
+            projects.
+          </p>
         </div>
       </section>
 
@@ -107,39 +191,19 @@ export default function GTACountertopPage() {
         </h2>
 
         <p className="mt-6 text-lg text-neutral-700 max-w-3xl">
-          1800TOPS is designed to support repeat installation demand across the GTA.
-          Stone shops, kitchen companies, and contractors can use the platform to
-          move jobs faster, reduce scheduling delays, and scale installation capacity.
+          1800TOPS is designed to support repeat installation demand across the
+          GTA. Stone shops, kitchen companies, and contractors can use the
+          platform to move jobs faster, reduce scheduling delays, and scale
+          installation capacity.
         </p>
 
         <div className="mt-8 grid md:grid-cols-2 gap-6">
-          <div className="border p-6 rounded-2xl">
-            <h3 className="font-bold">Repeat Jobs</h3>
-            <p className="mt-2 text-neutral-600">
-              Built to handle ongoing installation volume.
-            </p>
-          </div>
-
-          <div className="border p-6 rounded-2xl">
-            <h3 className="font-bold">Fast Turnaround</h3>
-            <p className="mt-2 text-neutral-600">
-              Same-day and next-day installs available.
-            </p>
-          </div>
-
-          <div className="border p-6 rounded-2xl">
-            <h3 className="font-bold">AI Dispatch Ready</h3>
-            <p className="mt-2 text-neutral-600">
-              Positioned for smart routing and grouping of jobs.
-            </p>
-          </div>
-
-          <div className="border p-6 rounded-2xl">
-            <h3 className="font-bold">Scalable Platform</h3>
-            <p className="mt-2 text-neutral-600">
-              Designed for growth across multiple cities.
-            </p>
-          </div>
+          {shopFeatures.map((feature) => (
+            <div key={feature.title} className="border p-6 rounded-2xl">
+              <h3 className="font-bold">{feature.title}</h3>
+              <p className="mt-2 text-neutral-600">{feature.description}</p>
+            </div>
+          ))}
         </div>
       </section>
 
@@ -158,14 +222,13 @@ export default function GTACountertopPage() {
           <div className="mt-8">
             <Link
               href="/book"
-              className="bg-yellow-500 text-black px-6 py-3 rounded-xl font-semibold hover:bg-yellow-400"
+              className="bg-yellow-500 text-black px-6 py-3 rounded-xl font-semibold hover:bg-yellow-400 transition"
             >
               Book Now
             </Link>
           </div>
         </div>
       </section>
-
     </main>
   );
 }
