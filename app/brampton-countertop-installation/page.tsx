@@ -18,7 +18,6 @@ export const metadata: Metadata = {
 export default function BramptonPage() {
   return (
     <main className="min-h-screen bg-white text-neutral-900">
-
       {/* HERO */}
       <section className="bg-black text-white py-20">
         <div className="max-w-7xl mx-auto px-6">
@@ -105,6 +104,34 @@ export default function BramptonPage() {
         </div>
       </section>
 
+      {/* SERVICE AREAS */}
+      <section className="py-16 max-w-7xl mx-auto px-6">
+        <h2 className="text-3xl font-bold">
+          Explore Other Service Areas
+        </h2>
+
+        <div className="mt-8 flex flex-wrap gap-4">
+          <Link href="/toronto-countertop-installation" className="underline">
+            Toronto
+          </Link>
+          <Link href="/mississauga-countertop-installation" className="underline">
+            Mississauga
+          </Link>
+          <Link href="/vaughan-countertop-installation" className="underline">
+            Vaughan
+          </Link>
+          <Link href="/brampton-countertop-installation" className="underline">
+            Brampton
+          </Link>
+          <Link href="/london-countertop-installation" className="underline">
+            London
+          </Link>
+          <Link href="/locations" className="underline font-semibold">
+            View All Locations
+          </Link>
+        </div>
+      </section>
+
       {/* CTA */}
       <section className="bg-black text-white py-16">
         <div className="max-w-7xl mx-auto px-6">
@@ -127,7 +154,6 @@ export default function BramptonPage() {
           </div>
         </div>
       </section>
-
     </main>
   );
 }
