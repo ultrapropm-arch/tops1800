@@ -2,8 +2,8 @@
 
 export const dynamic = "force-dynamic";
 
-import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 
 type OldJob = {
@@ -27,11 +27,9 @@ function money(value?: number | null) {
 
 function timeAgo(value?: string | null) {
   if (!value) return "-";
-
   const date = new Date(value);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
-
   const minutes = Math.floor(diffMs / 1000 / 60);
   const hours = Math.floor(diffMs / 1000 / 60 / 60);
   const days = Math.floor(diffMs / 1000 / 60 / 60 / 24);
@@ -49,19 +47,15 @@ function getStatusClass(status?: string | null) {
     return "text-green-400";
   }
 
-  if (value === "incomplete") {
-    return "text-red-400";
-  }
-
-  if (value === "paid") {
-    return "text-blue-400";
-  }
+  if (value === "incomplete") return "text-red-400";
+  if (value === "paid") return "text-blue-400";
 
   return "text-gray-300";
 }
 
 export default function AdminOldJobsPage() {
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState("");
   const [jobs, setJobs] = useState<OldJob[]>([]);
   const [search, setSearch] = useState("");
 
@@ -88,6 +82,39 @@ export default function AdminOldJobsPage() {
 
     setJobs((data as OldJob[]) || []);
     setLoading(false);
+  }
+
+  async function deleteOldJob(job: OldJob) {
+    const label = job.archived_job_id || job.job_id || job.original_booking_id || job.id;
+
+    const confirmed = window.confirm(
+      `Delete old job ${label}?\n\nThis removes it from archived_jobs only. This cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    setDeletingId(job.id);
+
+    try {
+      const supabase = createClient();
+
+      const { error } = await supabase
+        .from("archived_jobs")
+        .delete()
+        .eq("id", job.id);
+
+      if (error) {
+        throw error;
+      }
+
+      setJobs((current) => current.filter((item) => item.id !== job.id));
+      alert("Old job deleted.");
+    } catch (error) {
+      console.error("DELETE OLD JOB ERROR:", error);
+      alert(error instanceof Error ? error.message : "Could not delete old job.");
+    } finally {
+      setDeletingId("");
+    }
   }
 
   const filteredJobs = useMemo(() => {
@@ -137,17 +164,26 @@ export default function AdminOldJobsPage() {
             </p>
             <h1 className="mt-2 text-4xl font-bold text-yellow-500">Old Jobs</h1>
             <p className="mt-3 max-w-3xl text-gray-300">
-              View archived jobs only. This page is for completed older jobs and
-              minimal stored history.
+              View archived jobs only. You can now permanently delete old archived job records from this page.
             </p>
           </div>
 
-          <Link
-            href="/admin"
-            className="rounded-xl border border-zinc-700 px-4 py-3 text-sm font-semibold text-white transition hover:border-yellow-500 hover:text-yellow-400"
-          >
-            Back to Dashboard
-          </Link>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => void loadOldJobs()}
+              className="rounded-xl border border-zinc-700 px-4 py-3 text-sm font-semibold text-white transition hover:border-yellow-500 hover:text-yellow-400"
+            >
+              Refresh
+            </button>
+
+            <Link
+              href="/admin"
+              className="rounded-xl border border-zinc-700 px-4 py-3 text-sm font-semibold text-white transition hover:border-yellow-500 hover:text-yellow-400"
+            >
+              Back to Dashboard
+            </Link>
+          </div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-3">
@@ -202,7 +238,10 @@ export default function AdminOldJobsPage() {
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-3">
                       <p className="text-xl font-bold text-yellow-500">
-                        {job.archived_job_id || job.job_id || job.original_booking_id || job.id}
+                        {job.archived_job_id ||
+                          job.job_id ||
+                          job.original_booking_id ||
+                          job.id}
                       </p>
 
                       <span className={`text-sm font-semibold ${getStatusClass(job.status)}`}>
@@ -231,7 +270,7 @@ export default function AdminOldJobsPage() {
                     </p>
                   </div>
 
-                  <div className="grid gap-3 md:grid-cols-2 xl:w-[320px]">
+                  <div className="grid gap-3 md:grid-cols-2 xl:w-[420px]">
                     <div className="rounded-xl border border-zinc-800 bg-black p-4">
                       <p className="text-sm text-gray-400">Installer Pay</p>
                       <p className="mt-1 text-lg font-bold text-yellow-500">
@@ -245,6 +284,15 @@ export default function AdminOldJobsPage() {
                         {money(job.company_profit)}
                       </p>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => void deleteOldJob(job)}
+                      disabled={deletingId === job.id}
+                      className="md:col-span-2 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-300 transition hover:bg-red-500/20 disabled:opacity-60"
+                    >
+                      {deletingId === job.id ? "Deleting..." : "Delete Old Job"}
+                    </button>
                   </div>
                 </div>
               </div>
