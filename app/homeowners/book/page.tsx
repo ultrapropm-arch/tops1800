@@ -1,5 +1,7 @@
 "use client";
 
+export const dynamic = "force-dynamic";
+
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
@@ -34,14 +36,14 @@ type ServiceType =
 type MaterialStatus = "" | "have_material" | "need_supply_install" | "not_sure";
 type FirstStep = "" | "estimate" | "measurements" | "have_measurements" | "advice";
 type ProjectStage = "" | "planning" | "ready_estimate" | "ready_measurements" | "ready_install";
-type PaymentMethod = "" | "credit_debit" | "etransfer" | "cash_pickup";
+type PaymentMethod = "credit_debit" | "etransfer" | "cash_pickup" | "no_payment_required";
 
 const supabase = createClient();
 
 const HST_RATE = 0.13;
 const HST_NUMBER = "720734235RT0001";
-const MEASUREMENT_DEPOSIT = 300;
 const ETRANSFER_EMAIL = "info@1800tops.com";
+const MEASUREMENT_DEPOSIT = 300;
 
 const serviceLabels: Record<ServiceType, string> = {
   "": "",
@@ -99,8 +101,93 @@ const startingPrices: Record<ServiceType, number> = {
   not_sure: 0,
 };
 
+const fixedServiceTypes: ServiceType[] = [
+  "remove_laminate",
+  "remove_laminate_dispose",
+  "remove_stone",
+  "remove_stone_dispose",
+  "remove_backsplash_tile",
+  "remove_backsplash_tile_dispose",
+  "drill_faucet_hole",
+  "fix_chip",
+  "remove_plumbing",
+  "silicone",
+  "granite_marble_sealing",
+  "polishing",
+  "general_cutting",
+  "reinstall_sink",
+  "fix_seams",
+  "sink_cutout",
+  "cooktop_cutout",
+];
+
 function money(value: number) {
-  return "$" + value.toFixed(2);
+  return "$" + Number(value || 0).toFixed(2);
+}
+
+function paymentMethodLabel(value: PaymentMethod) {
+  if (value === "credit_debit") return "Credit / Debit Card";
+  if (value === "etransfer") return "E-Transfer";
+  if (value === "cash_pickup") return "Cash Pickup";
+  return "No payment required";
+}
+
+function aiUrgency(timeline: string) {
+  if (timeline === "asap") return "Same-Day / ASAP Priority";
+  if (timeline === "this_week") return "This Week Priority";
+  if (timeline === "next_week") return "Next Week Standard";
+  return "Standard Scheduling";
+}
+
+function aiRecommendedTech(service: ServiceType, firstStep: FirstStep) {
+  const label = serviceLabels[service].toLowerCase();
+
+  if (firstStep === "estimate" || firstStep === "measurements") {
+    return "Estimator / measurement technician";
+  }
+
+  if (label.includes("stone")) return "Stone removal technician";
+  if (label.includes("backsplash")) return "Backsplash removal technician";
+  if (label.includes("sink") || label.includes("cooktop") || label.includes("cutout")) {
+    return "Cutout / onsite service technician";
+  }
+  if (
+    label.includes("chip") ||
+    label.includes("seam") ||
+    label.includes("polishing") ||
+    label.includes("sealing") ||
+    label.includes("silicone")
+  ) {
+    return "Repair / finishing technician";
+  }
+
+  return "General homeowner service technician";
+}
+
+function aiScore({
+  serviceType,
+  firstStep,
+  timeline,
+  city,
+  paymentRequired,
+}: {
+  serviceType: ServiceType;
+  firstStep: FirstStep;
+  timeline: string;
+  city: string;
+  paymentRequired: boolean;
+}) {
+  let score = 50;
+
+  if (timeline === "asap") score += 25;
+  if (timeline === "this_week") score += 15;
+  if (city) score += 10;
+  if (serviceType && serviceType !== "not_sure") score += 10;
+  if (firstStep === "measurements") score += 10;
+  if (paymentRequired) score += 10;
+  if (startingPrices[serviceType] >= 300) score += 5;
+
+  return Math.min(score, 100);
 }
 
 async function getNextJobNumber() {
@@ -141,9 +228,9 @@ export default function HomeownerBookingPage() {
   const [approxSqft, setApproxSqft] = useState("");
   const [timeline, setTimeline] = useState("");
   const [preferredContact, setPreferredContact] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("");
   const [notes, setNotes] = useState("");
 
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("no_payment_required");
   const [submitting, setSubmitting] = useState(false);
 
   const estimate = useMemo(() => {
@@ -171,6 +258,16 @@ export default function HomeownerBookingPage() {
       rangeHigh = Math.max(1500, sqft * 35);
     }
 
+    if (firstStep === "measurements") {
+      rangeLow = MEASUREMENT_DEPOSIT;
+      rangeHigh = MEASUREMENT_DEPOSIT;
+    }
+
+    if (firstStep === "estimate" || serviceType === "not_sure") {
+      rangeLow = 0;
+      rangeHigh = 0;
+    }
+
     const hstLow = rangeLow * HST_RATE;
     const hstHigh = rangeHigh * HST_RATE;
 
@@ -182,7 +279,7 @@ export default function HomeownerBookingPage() {
       totalLow: rangeLow + hstLow,
       totalHigh: rangeHigh + hstHigh,
     };
-  }, [serviceType, approxSqft]);
+  }, [serviceType, approxSqft, firstStep]);
 
   const requestType =
     firstStep === "estimate" ||
@@ -192,27 +289,47 @@ export default function HomeownerBookingPage() {
       ? "estimate"
       : "service";
 
-  const requiresPayment =
-    firstStep === "measurements" || requestType === "service";
+  const paymentRequired = firstStep === "measurements" || requestType === "service";
+  const finalPaymentMethod: PaymentMethod = paymentRequired ? paymentMethod : "no_payment_required";
+  const paymentStatus =
+    finalPaymentMethod === "credit_debit"
+      ? "pending_card_payment"
+      : paymentRequired
+      ? "pending"
+      : "not_required";
 
-  const paymentAmount =
-    firstStep === "measurements" ? MEASUREMENT_DEPOSIT : estimate.totalLow;
+  const paymentAmount = paymentRequired ? estimate.totalHigh : 0;
 
-  const paymentLabel =
-    firstStep === "measurements"
-      ? "Measurements deposit"
-      : "Service payment";
+  const ai = useMemo(() => {
+    return {
+      urgency: aiUrgency(timeline),
+      recommendedTech: aiRecommendedTech(serviceType, firstStep),
+      routeLabel: city ? `${city} homeowner route` : "City missing — route cannot be grouped yet",
+      score: aiScore({
+        serviceType,
+        firstStep,
+        timeline,
+        city,
+        paymentRequired,
+      }),
+    };
+  }, [serviceType, firstStep, timeline, city, paymentRequired]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
     if (!serviceType) {
-      alert("Please select a service.");
+      alert("Please select a service or estimate option.");
       return;
     }
 
-    if (requiresPayment && !paymentMethod) {
-      alert("Please select a payment method.");
+    if (!firstStep) {
+      alert("Please select what you need first.");
+      return;
+    }
+
+    if (paymentRequired && finalPaymentMethod === "no_payment_required") {
+      alert("Please choose a payment method.");
       return;
     }
 
@@ -221,7 +338,7 @@ export default function HomeownerBookingPage() {
 
       const jobNumber = await getNextJobNumber();
       const serviceLabel = serviceLabels[serviceType];
-      const servicePrice = startingPrices[serviceType] || 0;
+      const servicePrice = estimate.totalHigh;
 
       const fullNotes = `
 Material status: ${materialStatus}
@@ -230,11 +347,15 @@ Project stage: ${projectStage}
 Approx sqft: ${approxSqft || "Not provided"}
 Timeline: ${timeline}
 Preferred contact: ${preferredContact}
-Payment required: ${requiresPayment ? "Yes" : "No"}
-Payment method: ${paymentMethod || "No payment required for estimate"}
-Payment label: ${requiresPayment ? paymentLabel : "Estimate request"}
-Payment amount: ${requiresPayment ? money(paymentAmount) : "$0.00"}
-E-transfer email: ${paymentMethod === "etransfer" ? ETRANSFER_EMAIL : "N/A"}
+
+AI urgency: ${ai.urgency}
+AI recommended tech: ${ai.recommendedTech}
+AI route label: ${ai.routeLabel}
+AI priority score: ${ai.score}
+
+Payment required: ${paymentRequired ? "Yes" : "No"}
+Payment method: ${paymentMethodLabel(finalPaymentMethod)}
+Payment status: ${paymentStatus}
 
 Customer notes:
 ${notes || "No notes provided."}
@@ -251,7 +372,7 @@ HST Number: ${HST_NUMBER}
       const { error } = await supabase.from("homeowner_bookings").insert({
         job_number: jobNumber,
         request_type: requestType,
-        status: paymentMethod === "credit_debit" ? "pending_payment" : "new",
+        status: "new",
 
         customer_name: customerName,
         customer_email: email,
@@ -264,24 +385,27 @@ HST Number: ${HST_NUMBER}
         service_type: serviceLabel,
         service_price: servicePrice,
 
+        payment_method: finalPaymentMethod,
+        payment_status: paymentStatus,
+        payment_amount: paymentAmount,
+
         preferred_date: timeline,
         preferred_time: preferredContact,
-
-        payment_method: paymentMethod || "no_payment_required",
-        payment_status: requiresPayment ? "pending" : "not_required",
-        payment_amount: requiresPayment ? paymentAmount : 0,
 
         notes: fullNotes,
 
         one_way_km: 0,
         round_trip_km: 0,
-        ai_route_note:
-          "Distance not calculated yet. Admin can update route manually.",
+        ai_route_note: "Distance not calculated yet. Admin can update route manually.",
+        ai_priority_score: ai.score,
+        ai_route_label: ai.routeLabel,
+        ai_recommended_tech: ai.recommendedTech,
+        ai_urgency_label: ai.urgency,
       });
 
       if (error) {
         console.error(error);
-        alert("Booking failed. Check homeowner_bookings RLS insert policy.");
+        alert("Booking failed. Check Supabase RLS/policies for homeowner_bookings.");
         setSubmitting(false);
         return;
       }
@@ -306,10 +430,16 @@ HST Number: ${HST_NUMBER}
           timeline,
           preferredContact,
           notes,
-          paymentMethod: paymentMethod || "no_payment_required",
-          paymentRequired: requiresPayment,
+          paymentMethod: finalPaymentMethod,
+          paymentRequired,
           paymentAmount: money(paymentAmount),
-          paymentLabel,
+          paymentLabel:
+            firstStep === "measurements"
+              ? "Measurement deposit"
+              : requestType === "service"
+              ? "Homeowner service payment"
+              : "Estimate request",
+          paymentStatus,
           etransferEmail: ETRANSFER_EMAIL,
         }),
       });
@@ -317,6 +447,8 @@ HST Number: ${HST_NUMBER}
       const params = new URLSearchParams({
         job: jobNumber,
         customerName,
+        customerEmail: email,
+        customerPhone: phone,
         phone,
         email,
         projectAddress,
@@ -333,46 +465,45 @@ HST Number: ${HST_NUMBER}
         notes,
         estimateLow: estimate.totalLow.toFixed(2),
         estimateHigh: estimate.totalHigh.toFixed(2),
-        hstNumber: HST_NUMBER,
-        paymentMethod: paymentMethod || "no_payment_required",
-        paymentRequired: String(requiresPayment),
+        paymentMethod: finalPaymentMethod,
+        paymentStatus,
         paymentAmount: paymentAmount.toFixed(2),
-        paymentLabel,
+        paymentRequired: String(paymentRequired),
+        hstNumber: HST_NUMBER,
       });
 
-      if (requiresPayment && paymentMethod === "credit_debit") {
-        const stripeResponse = await fetch("/api/homeowner-stripe-checkout", {
+      const confirmationUrl = `/homeowners/confirmation?${params.toString()}`;
+      const liveBaseUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://1800tops.com";
+
+      if (finalPaymentMethod === "credit_debit" && paymentAmount > 0) {
+        const stripeRes = await fetch("/api/stripe/homeowner-checkout", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
             jobNumber,
-            customerEmail: email,
             serviceLabel,
-            servicePrice,
-            hstAmount:
-              firstStep === "measurements"
-                ? MEASUREMENT_DEPOSIT * HST_RATE
-                : estimate.hstLow,
-            finalTotal: paymentAmount,
-            paymentLabel,
+            customerEmail: email,
+            paymentAmount,
+            successUrl: `${liveBaseUrl}${confirmationUrl}&stripe=success`,
+            cancelUrl: `${liveBaseUrl}/homeowners/book?stripe=cancelled&job=${jobNumber}`,
           }),
         });
 
-        const stripeData = await stripeResponse.json();
+        const stripeData = await stripeRes.json();
 
-        if (stripeData?.url) {
-          window.location.href = stripeData.url;
+        if (!stripeData.success || !stripeData.url) {
+          alert(stripeData.error || "Stripe checkout failed.");
+          setSubmitting(false);
           return;
         }
 
-        alert("Stripe checkout failed. Please try again or choose another payment method.");
-        setSubmitting(false);
+        window.location.href = stripeData.url;
         return;
       }
 
-      router.push(`/homeowners/confirmation?${params.toString()}`);
+      router.push(confirmationUrl);
     } catch (err) {
       console.error(err);
       alert("Something went wrong submitting the homeowner booking.");
@@ -388,14 +519,37 @@ HST Number: ${HST_NUMBER}
         </p>
 
         <h1 className="mt-3 text-4xl font-bold md:text-5xl">
-          On-Demand Homeowner Estimates, Measurements & Services
+          Request a Homeowner Estimate
         </h1>
 
         <p className="mt-4 max-w-2xl text-gray-300">
-          Get countertop help fast. Request an estimate, book measurements, or
-          schedule homeowner services with the fastest installation turnaround
-          possible.
+          Need countertops, kitchen upgrades, measurements, or installation
+          help? Submit your project details and 1800TOPS will contact you to
+          schedule an estimate, measurement visit, or homeowner service.
         </p>
+
+        <div className="mt-8 grid gap-4 md:grid-cols-3">
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+            <p className="text-lg font-bold text-yellow-400">1. Request</p>
+            <p className="mt-2 text-sm text-gray-300">
+              Tell us what you need for your kitchen or countertop project.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+            <p className="text-lg font-bold text-yellow-400">2. Estimate</p>
+            <p className="mt-2 text-sm text-gray-300">
+              We contact you to arrange an estimate or measurement visit.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+            <p className="text-lg font-bold text-yellow-400">3. Schedule</p>
+            <p className="mt-2 text-sm text-gray-300">
+              Once approved, we schedule the installation or service.
+            </p>
+          </div>
+        </div>
 
         <form
           onSubmit={handleSubmit}
@@ -462,12 +616,17 @@ HST Number: ${HST_NUMBER}
             required
           >
             <option value="">Select service needed</option>
+
+            <option disabled>── Estimate / Measurement ──</option>
+            <option value="not_sure">Book estimate / not sure yet</option>
             <option value="countertop_upgrade">Kitchen countertop upgrade</option>
             <option value="countertop_replacement">Countertop replacement</option>
-            <option value="countertop_repair">Countertop repair / service</option>
-            <option value="sink_cooktop_cutout">Sink or cooktop cutout</option>
-            <option value="backsplash_service">Backsplash service</option>
             <option value="full_kitchen_upgrade">Full kitchen upgrade</option>
+
+            <option disabled>── Homeowner Services ──</option>
+            <option value="countertop_repair">Countertop repair / service - from $220</option>
+            <option value="sink_cooktop_cutout">Sink or cooktop cutout - from $300</option>
+            <option value="backsplash_service">Backsplash service - from $300</option>
             <option value="remove_laminate">Remove laminate - $260</option>
             <option value="remove_laminate_dispose">Remove laminate and dispose - $360</option>
             <option value="remove_stone">Remove stone - $350</option>
@@ -485,7 +644,6 @@ HST Number: ${HST_NUMBER}
             <option value="fix_seams">Fix seams - $250</option>
             <option value="sink_cutout">Sink cutout - $300</option>
             <option value="cooktop_cutout">Cooktop cutout - $300</option>
-            <option value="not_sure">Not sure / need advice</option>
           </select>
 
           <select
@@ -503,14 +661,25 @@ HST Number: ${HST_NUMBER}
           <select
             className="w-full rounded-xl border border-white/20 bg-black p-4 text-white outline-none focus:border-yellow-400"
             value={firstStep}
-            onChange={(e) => setFirstStep(e.target.value as FirstStep)}
+            onChange={(e) => {
+              const next = e.target.value as FirstStep;
+              setFirstStep(next);
+
+              if (next === "estimate" || next === "advice") {
+                setPaymentMethod("no_payment_required");
+              }
+
+              if (next === "measurements" || next === "have_measurements") {
+                setPaymentMethod("credit_debit");
+              }
+            }}
             required
           >
             <option value="">What do you need first?</option>
-            <option value="estimate">Send someone for an estimate - no payment required</option>
-            <option value="measurements">Book measurements - $300 deposit</option>
-            <option value="have_measurements">I already have measurements</option>
-            <option value="advice">I need help choosing options</option>
+            <option value="estimate">Send someone for an estimate — no payment</option>
+            <option value="measurements">Send someone for measurements — $300 + HST</option>
+            <option value="have_measurements">I already have measurements / ready for service</option>
+            <option value="advice">I need help choosing options — no payment</option>
           </select>
 
           <select
@@ -560,73 +729,58 @@ HST Number: ${HST_NUMBER}
             <option value="email">Email</option>
           </select>
 
-          {requiresPayment && (
-            <>
-              <h2 className="pt-4 text-2xl font-bold">Payment Method</h2>
+          {paymentRequired && (
+            <div className="rounded-xl border border-blue-400/30 bg-blue-500/10 p-5">
+              <p className="text-sm uppercase tracking-[0.2em] text-blue-200">
+                Payment method
+              </p>
 
-              <select
-                className="w-full rounded-xl border border-white/20 bg-black p-4 text-white outline-none focus:border-yellow-400"
-                value={paymentMethod}
-                onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
-                required
-              >
-                <option value="">Select payment method</option>
-                <option value="credit_debit">Credit / Debit Card</option>
-                <option value="etransfer">E-Transfer ({ETRANSFER_EMAIL})</option>
-                <option value="cash_pickup">Cash Pickup</option>
-              </select>
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod("credit_debit")}
+                  className={`rounded-xl border p-4 text-left font-bold ${
+                    finalPaymentMethod === "credit_debit"
+                      ? "border-blue-400 bg-blue-400 text-black"
+                      : "border-white/10 bg-black text-white"
+                  }`}
+                >
+                  Credit / Debit
+                  <p className="mt-1 text-xs font-normal">Secure Stripe payment</p>
+                </button>
 
-              <div className="rounded-xl border border-yellow-400/30 bg-yellow-400/10 p-5">
-                <p className="font-bold text-yellow-300">
-                  Payment Required: {money(paymentAmount)}
-                </p>
-                <p className="mt-2 text-sm text-gray-300">
-                  {firstStep === "measurements"
-                    ? "A $300 deposit is required to book measurements."
-                    : "Full payment is required for homeowner service bookings."}
-                </p>
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod("etransfer")}
+                  className={`rounded-xl border p-4 text-left font-bold ${
+                    finalPaymentMethod === "etransfer"
+                      ? "border-blue-400 bg-blue-400 text-black"
+                      : "border-white/10 bg-black text-white"
+                  }`}
+                >
+                  E-Transfer
+                  <p className="mt-1 text-xs font-normal">{ETRANSFER_EMAIL}</p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod("cash_pickup")}
+                  className={`rounded-xl border p-4 text-left font-bold ${
+                    finalPaymentMethod === "cash_pickup"
+                      ? "border-blue-400 bg-blue-400 text-black"
+                      : "border-white/10 bg-black text-white"
+                  }`}
+                >
+                  Cash Pickup
+                  <p className="mt-1 text-xs font-normal">Admin will coordinate</p>
+                </button>
               </div>
-
-              {paymentMethod === "etransfer" && (
-                <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-5">
-                  <p className="font-bold text-blue-300">E-Transfer Instructions</p>
-                  <p className="mt-2 text-sm text-gray-300">
-                    Send e-transfer to:
-                  </p>
-                  <p className="mt-1 text-lg font-bold text-white">
-                    {ETRANSFER_EMAIL}
-                  </p>
-                  <p className="mt-3 text-sm text-gray-400">
-                    Include your job number in the transfer notes after submitting.
-                  </p>
-                </div>
-              )}
-
-              {paymentMethod === "cash_pickup" && (
-                <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-5">
-                  <p className="font-bold text-yellow-300">Cash Pickup</p>
-                  <p className="mt-2 text-sm text-gray-300">
-                    1800TOPS will coordinate cash pickup arrangements with you after booking review.
-                  </p>
-                </div>
-              )}
-            </>
-          )}
-
-          {!requiresPayment && (
-            <div className="rounded-xl border border-green-500/30 bg-green-500/10 p-5">
-              <p className="font-bold text-green-300">
-                No payment required for estimate request.
-              </p>
-              <p className="mt-2 text-sm text-gray-300">
-                Submit your request and 1800TOPS will contact you to arrange the next step.
-              </p>
             </div>
           )}
 
           <textarea
             className="min-h-32 w-full rounded-xl border border-white/20 bg-black p-4 text-white outline-none focus:border-yellow-400"
-            placeholder="Tell us about the project."
+            placeholder="Tell us about the project. Example: kitchen size, material, old countertop removal, sink, backsplash, repair needed, or anything important."
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />
@@ -647,7 +801,21 @@ HST Number: ${HST_NUMBER}
             )}
 
             <p className="mt-2 text-sm text-gray-300">
-              HST included where applicable. HST Number: {HST_NUMBER}
+              Payment method: {paymentMethodLabel(finalPaymentMethod)} · Status: {paymentStatus}
+            </p>
+
+            <p className="mt-2 text-sm text-gray-300">
+              AI: {ai.urgency} · {ai.recommendedTech} · Score {ai.score}
+            </p>
+
+            <p className="mt-2 text-sm text-gray-300">
+              Price includes HST where applicable. HST Number: {HST_NUMBER}
+            </p>
+
+            <p className="mt-2 text-sm text-gray-300">
+              This is only a starting estimate. Final price is confirmed after
+              estimate, measurements, photos, material details, access, removal,
+              and scheduling are reviewed.
             </p>
           </div>
 
@@ -657,11 +825,18 @@ HST Number: ${HST_NUMBER}
             className="w-full rounded-xl bg-yellow-400 px-6 py-4 text-lg font-bold text-black transition hover:bg-yellow-300 disabled:opacity-60"
           >
             {submitting
-              ? "Submitting..."
-              : requiresPayment && paymentMethod === "credit_debit"
-              ? "Continue to Card Payment"
+              ? finalPaymentMethod === "credit_debit"
+                ? "Opening Stripe..."
+                : "Submitting..."
+              : finalPaymentMethod === "credit_debit" && paymentRequired
+              ? "Continue to Secure Card Payment"
               : "Submit Homeowner Request"}
           </button>
+
+          <p className="text-center text-xs text-gray-400">
+            By submitting, you agree that 1800TOPS may contact you about your
+            homeowner estimate, measurement, or service request.
+          </p>
         </form>
       </div>
     </main>
