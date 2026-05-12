@@ -201,49 +201,69 @@ async function loadJobs() {
 }
 
   async function updateJob(id: string, patch: Partial<HomeownerJob>) {
-    setSavingId(id);
+  setSavingId(id);
 
-    const { error } = await supabase
-      .from("homeowner_bookings")
-      .update({
-        ...patch,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", id);
+  try {
+    const res = await fetch("/api/homeowner-admin/jobs/update", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        id,
+        patch,
+      }),
+    });
 
-    if (error) {
-      console.error(error);
-      alert("Update failed.");
+    const data = await res.json();
+
+    if (!data.success) {
+      alert(data.error || "Update failed.");
     } else {
       await loadJobs();
     }
-
-    setSavingId(null);
+  } catch (error) {
+    console.error(error);
+    alert("Update failed.");
   }
+
+  setSavingId(null);
+}
 
   async function deleteJob(id: string) {
-    const confirmDelete = window.confirm(
-      "Delete this homeowner job permanently from the platform?"
-    );
+  const confirmDelete = window.confirm(
+    "Delete this homeowner job permanently?"
+  );
 
-    if (!confirmDelete) return;
+  if (!confirmDelete) return;
 
-    setSavingId(id);
+  setSavingId(id);
 
-    const { error } = await supabase
-      .from("homeowner_bookings")
-      .delete()
-      .eq("id", id);
+  try {
+    const res = await fetch("/api/homeowner-admin/jobs/delete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        id,
+      }),
+    });
 
-    if (error) {
-      console.error(error);
-      alert("Delete failed.");
+    const data = await res.json();
+
+    if (!data.success) {
+      alert(data.error || "Delete failed.");
     } else {
       await loadJobs();
     }
-
-    setSavingId(null);
+  } catch (error) {
+    console.error(error);
+    alert("Delete failed.");
   }
+
+  setSavingId(null);
+}
 
   async function calculateDistance(job: HomeownerJob) {
     if (!job.address || !job.city) {
