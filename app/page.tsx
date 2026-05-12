@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import SupportChatWidget from "@/components/support/SupportChatWidget";
 
 const INSTAGRAM_URL =
-  "https://www.instagram.com/ultrapro_contracting_inc?igsh=MWY5cjFnajV4ZTVlZg==";
+  "https://www.instagram.com/1_800tops?igsh=MWY5cjFnajV4ZTVlZg==";
 
 const TIKTOK_URL =
   "https://www.tiktok.com/@1_800tops?_r=1&_t=ZS-95lfZLp56t3";
@@ -88,6 +88,28 @@ const handleItems = [
   "Repairs & Sealing",
   "Condo / High-Rise Jobs",
   "Multi-Job Scheduling",
+];
+
+const homeownerServices = [
+  "Homeowner Estimates",
+  "Kitchen Measurements",
+  "Remove Laminate",
+  "Remove Laminate & Dispose",
+  "Remove Stone",
+  "Remove Stone & Dispose",
+  "Remove Backsplash Tile",
+  "Remove Backsplash Tile & Dispose",
+  "Drill Faucet Hole",
+  "Fix Chip",
+  "Remove Plumbing",
+  "Silicone",
+  "Granite / Marble Sealing",
+  "Polishing",
+  "General Cutting",
+  "Reinstall Sink",
+  "Fix Seams",
+  "Sink Cutout",
+  "Cooktop Cutout",
 ];
 
 const partnerBenefits = [
@@ -229,7 +251,9 @@ function InstantQuote() {
 
       <div className="space-y-4">
         <div>
-          <label className="mb-2 block text-sm text-zinc-400">Service Type</label>
+          <label className="mb-2 block text-sm text-zinc-400">
+            Service Type
+          </label>
           <select
             value={service}
             onChange={(e) => setService(e.target.value)}
@@ -243,7 +267,9 @@ function InstantQuote() {
         </div>
 
         <div>
-          <label className="mb-2 block text-sm text-zinc-400">Square Feet</label>
+          <label className="mb-2 block text-sm text-zinc-400">
+            Square Feet
+          </label>
           <input
             type="number"
             min={0}
@@ -255,7 +281,9 @@ function InstantQuote() {
         </div>
 
         <div>
-          <label className="mb-2 block text-sm text-zinc-400">Distance (km)</label>
+          <label className="mb-2 block text-sm text-zinc-400">
+            Distance (km)
+          </label>
           <input
             type="number"
             min={0}
@@ -267,7 +295,9 @@ function InstantQuote() {
         </div>
 
         <div>
-          <label className="mb-2 block text-sm text-zinc-400">Waterfalls</label>
+          <label className="mb-2 block text-sm text-zinc-400">
+            Waterfalls
+          </label>
           <input
             type="number"
             min={0}
@@ -279,7 +309,9 @@ function InstantQuote() {
         </div>
 
         <div>
-          <label className="mb-2 block text-sm text-zinc-400">Outlet Cutouts</label>
+          <label className="mb-2 block text-sm text-zinc-400">
+            Outlet Cutouts
+          </label>
           <input
             type="number"
             min={0}
@@ -327,7 +359,14 @@ function InstantQuote() {
           href="/book"
           className="block w-full rounded-2xl bg-yellow-500 px-6 py-4 text-center font-bold text-black transition hover:bg-yellow-400"
         >
-          Continue To Full Booking
+          Continue To Fabricator Booking
+        </Link>
+
+        <Link
+          href="/homeowners/book"
+          className="block w-full rounded-2xl border border-yellow-500 px-6 py-4 text-center font-bold text-yellow-400 transition hover:bg-yellow-500 hover:text-black"
+        >
+          Homeowner Estimate / Services
         </Link>
       </div>
     </div>
@@ -422,7 +461,14 @@ export default function HomePage() {
               href="/book"
               className="rounded-full bg-yellow-500 px-5 py-2 text-sm font-bold text-black transition hover:bg-yellow-400"
             >
-              Book Now
+              Fabricator Book Now
+            </Link>
+
+            <Link
+              href="/homeowners/book"
+              className="rounded-full border border-yellow-500 px-5 py-2 text-sm font-bold text-yellow-400 transition hover:bg-yellow-500 hover:text-black"
+            >
+              Homeowners
             </Link>
           </div>
         </div>
@@ -434,13 +480,13 @@ export default function HomePage() {
           <div className="grid items-center gap-12 lg:grid-cols-2">
             <div>
               <p className="mb-4 text-sm font-semibold uppercase tracking-[0.25em] text-yellow-500">
-                Guaranteed Install Within 24 Hours
+                Canada First On-Demand Countertop Turnaround
               </p>
 
               <h2 className="text-4xl font-extrabold leading-tight text-white md:text-6xl">
                 Same-Day Countertop Installation.
                 <span className="block text-yellow-500">
-                  No Delays. No Headaches.
+                  Fast Turnaround In Days.
                 </span>
               </h2>
 
@@ -449,9 +495,9 @@ export default function HomePage() {
               </p>
 
               <p className="mt-6 max-w-2xl text-lg leading-8 text-zinc-300 md:text-xl">
-                1-800TOPS helps fabricators, contractors, builders, and showrooms
-                book fast, reliable countertop installation with less chaos,
-                cleaner coordination, and stronger project flow.
+                1-800TOPS helps fabricators, contractors, builders, showrooms,
+                and homeowners book fast, reliable countertop installation with
+                less chaos, cleaner coordination, and stronger project flow.
               </p>
 
               <div className="mt-8 flex flex-col gap-4 sm:flex-row">
@@ -466,7 +512,14 @@ export default function HomePage() {
                   href="/book"
                   className="rounded-2xl border border-yellow-500 px-7 py-4 text-center font-semibold text-yellow-400 transition hover:bg-yellow-500 hover:text-black"
                 >
-                  Book Installation / Services
+                  Fabricator / Contractor Booking
+                </Link>
+
+                <Link
+                  href="/homeowners/book"
+                  className="rounded-2xl border border-zinc-700 px-7 py-4 text-center font-semibold text-white transition hover:border-yellow-500 hover:text-yellow-400"
+                >
+                  Homeowner Estimate / Services
                 </Link>
               </div>
 
@@ -563,6 +616,53 @@ export default function HomePage() {
             <div className="rounded-[1.5rem] border border-zinc-800 bg-black p-6">
               <InstantQuote />
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-t border-zinc-800 bg-zinc-950 px-6 py-20">
+        <div className="mx-auto max-w-7xl">
+          <div className="mb-12 text-center">
+            <p className="text-sm font-semibold uppercase tracking-[0.25em] text-yellow-500">
+              Homeowner Services
+            </p>
+
+            <h3 className="mt-4 text-3xl font-bold text-white md:text-5xl">
+              Canada First Countertop Services For Homeowners
+            </h3>
+
+            <p className="mx-auto mt-4 max-w-3xl text-zinc-300">
+              Homeowners can request estimates, measurements, removals, repairs,
+              cutouts, polishing, sealing, silicone, sink work, and kitchen
+              countertop services with faster turnaround in days.
+            </p>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {homeownerServices.map((item) => (
+              <div
+                key={item}
+                className="rounded-[1.5rem] border border-zinc-800 bg-black p-5"
+              >
+                <p className="font-semibold text-white">{item}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-10 flex flex-wrap justify-center gap-4">
+            <Link
+              href="/homeowners/book"
+              className="rounded-2xl bg-yellow-500 px-8 py-4 font-bold text-black transition hover:bg-yellow-400"
+            >
+              Book Homeowner Services
+            </Link>
+
+            <Link
+              href="/book"
+              className="rounded-2xl border border-yellow-500 px-8 py-4 font-semibold text-yellow-400 transition hover:bg-yellow-500 hover:text-black"
+            >
+              I’m A Fabricator / Contractor
+            </Link>
           </div>
         </div>
       </section>
@@ -842,7 +942,14 @@ export default function HomePage() {
               href="/book"
               className="rounded-2xl bg-yellow-500 px-8 py-4 font-bold text-black transition hover:bg-yellow-400"
             >
-              Book Installation / Services
+              Fabricator / Contractor Booking
+            </Link>
+
+            <Link
+              href="/homeowners/book"
+              className="rounded-2xl border border-yellow-500 px-8 py-4 font-semibold text-yellow-400 transition hover:bg-yellow-500 hover:text-black"
+            >
+              Homeowner Services
             </Link>
 
             <button
@@ -877,6 +984,13 @@ export default function HomePage() {
           <Link href="/locations" className="text-yellow-500 hover:underline">
             Service Areas
           </Link>
+
+          <Link
+            href="/homeowners/book"
+            className="text-yellow-500 hover:underline"
+          >
+            Homeowner Countertop Services
+          </Link>
         </div>
       </div>
 
@@ -886,14 +1000,24 @@ export default function HomePage() {
 
           <div className="flex flex-wrap items-center gap-4">
             <Link href="/book" className="transition hover:text-yellow-400">
-              Book
+              Fabricator Book
             </Link>
+
+            <Link
+              href="/homeowners/book"
+              className="transition hover:text-yellow-400"
+            >
+              Homeowners
+            </Link>
+
             <Link href="/login" className="transition hover:text-yellow-400">
               Login
             </Link>
+
             <Link href="/policies" className="transition hover:text-yellow-400">
               Policies
             </Link>
+
             <Link href="/locations" className="transition hover:text-yellow-400">
               Locations
             </Link>
