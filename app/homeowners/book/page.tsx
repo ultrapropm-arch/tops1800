@@ -2,9 +2,15 @@
 
 export const dynamic = "force-dynamic";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
+
+declare global {
+  interface Window {
+    google: any;
+  }
+}
 
 type ServiceType =
   | ""
@@ -101,26 +107,6 @@ const startingPrices: Record<ServiceType, number> = {
   not_sure: 0,
 };
 
-const fixedServiceTypes: ServiceType[] = [
-  "remove_laminate",
-  "remove_laminate_dispose",
-  "remove_stone",
-  "remove_stone_dispose",
-  "remove_backsplash_tile",
-  "remove_backsplash_tile_dispose",
-  "drill_faucet_hole",
-  "fix_chip",
-  "remove_plumbing",
-  "silicone",
-  "granite_marble_sealing",
-  "polishing",
-  "general_cutting",
-  "reinstall_sink",
-  "fix_seams",
-  "sink_cutout",
-  "cooktop_cutout",
-];
-
 function money(value: number) {
   return "$" + Number(value || 0).toFixed(2);
 }
@@ -212,6 +198,7 @@ async function getNextJobNumber() {
 
 export default function HomeownerBookingPage() {
   const router = useRouter();
+  const addressInputRef = useRef<HTMLInputElement | null>(null);
 
   const [customerName, setCustomerName] = useState("");
   const [phone, setPhone] = useState("");
@@ -227,11 +214,76 @@ export default function HomeownerBookingPage() {
 
   const [approxSqft, setApproxSqft] = useState("");
   const [timeline, setTimeline] = useState("");
+  const [preferredDate, setPreferredDate] = useState("");
   const [preferredContact, setPreferredContact] = useState("");
   const [notes, setNotes] = useState("");
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("no_payment_required");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    let autocomplete: any;
+
+    function initAutocomplete() {
+      if (!window.google?.maps?.places || !addressInputRef.current) return;
+
+      autocomplete = new window.google.maps.places.Autocomplete(addressInputRef.current, {
+        componentRestrictions: { country: "ca" },
+        fields: ["formatted_address", "address_components"],
+        types: ["address"],
+      });
+
+      autocomplete.addListener("place_changed", () => {
+        const place = autocomplete.getPlace();
+
+        if (place.formatted_address) {
+          setProjectAddress(place.formatted_address);
+        }
+
+        const components = place.address_components || [];
+
+        const cityComponent =
+          components.find((item: any) => item.types.includes("locality")) ||
+          components.find((item: any) => item.types.includes("administrative_area_level_3")) ||
+          components.find((item: any) => item.types.includes("administrative_area_level_2"));
+
+        const postalComponent = components.find((item: any) =>
+          item.types.includes("postal_code")
+        );
+
+        if (cityComponent?.long_name) setCity(cityComponent.long_name);
+        if (postalComponent?.long_name) setPostalCode(postalComponent.long_name);
+      });
+    }
+
+    if (window.google?.maps?.places) {
+      initAutocomplete();
+      return;
+    }
+
+    const googleMapsKey =
+      process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ||
+      process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ||
+      process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+
+    if (!googleMapsKey) return;
+
+    const existingScript = document.querySelector(
+      'script[src*="maps.googleapis.com/maps/api/js"]'
+    );
+
+    if (existingScript) {
+      existingScript.addEventListener("load", initAutocomplete);
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${googleMapsKey}&libraries=places`;
+    script.async = true;
+    script.defer = true;
+    script.onload = initAutocomplete;
+    document.head.appendChild(script);
+  }, []);
 
   const estimate = useMemo(() => {
     const sqft = Number(approxSqft || 0);
@@ -328,6 +380,11 @@ export default function HomeownerBookingPage() {
       return;
     }
 
+    if (!preferredDate) {
+      alert("Please select a preferred booking date.");
+      return;
+    }
+
     if (paymentRequired && finalPaymentMethod === "no_payment_required") {
       alert("Please choose a payment method.");
       return;
@@ -345,6 +402,7 @@ Material status: ${materialStatus}
 First step: ${firstStep}
 Project stage: ${projectStage}
 Approx sqft: ${approxSqft || "Not provided"}
+Preferred date: ${preferredDate}
 Timeline: ${timeline}
 Preferred contact: ${preferredContact}
 
@@ -389,7 +447,7 @@ HST Number: ${HST_NUMBER}
         payment_status: paymentStatus,
         payment_amount: paymentAmount,
 
-        preferred_date: timeline,
+        preferred_date: preferredDate,
         preferred_time: preferredContact,
 
         notes: fullNotes,
@@ -405,7 +463,7 @@ HST Number: ${HST_NUMBER}
 
       if (error) {
         console.error(error);
-        alert("Booking failed. Check Supabase RLS/policies for homeowner_bookings.");
+        alert(`Booking failed: ${error.message}`);
         setSubmitting(false);
         return;
       }
@@ -427,6 +485,7 @@ HST Number: ${HST_NUMBER}
           estimateLow: money(estimate.totalLow),
           estimateHigh: money(estimate.totalHigh),
           requestType,
+          preferredDate,
           timeline,
           preferredContact,
           notes,
@@ -460,6 +519,7 @@ HST Number: ${HST_NUMBER}
         firstStep,
         projectStage,
         approxSqft,
+        preferredDate,
         timeline,
         preferredContact,
         notes,
@@ -583,8 +643,9 @@ HST Number: ${HST_NUMBER}
           />
 
           <input
+            ref={addressInputRef}
             className="w-full rounded-xl border border-white/20 bg-black p-4 text-white outline-none focus:border-yellow-400"
-            placeholder="Project address"
+            placeholder="Start typing project address"
             value={projectAddress}
             onChange={(e) => setProjectAddress(e.target.value)}
             required
@@ -703,6 +764,14 @@ HST Number: ${HST_NUMBER}
             onChange={(e) => setApproxSqft(e.target.value)}
           />
 
+          <input
+            className="w-full rounded-xl border border-white/20 bg-black p-4 text-white outline-none focus:border-yellow-400"
+            type="date"
+            value={preferredDate}
+            onChange={(e) => setPreferredDate(e.target.value)}
+            required
+          />
+
           <select
             className="w-full rounded-xl border border-white/20 bg-black p-4 text-white outline-none focus:border-yellow-400"
             value={timeline}
@@ -799,6 +868,10 @@ HST Number: ${HST_NUMBER}
                 Quote after review
               </p>
             )}
+
+            <p className="mt-2 text-sm text-gray-300">
+              Preferred date: {preferredDate || "Not selected yet"}
+            </p>
 
             <p className="mt-2 text-sm text-gray-300">
               Payment method: {paymentMethodLabel(finalPaymentMethod)} · Status: {paymentStatus}
