@@ -462,101 +462,130 @@ HST Number: ${HST_NUMBER}
         setSubmitting(false);
         return;
       }
+await fetch("/api/homeowner-confirmation-email", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    jobNumber,
+    customerName,
+    customerEmail: email,
+    customerPhone: phone,
+    serviceLabel,
+    projectAddress,
+    city,
+    postalCode,
+    estimateLow: money(estimate.totalLow),
+    estimateHigh: money(estimate.totalHigh),
+    requestType,
+    preferredDate,
+    timeline,
+    preferredContact,
+    notes,
+    paymentMethod: finalPaymentMethod,
+    paymentRequired,
+    paymentAmount: money(paymentAmount),
+    paymentLabel:
+      firstStep === "measurements"
+        ? "Measurement deposit"
+        : requestType === "service"
+        ? "Homeowner service payment"
+        : "Estimate request",
+    paymentStatus,
+    etransferEmail: ETRANSFER_EMAIL,
+  }),
+});
 
-      await fetch("/api/homeowner-confirmation-email", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          jobNumber,
-          customerName,
-          customerEmail: email,
-          customerPhone: phone,
-          serviceLabel,
-          projectAddress,
-          city,
-          postalCode,
-          estimateLow: money(estimate.totalLow),
-          estimateHigh: money(estimate.totalHigh),
-          requestType,
-          preferredDate,
-          timeline,
-          preferredContact,
-          notes,
-          paymentMethod: finalPaymentMethod,
-          paymentRequired,
-          paymentAmount: money(paymentAmount),
-          paymentLabel:
-            firstStep === "measurements"
-              ? "Measurement deposit"
-              : requestType === "service"
-              ? "Homeowner service payment"
-              : "Estimate request",
-          paymentStatus,
-          etransferEmail: ETRANSFER_EMAIL,
-        }),
-      });
+await fetch("/api/homeowner-create-calendar", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    jobNumber,
+    customerName,
+    customerEmail: email,
+    customerPhone: phone,
+    serviceType: serviceLabel,
+    address: projectAddress,
+    city,
+    scheduledDate:
+      preferredDate ||
+      new Date().toISOString().slice(0, 10),
+    scheduledTime:
+      timeline || "Homeowner request submitted",
+    notes:
+      notes || "Homeowner request submitted.",
+  }),
+});
 
-      const params = new URLSearchParams({
-        job: jobNumber,
-        customerName,
-        customerEmail: email,
-        customerPhone: phone,
-        phone,
-        email,
-        projectAddress,
-        city,
-        postalCode,
-        serviceType,
-        serviceLabel,
-        materialStatus,
-        firstStep,
-        projectStage,
-        approxSqft,
-        preferredDate,
-        timeline,
-        preferredContact,
-        notes,
-        estimateLow: estimate.totalLow.toFixed(2),
-        estimateHigh: estimate.totalHigh.toFixed(2),
-        paymentMethod: finalPaymentMethod,
-        paymentStatus,
-        paymentAmount: paymentAmount.toFixed(2),
-        paymentRequired: String(paymentRequired),
-        hstNumber: HST_NUMBER,
-      });
+const params = new URLSearchParams({
+  job: jobNumber,
+  customerName,
+  customerEmail: email,
+  customerPhone: phone,
+  phone,
+  email,
+  projectAddress,
+  city,
+  postalCode,
+  serviceType: serviceLabel,
+  requestType,
+  timeline,
+  preferredDate,
+  preferredContact,
+  estimateLow: money(estimate.totalLow),
+  estimateHigh: money(estimate.totalHigh),
+  paymentMethod: finalPaymentMethod,
+  paymentRequired: String(paymentRequired),
+  paymentAmount: money(paymentAmount),
+  paymentStatus,
+});
+const liveBaseUrl =
+  typeof window !== "undefined"
+    ? window.location.origin
+    : "https://1800tops.com";
 
-      const confirmationUrl = `/homeowners/confirmation?${params.toString()}`;
-      const liveBaseUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://1800tops.com";
+const confirmationUrl =
+  `/homeowners/confirmation?${params.toString()}`;
 
-      if (finalPaymentMethod === "credit_debit" && paymentAmount > 0) {
-        const stripeRes = await fetch("/api/stripe/homeowner-checkout", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            jobNumber,
-            serviceLabel,
-            customerEmail: email,
-            paymentAmount,
-            successUrl: `${liveBaseUrl}${confirmationUrl}&stripe=success`,
-            cancelUrl: `${liveBaseUrl}/homeowners/book?stripe=cancelled&job=${jobNumber}`,
-          }),
-        });
+if (paymentRequired && paymentAmount > 0) {
+  const stripeRes = await fetch(
+  "/api/stripe/homeowner-checkout",
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      jobNumber,
+      serviceLabel,
+      customerEmail: email,
+      paymentAmount,
+      successUrl:
+        `${liveBaseUrl}${confirmationUrl}&stripe=success`,
+      cancelUrl:
+        `${liveBaseUrl}/homeowners/book?stripe=cancelled&job=${jobNumber}`,
+    }),
+  }
+);
 
-        const stripeData = await stripeRes.json();
+  const stripeData = await stripeRes.json();
 
-        if (!stripeData.success || !stripeData.url) {
-          alert(stripeData.error || "Stripe checkout failed.");
-          setSubmitting(false);
-          return;
-        }
+  if (!stripeData.success || !stripeData.url) {
+    alert(
+      stripeData.error ||
+        "Stripe checkout failed."
+    );
 
-        window.location.href = stripeData.url;
-        return;
-      }
+    setSubmitting(false);
+    return;
+  }
+
+  window.location.href = stripeData.url;
+  return;
+}
 
       router.push(confirmationUrl);
     } catch (err) {
