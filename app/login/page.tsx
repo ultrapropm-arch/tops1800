@@ -5,6 +5,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 
+type AppRole = "admin" | "homeowner_admin" | "installer" | "customer";
+
 type ProfileRow = {
   id?: string;
   role?: string | null;
@@ -47,13 +49,20 @@ const AI_DEFAULTS = {
 };
 
 const ADMIN_EMAILS = ["ultrapropm@gmail.com", "info@1800tops.com"];
+const HOMEOWNER_ADMIN_EMAILS = ["1800tops@gmail.com"];
 
 function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
 }
 
 function normalizeRole(value?: string | null) {
-  return String(value || "").trim().toLowerCase();
+  const role = String(value || "").trim().toLowerCase();
+
+  if (role === "homeowner-admin") return "homeowner_admin";
+  if (role === "homeowner admin") return "homeowner_admin";
+  if (role === "homeowneradmin") return "homeowner_admin";
+
+  return role;
 }
 
 function hasRealError(error: unknown) {
@@ -72,7 +81,7 @@ export default function LoginPage() {
 
   async function tryUpsertProfile(
     userId: string,
-    role: "admin" | "installer" | "customer",
+    role: AppRole,
     userEmail?: string
   ) {
     const payload: Record<string, unknown> = {
@@ -96,6 +105,11 @@ export default function LoginPage() {
   async function resolveUserRole(userId: string, userEmail: string) {
     const normalizedEmail = normalizeEmail(userEmail);
 
+    if (HOMEOWNER_ADMIN_EMAILS.includes(normalizedEmail)) {
+      await tryUpsertProfile(userId, "homeowner_admin", normalizedEmail);
+      return "homeowner_admin";
+    }
+
     if (ADMIN_EMAILS.includes(normalizedEmail)) {
       await tryUpsertProfile(userId, "admin", normalizedEmail);
       return "admin";
@@ -114,6 +128,7 @@ export default function LoginPage() {
     const profileRole = normalizeRole(profile?.role);
     if (
       profileRole === "admin" ||
+      profileRole === "homeowner_admin" ||
       profileRole === "installer" ||
       profileRole === "customer"
     ) {
@@ -127,14 +142,11 @@ export default function LoginPage() {
     const metadataRole = normalizeRole(authUser?.user_metadata?.role);
     if (
       metadataRole === "admin" ||
+      metadataRole === "homeowner_admin" ||
       metadataRole === "installer" ||
       metadataRole === "customer"
     ) {
-      await tryUpsertProfile(
-        userId,
-        metadataRole as "admin" | "installer" | "customer",
-        normalizedEmail
-      );
+      await tryUpsertProfile(userId, metadataRole as AppRole, normalizedEmail);
       return metadataRole;
     }
 
@@ -413,6 +425,11 @@ export default function LoginPage() {
       const resolvedEmail = normalizeEmail(user.email || normalizedEmail);
       const role = await resolveUserRole(user.id, resolvedEmail);
 
+      if (role === "homeowner_admin") {
+        router.push("/admin/homeowners");
+        return;
+      }
+
       if (role === "admin") {
         router.push("/admin");
         return;
@@ -481,7 +498,7 @@ export default function LoginPage() {
           <div className="mb-8 text-center">
             <h1 className="text-4xl font-bold text-yellow-500">Login</h1>
             <p className="mt-3 text-gray-400">
-              Login as admin, installer, or customer.
+              Login as admin, homeowner admin, installer, or customer.
             </p>
           </div>
 
