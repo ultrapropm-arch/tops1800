@@ -5,8 +5,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 
-type AppRole = "admin" | "homeowner_admin" | "installer" | "customer";
-
 type ProfileRow = {
   id?: string;
   role?: string | null;
@@ -49,20 +47,19 @@ const AI_DEFAULTS = {
 };
 
 const ADMIN_EMAILS = ["ultrapropm@gmail.com", "info@1800tops.com"];
-const HOMEOWNER_ADMIN_EMAILS = ["1800tops@gmail.com"];
+
+const HOMEOWNER_ADMIN_EMAIL =
+  process.env.NEXT_PUBLIC_HOMEOWNER_ADMIN_EMAIL || "";
+
+const HOMEOWNER_ADMIN_PASSWORD =
+  process.env.NEXT_PUBLIC_HOMEOWNER_ADMIN_PASSWORD || "";
 
 function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
 }
 
 function normalizeRole(value?: string | null) {
-  const role = String(value || "").trim().toLowerCase();
-
-  if (role === "homeowner-admin") return "homeowner_admin";
-  if (role === "homeowner admin") return "homeowner_admin";
-  if (role === "homeowneradmin") return "homeowner_admin";
-
-  return role;
+  return String(value || "").trim().toLowerCase();
 }
 
 function hasRealError(error: unknown) {
@@ -81,7 +78,7 @@ export default function LoginPage() {
 
   async function tryUpsertProfile(
     userId: string,
-    role: AppRole,
+    role: "admin" | "installer" | "customer",
     userEmail?: string
   ) {
     const payload: Record<string, unknown> = {
@@ -105,11 +102,6 @@ export default function LoginPage() {
   async function resolveUserRole(userId: string, userEmail: string) {
     const normalizedEmail = normalizeEmail(userEmail);
 
-    if (HOMEOWNER_ADMIN_EMAILS.includes(normalizedEmail)) {
-      await tryUpsertProfile(userId, "homeowner_admin", normalizedEmail);
-      return "homeowner_admin";
-    }
-
     if (ADMIN_EMAILS.includes(normalizedEmail)) {
       await tryUpsertProfile(userId, "admin", normalizedEmail);
       return "admin";
@@ -128,7 +120,6 @@ export default function LoginPage() {
     const profileRole = normalizeRole(profile?.role);
     if (
       profileRole === "admin" ||
-      profileRole === "homeowner_admin" ||
       profileRole === "installer" ||
       profileRole === "customer"
     ) {
@@ -142,11 +133,14 @@ export default function LoginPage() {
     const metadataRole = normalizeRole(authUser?.user_metadata?.role);
     if (
       metadataRole === "admin" ||
-      metadataRole === "homeowner_admin" ||
       metadataRole === "installer" ||
       metadataRole === "customer"
     ) {
-      await tryUpsertProfile(userId, metadataRole as AppRole, normalizedEmail);
+      await tryUpsertProfile(
+        userId,
+        metadataRole as "admin" | "installer" | "customer",
+        normalizedEmail
+      );
       return metadataRole;
     }
 
@@ -288,9 +282,7 @@ export default function LoginPage() {
         "";
 
       const companyName =
-        installerRow?.business_name ||
-        installerRow?.company_name ||
-        "";
+        installerRow?.business_name || installerRow?.company_name || "";
 
       localStorage.setItem(
         "installerProfile",
@@ -404,6 +396,18 @@ export default function LoginPage() {
     try {
       await clearRoleCaches();
 
+      if (
+        HOMEOWNER_ADMIN_EMAIL &&
+        HOMEOWNER_ADMIN_PASSWORD &&
+        normalizedEmail === normalizeEmail(HOMEOWNER_ADMIN_EMAIL) &&
+        password === HOMEOWNER_ADMIN_PASSWORD
+      ) {
+        localStorage.setItem("homeowner_admin_logged_in", "true");
+        localStorage.setItem("homeowner_admin_email", normalizedEmail);
+        router.push("/homeowner-admin");
+        return;
+      }
+
       const { error: loginError } = await supabase.auth.signInWithPassword({
         email: normalizedEmail,
         password,
@@ -424,11 +428,6 @@ export default function LoginPage() {
 
       const resolvedEmail = normalizeEmail(user.email || normalizedEmail);
       const role = await resolveUserRole(user.id, resolvedEmail);
-
-      if (role === "homeowner_admin") {
-        router.push("/admin/homeowners");
-        return;
-      }
 
       if (role === "admin") {
         router.push("/admin");
