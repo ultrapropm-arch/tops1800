@@ -309,14 +309,22 @@ export default function HomeownerAdminPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          customerName: job.customer_name,
-          serviceType: job.service_type,
-          address: job.address,
-          city: job.city,
-          scheduledDate: job.scheduled_date,
-          scheduledTime: job.scheduled_time,
-          notes: job.notes,
-        }),
+  jobNumber: job.job_number || job.id.slice(0, 8).toUpperCase(),
+
+  customerName: job.customer_name,
+  customerEmail: job.customer_email,
+  customerPhone: job.customer_phone,
+
+  serviceType: job.service_type,
+
+  address: job.address,
+  city: job.city,
+
+  scheduledDate: job.scheduled_date,
+  scheduledTime: job.scheduled_time,
+
+  notes: job.notes,
+}),
       });
 
       const data = await res.json();
