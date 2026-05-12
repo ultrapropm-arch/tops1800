@@ -173,23 +173,28 @@ export default function HomeownerAdminPage() {
     loadJobs();
   }, [router]);
 
-  async function loadJobs() {
+async function loadJobs() {
   setLoading(true);
 
-  const { data, error } = await supabase
-    .from("homeowner_bookings")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .returns<HomeownerJob[]>();
+  try {
+    const res = await fetch("/api/homeowner-admin/jobs", {
+      cache: "no-store",
+    });
 
-  console.log("HOMEOWNER BOOKINGS:", data);
-  console.log("HOMEOWNER BOOKINGS ERROR:", error);
+    const data = await res.json();
 
-  if (error) {
+    console.log("HOMEOWNER ADMIN API:", data);
+
+    if (!data.success) {
+      alert(data.error || "Error loading homeowner jobs.");
+      setJobs([]);
+    } else {
+      setJobs((data.jobs || []) as HomeownerJob[]);
+    }
+  } catch (error) {
     console.error(error);
-    alert("Error loading homeowner jobs. Check Supabase RLS/select policy.");
-  } else {
-    setJobs(data || []);
+    alert("Error loading homeowner jobs.");
+    setJobs([]);
   }
 
   setLoading(false);
