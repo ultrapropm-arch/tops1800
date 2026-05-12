@@ -177,23 +177,18 @@ function aiScore({
 }
 
 async function getNextJobNumber() {
-  const { data, error } = await supabase
+  const { count, error } = await supabase
     .from("homeowner_bookings")
-    .select("job_number")
-    .not("job_number", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(100);
+    .select("id", {
+      count: "exact",
+      head: true,
+    });
 
-  if (error || !data || data.length === 0) return "TOP1";
+  if (error || count === null) {
+    return `TOP${Date.now().toString().slice(-6)}`;
+  }
 
-  let highest = 0;
-
-  data.forEach((job) => {
-    const number = parseInt(String(job.job_number || "").replace("TOP", ""));
-    if (!isNaN(number) && number > highest) highest = number;
-  });
-
-  return `TOP${highest + 1}`;
+  return `TOP${count + 1}`;
 }
 
 export default function HomeownerBookingPage() {
