@@ -28,7 +28,7 @@ export async function createCalendarEvent({
     auth: authClient as any,
   });
 
-  return calendar.events.insert({
+  const response = await calendar.events.insert({
     calendarId: process.env.GOOGLE_CALENDAR_ID || "primary",
     requestBody: {
       summary: title,
@@ -44,4 +44,9 @@ export async function createCalendarEvent({
       },
     },
   });
+
+  return {
+    id: response.data.id || null,
+    htmlLink: response.data.htmlLink || null,
+  };
 }
