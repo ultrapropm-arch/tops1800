@@ -174,24 +174,26 @@ export default function HomeownerAdminPage() {
   }, [router]);
 
   async function loadJobs() {
-    setLoading(true);
+  setLoading(true);
 
-    const { data, error } = await supabase
-      .from("homeowner_bookings")
-      .select("*")
-      .order("is_urgent", { ascending: false })
-      .order("scheduled_date", { ascending: true, nullsFirst: false })
-      .order("created_at", { ascending: false });
+  const { data, error } = await supabase
+    .from("homeowner_bookings")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .returns<HomeownerJob[]>();
 
-    if (error) {
-      console.error(error);
-      alert("Error loading homeowner jobs. Check Supabase columns.");
-    } else {
-      setJobs((data || []) as HomeownerJob[]);
-    }
+  console.log("HOMEOWNER BOOKINGS:", data);
+  console.log("HOMEOWNER BOOKINGS ERROR:", error);
 
-    setLoading(false);
+  if (error) {
+    console.error(error);
+    alert("Error loading homeowner jobs. Check Supabase RLS/select policy.");
+  } else {
+    setJobs(data || []);
   }
+
+  setLoading(false);
+}
 
   async function updateJob(id: string, patch: Partial<HomeownerJob>) {
     setSavingId(id);
